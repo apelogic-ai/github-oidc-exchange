@@ -3,6 +3,5 @@ name: github-oidc-exchange
 description: GitHub Actions OIDC exchange issuer for Kubernetes identity
 type: application
 version: 0.1.0
-appVersion: 0.1.0
+appVersion: "0.1.0"
 kubeVersion: ">=1.30.0-0"
-
