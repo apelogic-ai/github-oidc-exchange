@@ -12,6 +12,7 @@ required=(
   '--type spdxjson'
   '--type slsaprovenance1'
   'CANDIDATE_TAG=candidate-'
+  'aws ecr describe-images'
   'Promote verified image candidate'
   'gh release create "v$VERSION"'
 )
@@ -26,6 +27,11 @@ chart_app_version="$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc
 [[ -n "$package_version" ]]
 [[ "$chart_version" == "$package_version" ]]
 [[ "$chart_app_version" == "$package_version" ]]
+
+if grep -Fq -- '$1 == "Digest:"' "$workflow"; then
+  printf 'release digest must come from the registry API, not formatted CLI output\n' >&2
+  exit 1
+fi
 
 if grep -Fq -- '--fulcio-auth-flow=device' "$workflow"; then
   printf 'device-flow authentication is forbidden\n' >&2

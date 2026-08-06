@@ -185,9 +185,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          output="$(helm push "dist/github-oidc-exchange-$VERSION.tgz" "oci://$ECR_REGISTRY/${CHART_REPOSITORY_NAME%/*}")"
-          printf '%s\n' "$output"
-          digest="$(printf '%s\n' "$output" | awk '$1 == "Digest:" {print $2}')"
+          helm push "dist/github-oidc-exchange-$VERSION.tgz" "oci://$ECR_REGISTRY/${CHART_REPOSITORY_NAME%/*}"
+          digest="$(aws ecr describe-images \
+            --repository-name "$CHART_REPOSITORY_NAME" \
+            --image-ids imageTag="$VERSION" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
           printf '%s\n' "$digest" > dist/chart.digest
