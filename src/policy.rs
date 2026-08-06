@@ -25,6 +25,7 @@ pub struct RepositoryPolicy {
     pub owner_id: String,
     pub repository_id: String,
     pub subjects: Vec<String>,
+    pub workflow_refs: Vec<String>,
     pub job_workflow_refs: Vec<String>,
     pub events: Vec<String>,
     pub refs: Vec<String>,
@@ -45,6 +46,7 @@ pub struct Identity {
     pub groups: Vec<String>,
     pub repository: String,
     pub workflow_ref: String,
+    pub job_workflow_ref: String,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -101,6 +103,7 @@ impl Policy {
                 return Err(invalid("duplicate repository policy"));
             }
             require_values("subjects", &repository.subjects)?;
+            require_values("workflow_refs", &repository.workflow_refs)?;
             require_values("job_workflow_refs", &repository.job_workflow_refs)?;
             require_values("events", &repository.events)?;
             require_values("refs", &repository.refs)?;
@@ -149,6 +152,7 @@ impl Policy {
             })
             .ok_or(PolicyError::Unauthorized)?;
         if !contains(&repository.subjects, &claims.sub)
+            || !contains(&repository.workflow_refs, &claims.workflow_ref)
             || !contains(&repository.job_workflow_refs, &claims.job_workflow_ref)
             || !contains(&repository.events, &claims.event_name)
             || !contains(&repository.refs, &claims.git_ref)
@@ -166,7 +170,8 @@ impl Policy {
             subject: format!("github-actions:actor:{}", claims.actor_id),
             groups,
             repository: format!("{}/{}", repository.owner_id, repository.repository_id),
-            workflow_ref: claims.job_workflow_ref.clone(),
+            workflow_ref: claims.workflow_ref.clone(),
+            job_workflow_ref: claims.job_workflow_ref.clone(),
         })
     }
 }

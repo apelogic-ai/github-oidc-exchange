@@ -20,6 +20,8 @@ use tempfile::NamedTempFile;
 
 const AUDIENCE: &str = "apelogic-github-identity-exchange";
 const SUBJECT: &str = "repo:apelogic-ai@227278099/steward-run@1320906141:ref:refs/heads/main";
+const CALLER_WORKFLOW: &str =
+    "apelogic-ai/steward-run/.github/workflows/roundtrip.yml@refs/heads/main";
 const WORKFLOW: &str = "apelogic-ai/steward-run/.github/workflows/steward-task.yml@refs/heads/main";
 
 fn policy() -> Policy {
@@ -32,6 +34,7 @@ fn policy() -> Policy {
             owner_id: "227278099".to_owned(),
             repository_id: "1320906141".to_owned(),
             subjects: vec![SUBJECT.to_owned()],
+            workflow_refs: vec![CALLER_WORKFLOW.to_owned()],
             job_workflow_refs: vec![WORKFLOW.to_owned()],
             events: vec!["workflow_dispatch".to_owned()],
             refs: vec!["refs/heads/main".to_owned()],
@@ -59,6 +62,7 @@ fn claims() -> GitHubClaims {
         actor_id: "12345".to_owned(),
         repository_id: "1320906141".to_owned(),
         repository_owner_id: "227278099".to_owned(),
+        workflow_ref: CALLER_WORKFLOW.to_owned(),
         job_workflow_ref: WORKFLOW.to_owned(),
         event_name: "workflow_dispatch".to_owned(),
         git_ref: "refs/heads/main".to_owned(),
@@ -136,6 +140,12 @@ fn policy_is_default_deny_and_emits_only_ratified_groups() -> Result<(), Box<dyn
     wrong_workflow.job_workflow_ref = "untrusted/workflow@refs/heads/main".to_owned();
     assert_eq!(
         policy.authorize(&wrong_workflow),
+        Err(PolicyError::Unauthorized)
+    );
+    let mut wrong_caller = claims();
+    wrong_caller.workflow_ref = "untrusted/caller@refs/heads/main".to_owned();
+    assert_eq!(
+        policy.authorize(&wrong_caller),
         Err(PolicyError::Unauthorized)
     );
     let mut unmapped_actor = claims();

@@ -22,7 +22,7 @@ The GitHub assertion must have:
 - `RS256` and a currently published GitHub signing key;
 - a maximum ten-minute lifetime and valid `exp`, `iat`, and `nbf`;
 - non-empty immutable `repository_owner_id`, `repository_id`, `actor_id`, `sub`, `jti`,
-  `job_workflow_ref`, `event_name`, and `ref` claims;
+  `workflow_ref`, `job_workflow_ref`, `event_name`, and `ref` claims;
 - an exact match in the private policy for subject, workflow, event, ref, and verified actor.
 
 The output contains exactly one audience, `email`, two deployment-ratified `groups`, and
