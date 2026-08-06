@@ -26,6 +26,7 @@ pub struct GitHubClaims {
     pub actor_id: String,
     pub repository_id: String,
     pub repository_owner_id: String,
+    pub workflow_ref: String,
     pub job_workflow_ref: String,
     pub event_name: String,
     #[serde(rename = "ref")]
@@ -127,6 +128,7 @@ impl GitHubVerifier {
             || claims.actor_id.is_empty()
             || claims.repository_id.is_empty()
             || claims.repository_owner_id.is_empty()
+            || claims.workflow_ref.is_empty()
             || claims.job_workflow_ref.is_empty()
             || claims.event_name.is_empty()
             || claims.git_ref.is_empty()

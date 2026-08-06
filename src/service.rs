@@ -112,6 +112,7 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
             actor_id = identity.actor_id,
             repository = identity.repository,
             workflow_ref = identity.workflow_ref,
+            job_workflow_ref = identity.job_workflow_ref,
             source_jti_hash = hash_identifier(&claims.jti),
             "identity exchange issued"
         );
@@ -131,7 +132,8 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
             actor_id = claims.actor_id,
             repository_owner_id = claims.repository_owner_id,
             repository_id = claims.repository_id,
-            workflow_ref = claims.job_workflow_ref,
+            workflow_ref = claims.workflow_ref,
+            job_workflow_ref = claims.job_workflow_ref,
             source_jti_hash = hash_identifier(&claims.jti),
             reason,
             "identity exchange rejected"

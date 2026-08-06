@@ -10,6 +10,9 @@
       "subjects": [
         "repo:example-org@123456/example-repo@789012:ref:refs/heads/main"
       ],
+      "workflow_refs": [
+        "example-org/example-repo/.github/workflows/caller.yml@refs/heads/main"
+      ],
       "job_workflow_refs": [
         "example-org/example-repo/.github/workflows/example.yml@refs/heads/main"
       ],

@@ -2,8 +2,8 @@ use std::{collections::HashMap, fs::File, path::Path};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{SigningKey, pkcs8::EncodePrivateKey};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use p256::{SecretKey, elliptic_curve::sec1::ToEncodedPoint, pkcs8::EncodePrivateKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -28,7 +28,7 @@ struct KeySpec {
 
 pub struct KeyRing {
     current_kid: String,
-    keys: HashMap<String, SigningKey>,
+    keys: HashMap<String, SecretKey>,
 }
 
 #[derive(Debug, Error)]
@@ -53,6 +53,7 @@ struct PublicJwk {
     kid: String,
     crv: &'static str,
     x: String,
+    y: String,
 }
 
 impl KeyRing {
@@ -73,17 +74,15 @@ impl KeyRing {
             let seed = STANDARD
                 .decode(&spec.seed)
                 .map_err(|_| invalid("signing seeds must be Base64"))?;
-            let seed: [u8; 32] = seed
+            let scalar: [u8; 32] = seed
                 .try_into()
-                .map_err(|_| invalid("signing seeds must decode to exactly 32 bytes"))?;
+                .map_err(|_| invalid("P-256 private scalars must decode to exactly 32 bytes"))?;
+            let key = SecretKey::from_slice(&scalar)
+                .map_err(|_| invalid("P-256 private scalar is outside the valid range"))?;
             if spec.kid == input.current_kid {
                 current_valid = now >= spec.not_before && now < spec.not_after;
             }
-            if now < spec.not_after
-                && keys
-                    .insert(spec.kid, SigningKey::from_bytes(&seed))
-                    .is_some()
-            {
+            if now < spec.not_after && keys.insert(spec.kid, key).is_some() {
                 return Err(invalid("key IDs must be unique"));
             }
         }
@@ -104,8 +103,8 @@ impl KeyRing {
             .get(&self.current_kid)
             .ok_or_else(|| invalid("current signing key is unavailable"))?;
         let document = signing_key.to_pkcs8_der().map_err(|_| KeyError::Signing)?;
-        let encoding_key = EncodingKey::from_ed_der(document.as_bytes());
-        let mut header = Header::new(Algorithm::EdDSA);
+        let encoding_key = EncodingKey::from_ec_der(document.as_bytes());
+        let mut header = Header::new(Algorithm::ES256);
         header.kid = Some(self.current_kid.clone());
         encode(&header, claims, &encoding_key).map_err(|_| KeyError::Signing)
     }
@@ -114,14 +113,20 @@ impl KeyRing {
         let mut keys: Vec<_> = self
             .keys
             .iter()
-            .map(|(kid, key)| PublicJwk {
-                kty: "OKP",
-                usage: "sig",
-                alg: "EdDSA",
-                kid: kid.clone(),
-                crv: "Ed25519",
-                x: base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .encode(key.verifying_key().as_bytes()),
+            .filter_map(|(kid, key)| {
+                let point = key.public_key().to_encoded_point(false);
+                let (Some(x), Some(y)) = (point.x(), point.y()) else {
+                    return None;
+                };
+                Some(PublicJwk {
+                    kty: "EC",
+                    usage: "sig",
+                    alg: "ES256",
+                    kid: kid.clone(),
+                    crv: "P-256",
+                    x: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(x),
+                    y: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(y),
+                })
             })
             .collect();
         keys.sort_by(|left, right| left.kid.cmp(&right.kid));
