@@ -17,16 +17,16 @@ required=(
 )
 
 for contract in "${required[@]}"; do
-  rg --fixed-strings --quiet -- "$contract" "$workflow"
+  grep -Fq -- "$contract" "$workflow"
 done
 
-if rg --fixed-strings --quiet -- '--fulcio-auth-flow=device' "$workflow"; then
+if grep -Fq -- '--fulcio-auth-flow=device' "$workflow"; then
   printf 'device-flow authentication is forbidden\n' >&2
   exit 1
 fi
 
-candidate_line="$(rg --line-number 'Build and publish unique image candidate' "$workflow" | cut -d: -f1)"
-promotion_line="$(rg --line-number 'Promote verified image candidate' "$workflow" | cut -d: -f1)"
-release_line="$(rg --line-number 'gh release create' "$workflow" | cut -d: -f1)"
+candidate_line="$(grep -n 'Build and publish unique image candidate' "$workflow" | cut -d: -f1)"
+promotion_line="$(grep -n 'Promote verified image candidate' "$workflow" | cut -d: -f1)"
+release_line="$(grep -n 'gh release create' "$workflow" | cut -d: -f1)"
 [[ "$candidate_line" -lt "$promotion_line" ]]
 [[ "$promotion_line" -lt "$release_line" ]]
