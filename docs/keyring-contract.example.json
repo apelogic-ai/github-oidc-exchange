@@ -4,16 +4,15 @@
   "keys": [
     {
       "kid": "2026-07-a",
-      "seed": "BASE64_OF_EXACTLY_32_RANDOM_BYTES",
+      "seed": "BASE64_OF_VALID_32_BYTE_P256_PRIVATE_SCALAR",
       "not_before": "2026-07-01T00:00:00Z",
       "not_after": "2026-08-08T00:00:00Z"
     },
     {
       "kid": "2026-08-a",
-      "seed": "BASE64_OF_EXACTLY_32_RANDOM_BYTES",
+      "seed": "BASE64_OF_VALID_32_BYTE_P256_PRIVATE_SCALAR",
       "not_before": "2026-08-01T00:00:00Z",
       "not_after": "2026-09-01T00:00:00Z"
     }
   ]
 }
-

@@ -333,7 +333,9 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
         groups: Vec<String>,
         identity_contract: String,
     }
-    let mut validation = Validation::new(Algorithm::EdDSA);
+    let output_header = jsonwebtoken::decode_header(&output)?;
+    assert_eq!(output_header.alg, Algorithm::ES256);
+    let mut validation = Validation::new(Algorithm::ES256);
     validation.set_issuer(&["https://identity.dev.apelogic.io"]);
     validation.set_audience(&["steward-task-api"]);
     let decoded = decode::<OutputClaims>(&output, &output_key, &validation)?.claims;

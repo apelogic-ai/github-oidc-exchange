@@ -3,7 +3,7 @@
 `github-oidc-exchange` is a platform-owned identity boundary for GitHub Actions jobs. It validates
 a short-lived GitHub OIDC assertion, applies a private default-deny authorization and corporate
 identity mapping, records the source `jti` in a DynamoDB replay ledger, and issues a two-minute
-EdDSA token that an EKS external OIDC identity provider can authenticate.
+ES256 token that an EKS external OIDC identity provider can authenticate.
 
 It is not a general OAuth provider, a Kubernetes authentication webhook, or part of any calling
 application. Environment policy belongs in a private deployment repository; this repository

@@ -55,7 +55,7 @@ async fn discovery<L: ReplayLedger + Clone + 'static>(
         "token_endpoint": format!("{}/v1/exchange", state.service.issuer),
         "response_types_supported": ["id_token"],
         "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": ["EdDSA"]
+        "id_token_signing_alg_values_supported": ["ES256"]
     }))
 }
 
