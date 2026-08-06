@@ -1,0 +1,23 @@
+image:
+  repository: registry.example.invalid/platform/github-oidc-exchange
+  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/example
+
+config:
+  issuerUrl: https://identity.example.invalid
+  githubExchangeAudience: example-identity-exchange
+  replayTable: example-replay
+  policyConfigMapName: example-policy
+  keyringSecretName: example-keyring
+
+networkPolicy:
+  ingressCidrs:
+    - 10.0.0.0/16
+
+ingress:
+  enabled: true
+  host: identity.example.invalid
+

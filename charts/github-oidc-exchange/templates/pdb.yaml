@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "github-oidc-exchange.name" . }}
+  labels:
+    {{- include "github-oidc-exchange.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "github-oidc-exchange.selectorLabels" . | nindent 6 }}
+

@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "github-oidc-exchange.name" . }}
+  labels:
+    {{- include "github-oidc-exchange.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "github-oidc-exchange.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "github-oidc-exchange.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exchange
+          image: {{ required "image.repository is required" .Values.image.repository }}@{{ required "image.digest is required" .Values.image.digest }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: ISSUER_URL
+              value: {{ required "config.issuerUrl is required" .Values.config.issuerUrl | quote }}
+            - name: GITHUB_EXCHANGE_AUDIENCE
+              value: {{ required "config.githubExchangeAudience is required" .Values.config.githubExchangeAudience | quote }}
+            - name: OUTPUT_AUDIENCE
+              value: {{ .Values.config.outputAudience | quote }}
+            - name: REPLAY_TABLE
+              value: {{ required "config.replayTable is required" .Values.config.replayTable | quote }}
+            - name: POLICY_FILE
+              value: /etc/github-oidc-exchange/policy/policy.json
+            - name: KEYRING_FILE
+              value: /etc/github-oidc-exchange/keyring/keyring.json
+            - name: RUST_LOG
+              value: github_oidc_exchange=info
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: policy
+              mountPath: /etc/github-oidc-exchange/policy
+              readOnly: true
+            - name: keyring
+              mountPath: /etc/github-oidc-exchange/keyring
+              readOnly: true
+      volumes:
+        - name: policy
+          configMap:
+            name: {{ required "config.policyConfigMapName is required" .Values.config.policyConfigMapName }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.config.policyConfigMapKey }}
+                path: policy.json
+        - name: keyring
+          secret:
+            secretName: {{ required "config.keyringSecretName is required" .Values.config.keyringSecretName }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.config.keyringSecretKey }}
+                path: keyring.json
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}

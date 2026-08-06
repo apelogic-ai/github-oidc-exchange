@@ -1,0 +1,30 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "github-oidc-exchange.name" . }}
+  labels:
+    {{- include "github-oidc-exchange.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ required "ingress.host is required when ingress is enabled" .Values.ingress.host }}
+      http:
+        paths:
+          - path: /.well-known/openid-configuration
+            pathType: Exact
+            backend: &backend
+              service:
+                name: {{ include "github-oidc-exchange.name" . }}
+                port:
+                  name: http
+          - path: /jwks.json
+            pathType: Exact
+            backend: *backend
+          - path: /v1/exchange
+            pathType: Exact
+            backend: *backend
+{{- end }}
+

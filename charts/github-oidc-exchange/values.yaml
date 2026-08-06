@@ -1,0 +1,60 @@
+replicaCount: 2
+
+image:
+  repository: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  name: github-oidc-exchange
+  annotations: {}
+
+config:
+  issuerUrl: ""
+  githubExchangeAudience: ""
+  outputAudience: steward-task-api
+  replayTable: ""
+  policyConfigMapName: ""
+  policyConfigMapKey: policy.json
+  keyringSecretName: ""
+  keyringSecretKey: keyring.json
+
+service:
+  port: 8080
+
+ingress:
+  enabled: false
+  className: alb
+  annotations: {}
+  host: ""
+
+networkPolicy:
+  enabled: true
+  ingressCidrs: []
+  dnsNamespaceSelector:
+    kubernetes.io/metadata.name: kube-system
+  dnsPodSelector:
+    k8s-app: kube-dns
+  metricsNamespaceSelector: {}
+  metricsPodSelector: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+podDisruptionBudget:
+  minAvailable: 1
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+

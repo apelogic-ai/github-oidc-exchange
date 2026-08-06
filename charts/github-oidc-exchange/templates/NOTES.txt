@@ -1,0 +1,3 @@
+The issuer is fail-closed until image.repository, image.digest, policy ConfigMap, keyring Secret,
+IRSA annotation, replay table, issuer URL, exchange audience, and ingress CIDRs are supplied.
+

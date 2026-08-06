@@ -1,0 +1,51 @@
+[package]
+name = "github-oidc-exchange"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+publish = false
+
+[features]
+default = []
+test-support = []
+
+[dependencies]
+aws-config = "1.10.1"
+aws-sdk-dynamodb = "1.120.0"
+axum = "0.8.8"
+base64 = "0.22.1"
+chrono = { version = "0.4.44", default-features = false, features = ["clock", "serde"] }
+ed25519-dalek = { version = "2.2.0", features = ["pkcs8", "rand_core"] }
+jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust_crypto"] }
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+thiserror = "2.0.18"
+tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.6.8", features = ["set-header"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "json"] }
+uuid = { version = "1.21.0", features = ["v4"] }
+
+[dev-dependencies]
+http-body-util = "0.1.3"
+rand = "0.8.5"
+rsa = { version = "0.9.10", features = ["pem"] }
+tempfile = "3.27.0"
+
+[[test]]
+name = "security"
+path = "tests/security.rs"
+required-features = ["test-support"]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+expect_used = "deny"
+panic = "deny"
+unwrap_used = "deny"

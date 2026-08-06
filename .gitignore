@@ -1,0 +1,6 @@
+/target/
+/dist/
+*.pem
+*keyring*.json
+!docs/keyring-contract.example.json
+
