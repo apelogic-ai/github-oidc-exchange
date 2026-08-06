@@ -20,6 +20,13 @@ for contract in "${required[@]}"; do
   grep -Fq -- "$contract" "$workflow"
 done
 
+package_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+chart_version="$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)"
+chart_app_version="$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc-exchange/Chart.yaml | head -1)"
+[[ -n "$package_version" ]]
+[[ "$chart_version" == "$package_version" ]]
+[[ "$chart_app_version" == "$package_version" ]]
+
 if grep -Fq -- '--fulcio-auth-flow=device' "$workflow"; then
   printf 'device-flow authentication is forbidden\n' >&2
   exit 1
