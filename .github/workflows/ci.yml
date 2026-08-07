@@ -21,15 +21,15 @@ jobs:
           persist-credentials: false
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
+        with:
+          version: v3.17.1
       - name: Rust quality gates
         run: |
           cargo fmt --all -- --check
           cargo clippy --locked --all-targets --all-features -- -D warnings
           cargo test --locked --all-targets --all-features
           bash scripts/validate-release.sh
-      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
-        with:
-          version: v3.17.1
       - name: Helm contract
         run: |
           helm lint charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/test-values.yaml

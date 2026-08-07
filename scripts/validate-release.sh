@@ -28,6 +28,21 @@ chart_app_version="$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc
 [[ "$chart_version" == "$package_version" ]]
 [[ "$chart_app_version" == "$package_version" ]]
 
+grep -Fq -- '.Chart.Version | replace "+" "_"' \
+  charts/github-oidc-exchange/templates/_helpers.tpl
+
+render_dir="$(mktemp -d)"
+trap 'rm -rf "$render_dir"' EXIT
+cp -R charts/github-oidc-exchange "$render_dir/chart"
+sed -i.bak \
+  "s/^version: .*/version: ${package_version}+flux.test/" \
+  "$render_dir/chart/Chart.yaml"
+helm template test "$render_dir/chart" \
+  -f charts/github-oidc-exchange/ci/test-values.yaml >"$render_dir/rendered.yaml"
+grep -Fq -- \
+  "helm.sh/chart: \"github-oidc-exchange-${package_version}_flux.test\"" \
+  "$render_dir/rendered.yaml"
+
 if grep -Fq -- '$1 == "Digest:"' "$workflow"; then
   printf 'release digest must come from the registry API, not formatted CLI output\n' >&2
   exit 1
