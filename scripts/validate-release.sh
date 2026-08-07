@@ -40,7 +40,7 @@ sed -i.bak \
 helm template test "$render_dir/chart" \
   -f charts/github-oidc-exchange/ci/test-values.yaml >"$render_dir/rendered.yaml"
 grep -Fq -- \
-  "helm.sh/chart: github-oidc-exchange-${package_version}_flux.test" \
+  "helm.sh/chart: \"github-oidc-exchange-${package_version}_flux.test\"" \
   "$render_dir/rendered.yaml"
 
 if grep -Fq -- '$1 == "Digest:"' "$workflow"; then
