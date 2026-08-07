@@ -25,8 +25,14 @@ The GitHub assertion must have:
   `workflow_ref`, `job_workflow_ref`, `event_name`, and `ref` claims;
 - an exact match in the private policy for subject, workflow, event, ref, and verified actor.
 
-The output contains exactly one audience, `email`, two deployment-ratified `groups`, and
-`identity_contract=steward-task-v1`. The source assertion and issued token are never logged.
+The output contains exactly one audience, `email`, deployment-ratified `groups`, and
+`identity_contract=steward-task-v1`. Policy rules select one server-controlled identity profile:
+
+- `task` emits exactly the service-principal and verified acting-user groups;
+- `bootstrap` emits exactly the route-scoped service-envelope-bootstrap group.
+
+Profiles are selected only by exact GitHub claim matches. The caller cannot request a profile,
+and ambiguous matching rules fail closed. The source assertion and issued token are never logged.
 
 ## Runtime configuration
 

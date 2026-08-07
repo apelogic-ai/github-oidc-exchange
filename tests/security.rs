@@ -6,7 +6,7 @@ use github_oidc_exchange::{
     GITHUB_ISSUER, IDENTITY_CONTRACT, KEYRING_VERSION, POLICY_VERSION,
     github::{Audience, GitHubClaims, GitHubVerifier},
     keys::KeyRing,
-    policy::{Actor, Policy, PolicyError, RepositoryPolicy},
+    policy::{Actor, IdentityProfile, Policy, PolicyError, RepositoryPolicy},
     replay::{MemoryReplayLedger, ReplayError, ReplayLedger},
     service::{ExchangeError, ExchangeService, Metrics},
 };
@@ -23,14 +23,20 @@ const SUBJECT: &str = "repo:apelogic-ai@227278099/steward-run@1320906141:ref:ref
 const CALLER_WORKFLOW: &str =
     "apelogic-ai/steward-run/.github/workflows/roundtrip.yml@refs/heads/main";
 const WORKFLOW: &str = "apelogic-ai/steward-run/.github/workflows/steward-task.yml@refs/heads/main";
+const BOOTSTRAP_CALLER_WORKFLOW: &str =
+    "apelogic-ai/steward-run/.github/workflows/bootstrap.yml@refs/heads/main";
+const BOOTSTRAP_WORKFLOW: &str =
+    "apelogic-ai/steward-run/.github/workflows/bootstrap-executor.yml@refs/heads/main";
 
 fn policy() -> Policy {
     Policy {
         version: POLICY_VERSION.to_owned(),
         service_group: "agents.apelogic.ai/service-principal:steward-run".to_owned(),
         acting_group_prefix: "agents.apelogic.ai/acting-user:".to_owned(),
+        bootstrap_group: "agents.apelogic.ai/service-envelope-bootstrap:steward-run".to_owned(),
         allowed_email_domains: vec!["apelogic.io".to_owned()],
         repositories: vec![RepositoryPolicy {
+            profile: IdentityProfile::Task,
             owner_id: "227278099".to_owned(),
             repository_id: "1320906141".to_owned(),
             subjects: vec![SUBJECT.to_owned()],
@@ -47,6 +53,51 @@ fn policy() -> Policy {
             },
         )]),
     }
+}
+
+#[test]
+fn workflow_selected_profiles_are_mutually_exclusive() -> Result<(), Box<dyn std::error::Error>> {
+    let mut policy = policy();
+    let mut bootstrap_rule = policy.repositories[0].clone();
+    bootstrap_rule.profile = IdentityProfile::Bootstrap;
+    bootstrap_rule.workflow_refs = vec![BOOTSTRAP_CALLER_WORKFLOW.to_owned()];
+    bootstrap_rule.job_workflow_refs = vec![BOOTSTRAP_WORKFLOW.to_owned()];
+    policy.repositories.push(bootstrap_rule);
+    policy.validate()?;
+
+    let task_identity = policy.authorize(&claims())?;
+    assert_eq!(
+        task_identity.groups,
+        vec![
+            "agents.apelogic.ai/acting-user:engineer@apelogic.io",
+            "agents.apelogic.ai/service-principal:steward-run",
+        ]
+    );
+
+    let mut bootstrap_claims = claims();
+    bootstrap_claims.workflow_ref = BOOTSTRAP_CALLER_WORKFLOW.to_owned();
+    bootstrap_claims.job_workflow_ref = BOOTSTRAP_WORKFLOW.to_owned();
+    let bootstrap_identity = policy.authorize(&bootstrap_claims)?;
+    assert_eq!(
+        bootstrap_identity.groups,
+        vec!["agents.apelogic.ai/service-envelope-bootstrap:steward-run"]
+    );
+
+    let mut ambiguous = policy.clone();
+    let mut overlapping_rule = ambiguous.repositories[0].clone();
+    overlapping_rule.profile = IdentityProfile::Bootstrap;
+    ambiguous.repositories.push(overlapping_rule);
+    assert!(ambiguous.validate().is_err());
+    assert_eq!(
+        ambiguous.authorize(&claims()),
+        Err(PolicyError::Unauthorized)
+    );
+
+    let mut invalid_bootstrap_group = policy;
+    invalid_bootstrap_group.bootstrap_group =
+        "agents.apelogic.ai/service-principal:steward-run".to_owned();
+    assert!(invalid_bootstrap_group.validate().is_err());
+    Ok(())
 }
 
 fn claims() -> GitHubClaims {
@@ -301,6 +352,7 @@ fn policy_file_rejects_unknown_fields() -> Result<(), Box<dyn std::error::Error>
         "version": POLICY_VERSION,
         "service_group": "agents.apelogic.ai/service-principal:steward-run",
         "acting_group_prefix": "agents.apelogic.ai/acting-user:",
+        "bootstrap_group": "agents.apelogic.ai/service-envelope-bootstrap:steward-run",
         "allowed_email_domains": ["apelogic.io"],
         "repositories": [],
         "actors": {},
