@@ -7,6 +7,7 @@ use crate::POLICY_VERSION;
 
 const SERVICE_PREFIX: &str = "agents.apelogic.ai/service-principal:";
 const ACTING_PREFIX: &str = "agents.apelogic.ai/acting-user:";
+const BOOTSTRAP_PREFIX: &str = "agents.apelogic.ai/service-envelope-bootstrap:";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -14,6 +15,7 @@ pub struct Policy {
     pub version: String,
     pub service_group: String,
     pub acting_group_prefix: String,
+    pub bootstrap_group: String,
     pub allowed_email_domains: Vec<String>,
     pub repositories: Vec<RepositoryPolicy>,
     pub actors: std::collections::HashMap<String, Actor>,
@@ -22,6 +24,7 @@ pub struct Policy {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepositoryPolicy {
+    pub profile: IdentityProfile,
     pub owner_id: String,
     pub repository_id: String,
     pub subjects: Vec<String>,
@@ -29,6 +32,13 @@ pub struct RepositoryPolicy {
     pub job_workflow_refs: Vec<String>,
     pub events: Vec<String>,
     pub refs: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityProfile {
+    Task,
+    Bootstrap,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -80,6 +90,16 @@ impl Policy {
                 "acting_group_prefix does not match the Steward contract",
             ));
         }
+        if !self.bootstrap_group.starts_with(BOOTSTRAP_PREFIX)
+            || self.bootstrap_group == BOOTSTRAP_PREFIX
+        {
+            return Err(invalid(
+                "bootstrap_group must use the Steward service-envelope-bootstrap prefix",
+            ));
+        }
+        if self.bootstrap_group == self.service_group {
+            return Err(invalid("task and bootstrap groups must be distinct"));
+        }
         if self.repositories.is_empty() || self.actors.is_empty() {
             return Err(invalid("repositories and actors must be non-empty"));
         }
@@ -94,19 +114,27 @@ impl Policy {
                 "allowed_email_domains must contain canonical DNS domain names",
             ));
         }
-        let mut repositories = HashSet::new();
+        let mut repository_rules = HashSet::new();
         for repository in &self.repositories {
             if repository.owner_id.is_empty() || repository.repository_id.is_empty() {
                 return Err(invalid("repository numeric IDs are required"));
-            }
-            if !repositories.insert((&repository.owner_id, &repository.repository_id)) {
-                return Err(invalid("duplicate repository policy"));
             }
             require_values("subjects", &repository.subjects)?;
             require_values("workflow_refs", &repository.workflow_refs)?;
             require_values("job_workflow_refs", &repository.job_workflow_refs)?;
             require_values("events", &repository.events)?;
             require_values("refs", &repository.refs)?;
+            if !repository_rules.insert((
+                &repository.owner_id,
+                &repository.repository_id,
+                &repository.subjects,
+                &repository.workflow_refs,
+                &repository.job_workflow_refs,
+                &repository.events,
+                &repository.refs,
+            )) {
+                return Err(invalid("duplicate repository authorization rule"));
+            }
             let owner_marker = format!("@{}/", repository.owner_id);
             let repository_marker = format!("@{}:", repository.repository_id);
             if repository.subjects.iter().any(|subject| {
@@ -143,26 +171,26 @@ impl Policy {
             .get(&claims.actor_id)
             .filter(|actor| actor.verified)
             .ok_or(PolicyError::Unauthorized)?;
-        let repository = self
-            .repositories
-            .iter()
-            .find(|repository| {
-                repository.owner_id == claims.repository_owner_id
-                    && repository.repository_id == claims.repository_id
-            })
-            .ok_or(PolicyError::Unauthorized)?;
-        if !contains(&repository.subjects, &claims.sub)
-            || !contains(&repository.workflow_refs, &claims.workflow_ref)
-            || !contains(&repository.job_workflow_refs, &claims.job_workflow_ref)
-            || !contains(&repository.events, &claims.event_name)
-            || !contains(&repository.refs, &claims.git_ref)
-        {
+        let mut matching_rules = self.repositories.iter().filter(|repository| {
+            repository.owner_id == claims.repository_owner_id
+                && repository.repository_id == claims.repository_id
+                && contains(&repository.subjects, &claims.sub)
+                && contains(&repository.workflow_refs, &claims.workflow_ref)
+                && contains(&repository.job_workflow_refs, &claims.job_workflow_ref)
+                && contains(&repository.events, &claims.event_name)
+                && contains(&repository.refs, &claims.git_ref)
+        });
+        let repository = matching_rules.next().ok_or(PolicyError::Unauthorized)?;
+        if matching_rules.next().is_some() {
             return Err(PolicyError::Unauthorized);
         }
-        let mut groups = vec![
-            self.service_group.clone(),
-            format!("{}{}", self.acting_group_prefix, actor.email),
-        ];
+        let mut groups = match repository.profile {
+            IdentityProfile::Task => vec![
+                self.service_group.clone(),
+                format!("{}{}", self.acting_group_prefix, actor.email),
+            ],
+            IdentityProfile::Bootstrap => vec![self.bootstrap_group.clone()],
+        };
         groups.sort();
         Ok(Identity {
             actor_id: claims.actor_id.clone(),
