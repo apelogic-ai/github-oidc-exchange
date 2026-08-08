@@ -57,6 +57,7 @@ jobs:
           : "${CHART_REPOSITORY_NAME:?Set ECR_CHART_REPOSITORY}"
           printf 'VERSION=%s\n' "$REQUESTED_VERSION" >> "$GITHUB_ENV"
           printf 'CANDIDATE_TAG=candidate-%s-%s-%s\n' "$REQUESTED_VERSION" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          printf 'CHART_CANDIDATE_TAG=candidate-%s-%s-%s\n' "$REQUESTED_VERSION" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
           printf 'IMAGE_REFERENCE=%s/%s\n' "$ECR_REGISTRY" "$IMAGE_REPOSITORY_NAME" >> "$GITHUB_ENV"
           printf 'CHART_REFERENCE=%s/%s\n' "$ECR_REGISTRY" "$CHART_REPOSITORY_NAME" >> "$GITHUB_ENV"
 
@@ -72,6 +73,21 @@ jobs:
       - uses: sigstore/cosign-installer@874852de93c66509b01dc7cd80f7a5385182d017 # v4.1.0
         with:
           cosign-release: v3.1.2
+
+      - name: Install pinned ORAS
+        shell: bash
+        env:
+          ORAS_VERSION: 1.3.3
+          ORAS_LINUX_AMD64_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59
+        run: |
+          set -euo pipefail
+          archive="oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          curl -sSLo "$RUNNER_TEMP/$archive" \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/$archive"
+          printf '%s  %s\n' "$ORAS_LINUX_AMD64_SHA256" "$RUNNER_TEMP/$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/oras-bin"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/oras-bin" oras
+          printf '%s\n' "$RUNNER_TEMP/oras-bin" >> "$GITHUB_PATH"
 
       - name: Verify source and render chart
         run: |
@@ -127,6 +143,15 @@ jobs:
           mkdir -p dist /tmp/chart-scan
           helm package charts/github-oidc-exchange --destination dist --version "$VERSION" --app-version "$VERSION"
           tar -xzf "dist/github-oidc-exchange-$VERSION.tgz" -C /tmp/chart-scan
+          jq -n --arg version "$VERSION" '{
+            name: "github-oidc-exchange",
+            version: $version,
+            description: "Platform OIDC exchange issuer for GitHub and Kubernetes workload identity",
+            apiVersion: "v2",
+            appVersion: $version,
+            kubeVersion: ">=1.30.0-0",
+            type: "application"
+          }' > dist/chart-config.json
 
       - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
         with:
@@ -180,18 +205,30 @@ jobs:
           aws ecr describe-image-scan-findings --repository-name "$IMAGE_REPOSITORY_NAME" --image-id imageDigest="$platform_digest" --output json > dist/image.ecr-scan.json
           [[ "$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' dist/image.ecr-scan.json)" == 0 ]]
 
-      - name: Publish immutable chart
+      - name: Publish unique immutable chart candidate
         id: chart
         shell: bash
         run: |
           set -euo pipefail
-          helm push "dist/github-oidc-exchange-$VERSION.tgz" "oci://$ECR_REGISTRY/${CHART_REPOSITORY_NAME%/*}"
-          digest="$(aws ecr describe-images \
+          created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          oras push --image-spec v1.0 \
+            --config dist/chart-config.json:application/vnd.cncf.helm.config.v1+json \
+            --annotation "org.opencontainers.image.created=$created" \
+            --annotation "org.opencontainers.image.description=Platform OIDC exchange issuer for GitHub and Kubernetes workload identity" \
+            --annotation "org.opencontainers.image.title=github-oidc-exchange" \
+            --annotation "org.opencontainers.image.version=$VERSION" \
+            --format json \
+            "$CHART_REFERENCE:$CHART_CANDIDATE_TAG" \
+            "dist/github-oidc-exchange-$VERSION.tgz:application/vnd.cncf.helm.chart.content.v1.tar+gzip" \
+            > dist/chart-candidate.json
+          digest="$(jq -r '.digest' dist/chart-candidate.json)"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          registry_digest="$(aws ecr describe-images \
             --repository-name "$CHART_REPOSITORY_NAME" \
-            --image-ids imageTag="$VERSION" \
+            --image-ids imageTag="$CHART_CANDIDATE_TAG" \
             --query 'imageDetails[0].imageDigest' \
             --output text)"
-          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$registry_digest" == "$digest" ]]
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
           printf '%s\n' "$digest" > dist/chart.digest
 
@@ -239,6 +276,31 @@ jobs:
           docker buildx imagetools create --tag "$IMAGE_REFERENCE:$VERSION" "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"
           published="$(aws ecr batch-get-image --repository-name "$IMAGE_REPOSITORY_NAME" --image-ids imageTag="$VERSION" --query 'images[0].imageId.imageDigest' --output text)"
           [[ "$published" == "${{ steps.image.outputs.digest }}" ]]
+
+      - name: Promote verified chart candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws ecr batch-get-image \
+            --repository-name "$CHART_REPOSITORY_NAME" \
+            --image-ids imageDigest="${{ steps.chart.outputs.digest }}" \
+            --accepted-media-types application/vnd.oci.image.manifest.v1+json \
+            --query 'images[0].imageManifest' \
+            --output text > /tmp/chart-manifest.json
+          media_type="$(jq -r '.mediaType' /tmp/chart-manifest.json)"
+          [[ "$media_type" == application/vnd.oci.image.manifest.v1+json ]]
+          published="$(aws ecr put-image \
+            --repository-name "$CHART_REPOSITORY_NAME" \
+            --image-tag "$VERSION" \
+            --image-manifest file:///tmp/chart-manifest.json \
+            --image-manifest-media-type "$media_type" \
+            --query 'image.imageId.imageDigest' \
+            --output text)"
+          [[ "$published" == "${{ steps.chart.outputs.digest }}" ]]
+          mkdir -p /tmp/promoted-chart
+          helm pull "oci://$CHART_REFERENCE" --version "$VERSION" --destination /tmp/promoted-chart
+          cmp "dist/github-oidc-exchange-$VERSION.tgz" \
+            "/tmp/promoted-chart/github-oidc-exchange-$VERSION.tgz"
 
       - name: Publish signed release handoff
         env:

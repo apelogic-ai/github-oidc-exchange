@@ -3,4 +3,4 @@
 *.pem
 *keyring*.json
 !docs/keyring-contract.example.json
-
+!docs/rsa-keyring-contract.example.json

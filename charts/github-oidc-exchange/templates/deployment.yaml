@@ -18,6 +18,14 @@ spec:
     metadata:
       labels:
         {{- include "github-oidc-exchange.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/github-policy: {{ printf "%s:%s:%s" .Values.config.policyConfigMapName .Values.config.policyConfigMapKey .Values.rolloutRevisions.githubPolicy | sha256sum | quote }}
+        checksum/github-keyring: {{ printf "%s:%s:%s" .Values.config.keyringSecretName .Values.config.keyringSecretKey .Values.rolloutRevisions.githubKeyring | sha256sum | quote }}
+        {{- if .Values.workloadExchange.enabled }}
+        checksum/workload-policy: {{ printf "%s:%s:%s" .Values.workloadExchange.policyConfigMapName .Values.workloadExchange.policyConfigMapKey .Values.rolloutRevisions.workloadPolicy | sha256sum | quote }}
+        checksum/workload-rsa-keyring: {{ printf "%s:%s:%s" .Values.workloadExchange.rsaKeyringSecretName .Values.workloadExchange.rsaKeyringSecretKey .Values.rolloutRevisions.workloadRsaKeyring | sha256sum | quote }}
+        checksum/workload-tls: {{ printf "%s:%s:%s:%s" .Values.workloadExchange.tls.secretName .Values.workloadExchange.tls.certificateKey .Values.workloadExchange.tls.privateKeyKey .Values.rolloutRevisions.workloadTls | sha256sum | quote }}
+        {{- end }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       automountServiceAccountToken: true
@@ -38,6 +46,11 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- if .Values.workloadExchange.enabled }}
+            - name: workload-https
+              containerPort: 8443
+              protocol: TCP
+            {{- end }}
           env:
             - name: ISSUER_URL
               value: {{ required "config.issuerUrl is required" .Values.config.issuerUrl | quote }}
@@ -53,10 +66,31 @@ spec:
               value: /etc/github-oidc-exchange/keyring/keyring.json
             - name: RUST_LOG
               value: github_oidc_exchange=info
+            - name: LISTEN_ADDRESS
+              value: 0.0.0.0:8080
+            {{- if .Values.workloadExchange.enabled }}
+            - name: WORKLOAD_EXCHANGE_ENABLED
+              value: "true"
+            - name: WORKLOAD_INPUT_AUDIENCE
+              value: {{ required "workloadExchange.inputAudience is required" .Values.workloadExchange.inputAudience | quote }}
+            - name: WORKLOAD_OUTPUT_AUDIENCE
+              value: {{ .Values.workloadExchange.outputAudience | quote }}
+            - name: WORKLOAD_POLICY_FILE
+              value: /etc/github-oidc-exchange/workload-policy/workload-policy.json
+            - name: WORKLOAD_RSA_KEYRING_FILE
+              value: /etc/github-oidc-exchange/rsa-keyring/rsa-keyring.json
+            - name: TLS_CERTIFICATE_FILE
+              value: /etc/github-oidc-exchange/tls/tls.crt
+            - name: TLS_PRIVATE_KEY_FILE
+              value: /etc/github-oidc-exchange/tls/tls.key
+            - name: WORKLOAD_LISTEN_ADDRESS
+              value: 0.0.0.0:8443
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
+              scheme: HTTP
             initialDelaySeconds: 2
             periodSeconds: 5
             timeoutSeconds: 2
@@ -65,6 +99,7 @@ spec:
             httpGet:
               path: /healthz
               port: http
+              scheme: HTTP
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 2
@@ -83,6 +118,17 @@ spec:
             - name: keyring
               mountPath: /etc/github-oidc-exchange/keyring
               readOnly: true
+            {{- if .Values.workloadExchange.enabled }}
+            - name: workload-policy
+              mountPath: /etc/github-oidc-exchange/workload-policy
+              readOnly: true
+            - name: rsa-keyring
+              mountPath: /etc/github-oidc-exchange/rsa-keyring
+              readOnly: true
+            - name: tls
+              mountPath: /etc/github-oidc-exchange/tls
+              readOnly: true
+            {{- end }}
       volumes:
         - name: policy
           configMap:
@@ -98,6 +144,31 @@ spec:
             items:
               - key: {{ .Values.config.keyringSecretKey }}
                 path: keyring.json
+        {{- if .Values.workloadExchange.enabled }}
+        - name: workload-policy
+          configMap:
+            name: {{ required "workloadExchange.policyConfigMapName is required" .Values.workloadExchange.policyConfigMapName }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.workloadExchange.policyConfigMapKey }}
+                path: workload-policy.json
+        - name: rsa-keyring
+          secret:
+            secretName: {{ required "workloadExchange.rsaKeyringSecretName is required" .Values.workloadExchange.rsaKeyringSecretName }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.workloadExchange.rsaKeyringSecretKey }}
+                path: rsa-keyring.json
+        - name: tls
+          secret:
+            secretName: {{ required "workloadExchange.tls.secretName is required" .Values.workloadExchange.tls.secretName }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.workloadExchange.tls.certificateKey }}
+                path: tls.crt
+              - key: {{ .Values.workloadExchange.tls.privateKeyKey }}
+                path: tls.key
+        {{- end }}
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
       tolerations:

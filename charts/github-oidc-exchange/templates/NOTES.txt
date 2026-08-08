@@ -1,3 +1,8 @@
 The issuer is fail-closed until image.repository, image.digest, policy ConfigMap, keyring Secret,
 IRSA annotation, replay table, issuer URL, exchange audience, and ingress CIDRs are supplied.
+{{- if .Values.workloadExchange.enabled }}
 
+Workload exchange is HTTPS-only at:
+https://github-oidc-exchange.github-oidc-exchange.svc.cluster.local:8443/v1/workload/exchange
+Its server certificate must include github-oidc-exchange.github-oidc-exchange.svc.cluster.local.
+{{- end }}

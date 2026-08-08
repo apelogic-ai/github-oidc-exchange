@@ -1,13 +1,23 @@
-use std::{collections::HashMap, fs::File, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    path::Path,
+};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-use p256::{SecretKey, elliptic_curve::sec1::ToEncodedPoint, pkcs8::EncodePrivateKey};
+use p256::{SecretKey, elliptic_curve::sec1::ToEncodedPoint};
+use rsa::{
+    RsaPrivateKey,
+    pkcs1::EncodeRsaPrivateKey,
+    pkcs8::{DecodePrivateKey, EncodePrivateKey},
+    traits::PublicKeyParts,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::KEYRING_VERSION;
+use crate::{KEYRING_VERSION, RSA_KEYRING_VERSION};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -31,6 +41,28 @@ pub struct KeyRing {
     keys: HashMap<String, SecretKey>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RsaKeyRingFile {
+    version: String,
+    current_kid: String,
+    keys: Vec<RsaKeySpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RsaKeySpec {
+    kid: String,
+    private_key_pkcs8_pem: String,
+    not_before: DateTime<Utc>,
+    not_after: DateTime<Utc>,
+}
+
+pub struct RsaKeyRing {
+    current_kid: String,
+    keys: HashMap<String, RsaPrivateKey>,
+}
+
 #[derive(Debug, Error)]
 pub enum KeyError {
     #[error("keyring is invalid: {0}")]
@@ -45,7 +77,14 @@ pub struct JwkSet {
 }
 
 #[derive(Debug, Serialize)]
-struct PublicJwk {
+#[serde(untagged)]
+enum PublicJwk {
+    Ec(EcPublicJwk),
+    Rsa(RsaPublicJwk),
+}
+
+#[derive(Debug, Serialize)]
+struct EcPublicJwk {
     kty: &'static str,
     #[serde(rename = "use")]
     usage: &'static str,
@@ -54,6 +93,17 @@ struct PublicJwk {
     crv: &'static str,
     x: String,
     y: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RsaPublicJwk {
+    kty: &'static str,
+    #[serde(rename = "use")]
+    usage: &'static str,
+    alg: &'static str,
+    kid: String,
+    n: String,
+    e: String,
 }
 
 impl KeyRing {
@@ -66,9 +116,13 @@ impl KeyRing {
             return Err(invalid("unsupported or empty keyring"));
         }
         let mut keys = HashMap::new();
+        let mut key_ids = HashSet::new();
         let mut current_valid = false;
         for spec in input.keys {
-            if spec.kid.is_empty() || spec.not_after <= spec.not_before {
+            if spec.kid.is_empty()
+                || spec.not_after <= spec.not_before
+                || !key_ids.insert(spec.kid.clone())
+            {
                 return Err(invalid("key IDs and validity windows are required"));
             }
             let seed = STANDARD
@@ -82,8 +136,8 @@ impl KeyRing {
             if spec.kid == input.current_kid {
                 current_valid = now >= spec.not_before && now < spec.not_after;
             }
-            if now < spec.not_after && keys.insert(spec.kid, key).is_some() {
-                return Err(invalid("key IDs must be unique"));
+            if now < spec.not_after {
+                keys.insert(spec.kid, key);
             }
         }
         if !current_valid || !keys.contains_key(&input.current_kid) {
@@ -118,7 +172,7 @@ impl KeyRing {
                 let (Some(x), Some(y)) = (point.x(), point.y()) else {
                     return None;
                 };
-                Some(PublicJwk {
+                Some(PublicJwk::Ec(EcPublicJwk {
                     kty: "EC",
                     usage: "sig",
                     alg: "ES256",
@@ -126,11 +180,119 @@ impl KeyRing {
                     crv: "P-256",
                     x: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(x),
                     y: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(y),
+                }))
+            })
+            .collect();
+        keys.sort_by(|left, right| jwk_kid(left).cmp(jwk_kid(right)));
+        JwkSet { keys }
+    }
+
+    pub fn contains_kid(&self, kid: &str) -> bool {
+        self.keys.contains_key(kid)
+    }
+}
+
+impl RsaKeyRing {
+    pub fn load(path: &Path, now: DateTime<Utc>) -> Result<Self, KeyError> {
+        let file = File::open(path).map_err(|error| KeyError::Invalid(error.to_string()))?;
+        let input: RsaKeyRingFile =
+            serde_json::from_reader(file).map_err(|error| KeyError::Invalid(error.to_string()))?;
+        if input.version != RSA_KEYRING_VERSION
+            || input.current_kid.is_empty()
+            || input.keys.is_empty()
+        {
+            return Err(invalid("unsupported or empty RSA keyring"));
+        }
+        let mut keys = HashMap::new();
+        let mut key_ids = HashSet::new();
+        let mut current_valid = false;
+        for spec in input.keys {
+            if spec.kid.is_empty()
+                || spec.not_after <= spec.not_before
+                || !key_ids.insert(spec.kid.clone())
+            {
+                return Err(invalid("key IDs and validity windows are required"));
+            }
+            let key = RsaPrivateKey::from_pkcs8_pem(&spec.private_key_pkcs8_pem)
+                .map_err(|_| invalid("RSA private keys must be PKCS#8 PEM"))?;
+            if key.n().bits() < 3072 {
+                return Err(invalid("RSA private keys must be at least 3072 bits"));
+            }
+            key.validate()
+                .map_err(|_| invalid("RSA private key failed validation"))?;
+            if spec.kid == input.current_kid {
+                current_valid = now >= spec.not_before && now < spec.not_after;
+            }
+            if now < spec.not_after {
+                keys.insert(spec.kid, key);
+            }
+        }
+        if !current_valid || !keys.contains_key(&input.current_kid) {
+            return Err(invalid(
+                "current RSA signing key is missing or outside its validity window",
+            ));
+        }
+        Ok(Self {
+            current_kid: input.current_kid,
+            keys,
+        })
+    }
+
+    pub fn sign<T: Serialize>(&self, claims: &T) -> Result<String, KeyError> {
+        let signing_key = self
+            .keys
+            .get(&self.current_kid)
+            .ok_or_else(|| invalid("current RSA signing key is unavailable"))?;
+        let document = signing_key.to_pkcs1_der().map_err(|_| KeyError::Signing)?;
+        let encoding_key = EncodingKey::from_rsa_der(document.as_bytes());
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some(self.current_kid.clone());
+        encode(&header, claims, &encoding_key).map_err(|_| KeyError::Signing)
+    }
+
+    pub fn jwks(&self) -> JwkSet {
+        let mut keys: Vec<_> = self
+            .keys
+            .iter()
+            .map(|(kid, key)| {
+                PublicJwk::Rsa(RsaPublicJwk {
+                    kty: "RSA",
+                    usage: "sig",
+                    alg: "RS256",
+                    kid: kid.clone(),
+                    n: base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .encode(key.n().to_bytes_be()),
+                    e: base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .encode(key.e().to_bytes_be()),
                 })
             })
             .collect();
-        keys.sort_by(|left, right| left.kid.cmp(&right.kid));
+        keys.sort_by(|left, right| jwk_kid(left).cmp(jwk_kid(right)));
         JwkSet { keys }
+    }
+
+    pub fn ensure_disjoint_from(&self, keyring: &KeyRing) -> Result<(), KeyError> {
+        if self.keys.keys().any(|kid| keyring.contains_kid(kid)) {
+            return Err(invalid(
+                "P-256 and RSA keyrings must use globally unique key IDs",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl JwkSet {
+    pub fn extend(&mut self, other: Self) {
+        self.keys.extend(other.keys);
+        self.keys
+            .sort_by(|left, right| jwk_kid(left).cmp(jwk_kid(right)));
+    }
+}
+
+fn jwk_kid(jwk: &PublicJwk) -> &str {
+    match jwk {
+        PublicJwk::Ec(key) => &key.kid,
+        PublicJwk::Rsa(key) => &key.kid,
     }
 }
 
