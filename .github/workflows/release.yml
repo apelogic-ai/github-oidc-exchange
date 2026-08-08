@@ -281,20 +281,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          aws ecr batch-get-image \
+          oras tag "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" "$VERSION"
+          published="$(aws ecr batch-get-image \
             --repository-name "$CHART_REPOSITORY_NAME" \
-            --image-ids imageDigest="${{ steps.chart.outputs.digest }}" \
-            --accepted-media-types application/vnd.oci.image.manifest.v1+json \
-            --query 'images[0].imageManifest' \
-            --output text > /tmp/chart-manifest.json
-          media_type="$(jq -r '.mediaType' /tmp/chart-manifest.json)"
-          [[ "$media_type" == application/vnd.oci.image.manifest.v1+json ]]
-          published="$(aws ecr put-image \
-            --repository-name "$CHART_REPOSITORY_NAME" \
-            --image-tag "$VERSION" \
-            --image-manifest file:///tmp/chart-manifest.json \
-            --image-manifest-media-type "$media_type" \
-            --query 'image.imageId.imageDigest' \
+            --image-ids imageTag="$VERSION" \
+            --query 'images[0].imageId.imageDigest' \
             --output text)"
           [[ "$published" == "${{ steps.chart.outputs.digest }}" ]]
           mkdir -p /tmp/promoted-chart

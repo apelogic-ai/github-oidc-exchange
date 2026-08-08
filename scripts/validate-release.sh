@@ -19,7 +19,7 @@ required=(
   'aws ecr describe-images'
   'Promote verified image candidate'
   'Promote verified chart candidate'
-  'aws ecr put-image'
+  'oras tag "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" "$VERSION"'
   'gh release create "v$VERSION"'
 )
 
@@ -165,6 +165,12 @@ fi
 
 if grep -Fq -- 'helm push' "$workflow"; then
   printf 'chart must use a unique candidate tag before semantic promotion\n' >&2
+  exit 1
+fi
+
+if grep -Fq -- 'aws ecr put-image' "$workflow" ||
+  grep -Fq -- '--output text > /tmp/chart-manifest.json' "$workflow"; then
+  printf 'chart promotion must preserve the verified OCI manifest digest\n' >&2
   exit 1
 fi
 
