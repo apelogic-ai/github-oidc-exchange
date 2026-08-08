@@ -21,6 +21,8 @@ jobs:
           persist-credentials: false
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
+      - name: Validate runtime smoke contract
+        run: bash scripts/validate-runtime-smoke.sh
       - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
         with:
           version: v3.17.1
@@ -58,6 +60,8 @@ jobs:
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Build release image locally
         run: docker buildx build --platform linux/amd64 --load --tag github-oidc-exchange:ci .
+      - name: Smoke final release image
+        run: bash scripts/smoke-release-container.sh github-oidc-exchange:ci
       - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
         with:
           image-ref: github-oidc-exchange:ci

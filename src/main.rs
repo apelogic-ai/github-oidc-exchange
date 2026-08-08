@@ -18,6 +18,9 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .map_err(|_| std::io::Error::other("rustls CryptoProvider was already installed"))?;
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(EnvFilter::from_default_env())
