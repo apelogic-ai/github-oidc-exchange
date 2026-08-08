@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fs, sync::Arc, sync::atomic::Ordering, time::Duration};
+use std::{
+    collections::HashMap,
+    fs,
+    sync::{Arc, OnceLock, atomic::Ordering},
+    time::Duration,
+};
 
 use axum::{
     body::Body,
@@ -35,6 +40,19 @@ use rsa::{
 use serde::Deserialize;
 use tempfile::NamedTempFile;
 use tower::ServiceExt;
+
+static TEST_CRYPTO_PROVIDER: OnceLock<Result<(), &'static str>> = OnceLock::new();
+
+fn install_test_crypto_provider() -> Result<(), Box<dyn std::error::Error>> {
+    match TEST_CRYPTO_PROVIDER.get_or_init(|| {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .map_err(|_| "rustls CryptoProvider was already installed before test setup")
+    }) {
+        Ok(()) => Ok(()),
+        Err(message) => Err(std::io::Error::other(*message).into()),
+    }
+}
 
 const AUDIENCE: &str = "apelogic-github-identity-exchange";
 const SUBJECT: &str = "repo:apelogic-ai@227278099/steward-run@1320906141:ref:refs/heads/main";
@@ -323,6 +341,7 @@ fn unverified_or_noncanonical_actor_mapping_fails_closed() {
 #[tokio::test]
 async fn github_assertions_require_exact_issuer_audience_and_freshness()
 -> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
     let (encoding, decoding) = rsa_key()?;
     let verifier =
         GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
@@ -457,6 +476,7 @@ fn policy_file_rejects_unknown_fields() -> Result<(), Box<dyn std::error::Error>
 #[tokio::test]
 async fn source_jti_is_single_use_and_output_is_eks_shaped()
 -> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
     let (encoding, decoding) = rsa_key()?;
     let verifier =
         GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
@@ -630,6 +650,7 @@ async fn workload_exchange_separates_denial_from_token_review_outage()
 #[tokio::test]
 async fn workload_http_contract_is_empty_body_only_and_preserves_github_es256()
 -> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
     let (github_encoding, github_decoding) = rsa_key()?;
     let verifier = GitHubVerifier::with_test_key(
         AUDIENCE.to_owned(),

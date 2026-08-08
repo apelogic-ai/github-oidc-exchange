@@ -64,6 +64,9 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
 
+      - name: Validate runtime smoke contract before cloud authentication
+        run: bash scripts/validate-runtime-smoke.sh
+
       - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
         with:
           version: v3.17.1
@@ -135,6 +138,9 @@ jobs:
             org.opencontainers.image.version=${{ env.VERSION }}
           provenance: mode=max
           sbom: true
+
+      - name: Smoke exact immutable image candidate
+        run: bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"
 
       - name: Package and scan chart locally
         shell: bash
