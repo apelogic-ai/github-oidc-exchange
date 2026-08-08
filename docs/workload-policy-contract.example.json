@@ -1,0 +1,13 @@
+{
+  "version": "github-oidc-exchange.apelogic.io/workload-policy-v1",
+  "identities": [
+    {
+      "username": "system:serviceaccount:example-namespace:example-controller",
+      "subject": "kubernetes:serviceaccount:example-namespace:example-controller",
+      "roles": [
+        "example-admin",
+        "example-user"
+      ]
+    }
+  ]
+}

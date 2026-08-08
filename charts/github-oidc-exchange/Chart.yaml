@@ -1,7 +1,8 @@
 apiVersion: v2
 name: github-oidc-exchange
-description: GitHub Actions OIDC exchange issuer for Kubernetes identity
+description: >-
+  Platform OIDC exchange issuer for GitHub and Kubernetes workload identity
 type: application
-version: 0.2.1
-appVersion: "0.2.1"
+version: 0.3.0
+appVersion: "0.3.0"
 kubeVersion: ">=1.30.0-0"

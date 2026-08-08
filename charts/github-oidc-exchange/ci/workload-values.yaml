@@ -1,0 +1,53 @@
+image:
+  repository: registry.example.invalid/platform/github-oidc-exchange
+  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/example
+
+config:
+  issuerUrl: https://identity.example.invalid
+  githubExchangeAudience: example-identity-exchange
+  replayTable: example-replay
+  policyConfigMapName: example-policy
+  keyringSecretName: example-keyring
+
+rolloutRevisions:
+  githubPolicy: rev-1
+  githubKeyring: rev-1
+  workloadPolicy: rev-1
+  workloadRsaKeyring: rev-1
+  workloadTls: rev-1
+
+workloadExchange:
+  enabled: true
+  inputAudience: example-workload-exchange
+  outputAudience: openshell-api
+  policyConfigMapName: example-workload-policy
+  rsaKeyringSecretName: example-workload-rsa-keyring
+  tls:
+    secretName: example-server-tls
+  networkPolicy:
+    callerNamespaceSelector:
+      kubernetes.io/metadata.name: example-caller
+    callerPodSelector:
+      app.kubernetes.io/name: example-caller
+
+service:
+  port: 8080
+
+ingress:
+  enabled: true
+  host: identity.example.invalid
+
+serviceMonitor:
+  enabled: true
+
+networkPolicy:
+  ingressCidrs:
+    - 10.0.0.0/16
+  metricsNamespaceSelector:
+    kubernetes.io/metadata.name: monitoring
+  metricsPodSelector:
+    app.kubernetes.io/name: prometheus

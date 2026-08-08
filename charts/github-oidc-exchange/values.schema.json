@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["replicaCount", "image", "serviceAccount", "config", "networkPolicy", "resources"],
+  "required": ["replicaCount", "image", "serviceAccount", "config", "rolloutRevisions", "workloadExchange", "service", "networkPolicy", "resources"],
   "properties": {
     "replicaCount": {"type": "integer", "minimum": 2},
     "image": {
@@ -27,6 +27,54 @@
         "keyringSecretKey": {"type": "string", "minLength": 1}
       }
     },
+    "rolloutRevisions": {
+      "type": "object",
+      "required": ["githubPolicy", "githubKeyring", "workloadPolicy", "workloadRsaKeyring", "workloadTls"],
+      "properties": {
+        "githubPolicy": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+        "githubKeyring": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+        "workloadPolicy": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"},
+        "workloadRsaKeyring": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"},
+        "workloadTls": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"}
+      }
+    },
+    "workloadExchange": {
+      "type": "object",
+      "required": ["enabled", "outputAudience", "tls", "networkPolicy"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "inputAudience": {"type": "string"},
+        "outputAudience": {"const": "openshell-api"},
+        "policyConfigMapName": {"type": "string"},
+        "policyConfigMapKey": {"type": "string", "minLength": 1},
+        "rsaKeyringSecretName": {"type": "string"},
+        "rsaKeyringSecretKey": {"type": "string", "minLength": 1},
+        "tls": {
+          "type": "object",
+          "required": ["secretName", "certificateKey", "privateKeyKey"],
+          "properties": {
+            "secretName": {"type": "string"},
+            "certificateKey": {"type": "string", "minLength": 1},
+            "privateKeyKey": {"type": "string", "minLength": 1}
+          }
+        },
+        "networkPolicy": {
+          "type": "object",
+          "required": ["callerNamespaceSelector", "callerPodSelector"],
+          "properties": {
+            "callerNamespaceSelector": {"type": "object"},
+            "callerPodSelector": {"type": "object"}
+          }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": ["port"],
+      "properties": {
+        "port": {"const": 8080}
+      }
+    },
     "networkPolicy": {
       "type": "object",
       "required": ["enabled", "ingressCidrs"],
@@ -48,6 +96,47 @@
       "if": {"properties": {"enabled": {"const": true}}},
       "then": {"properties": {"host": {"type": "string", "minLength": 1}}}
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "workloadExchange": {
+            "properties": {"enabled": {"const": true}},
+            "required": ["enabled"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "workloadExchange": {
+            "required": ["inputAudience", "policyConfigMapName", "rsaKeyringSecretName"],
+            "properties": {
+              "inputAudience": {"type": "string", "minLength": 1},
+              "policyConfigMapName": {"type": "string", "minLength": 1},
+              "rsaKeyringSecretName": {"type": "string", "minLength": 1},
+              "tls": {
+                "properties": {
+                  "secretName": {"type": "string", "minLength": 1}
+                }
+              },
+              "networkPolicy": {
+                "properties": {
+                  "callerNamespaceSelector": {"minProperties": 1},
+                  "callerPodSelector": {"minProperties": 1}
+                }
+              }
+            }
+          },
+          "rolloutRevisions": {
+            "properties": {
+              "workloadPolicy": {"pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+              "workloadRsaKeyring": {"pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+              "workloadTls": {"pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}
+            }
+          }
+        }
+      }
+    }
+  ]
 }
-

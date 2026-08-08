@@ -20,6 +20,29 @@ config:
   keyringSecretName: ""
   keyringSecretKey: keyring.json
 
+rolloutRevisions:
+  githubPolicy: ""
+  githubKeyring: ""
+  workloadPolicy: ""
+  workloadRsaKeyring: ""
+  workloadTls: ""
+
+workloadExchange:
+  enabled: false
+  inputAudience: ""
+  outputAudience: openshell-api
+  policyConfigMapName: ""
+  policyConfigMapKey: workload-policy.json
+  rsaKeyringSecretName: ""
+  rsaKeyringSecretKey: rsa-keyring.json
+  tls:
+    secretName: ""
+    certificateKey: tls.crt
+    privateKeyKey: tls.key
+  networkPolicy:
+    callerNamespaceSelector: {}
+    callerPodSelector: {}
+
 service:
   port: 8080
 
@@ -57,4 +80,3 @@ serviceMonitor:
 nodeSelector: {}
 tolerations: []
 affinity: {}
-

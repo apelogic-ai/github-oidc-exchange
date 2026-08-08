@@ -1,9 +1,11 @@
 # GitHub OIDC exchange issuer
 
-`github-oidc-exchange` is a platform-owned identity boundary for GitHub Actions jobs. It validates
-a short-lived GitHub OIDC assertion, applies a private default-deny authorization and corporate
+`github-oidc-exchange` is a platform-owned identity boundary. Its primary profile validates a
+short-lived GitHub OIDC assertion, applies a private default-deny authorization and corporate
 identity mapping, records the source `jti` in a DynamoDB replay ledger, and issues a two-minute
-ES256 token that an EKS external OIDC identity provider can authenticate.
+ES256 token that an EKS external OIDC identity provider can authenticate. An opt-in workload
+profile validates a projected Kubernetes service-account token through `TokenReview` and issues a
+separate, two-minute RS256 token with server-selected roles for OpenShell 0.0.98 compatibility.
 
 It is not a general OAuth provider, a Kubernetes authentication webhook, or part of any calling
 application. Environment policy belongs in a private deployment repository; this repository
@@ -12,8 +14,12 @@ contains only the generic engine and chart.
 ## Protocol
 
 - `GET /.well-known/openid-configuration` — public OIDC discovery.
-- `GET /jwks.json` — active and overlapping public Ed25519 keys.
+- `GET /jwks.json` — active and overlapping public P-256 keys and, when workload exchange is
+  enabled, the separate RSA keys.
 - `POST /v1/exchange` — requires `Authorization: Bearer <GitHub OIDC JWT>`.
+- `POST /v1/workload/exchange` — HTTPS-only, requires an empty body and
+  `Authorization: Bearer <projected service-account JWT>`. The chart does not publish this path
+  through its Ingress.
 - `GET /healthz`, `GET /readyz`, `GET /metrics` — cluster-local operations endpoints.
 
 The GitHub assertion must have:
@@ -34,6 +40,20 @@ The output contains exactly one audience, `email`, deployment-ratified `groups`,
 Profiles are selected only by exact GitHub claim matches. The caller cannot request a profile,
 and ambiguous matching rules fail closed. The source assertion and issued token are never logged.
 
+The workload profile has a separate default-deny policy. It asks the Kubernetes API to review the
+source token against one exact configured audience and requires an exact service-account username
+mapping. The request cannot select an audience, subject, role, signing algorithm, or lifetime. The
+initial OpenShell contract emits exactly one audience, a stable workload subject, the policy-owned
+`roles` array, and `identity_contract=openshell-workload-v1`. It deliberately does not emit GitHub
+claims, corporate email, or Steward groups. Unlike GitHub's one-time assertion, a rotating bound
+service-account token may be exchanged more than once during its validity window.
+
+OpenShell 0.0.98 accepts only RS256, so workload tokens use a dedicated RSA-3072-or-larger keyring.
+GitHub exchange tokens remain ES256 under all configurations; callers cannot choose either
+algorithm. This compatibility keyring can be retired after a reviewed OpenShell release containing
+[NVIDIA/OpenShell PR #2593](https://github.com/NVIDIA/OpenShell/pull/2593) is deployed and the
+workload profile is migrated through a separately reviewed contract change.
+
 ## Runtime configuration
 
 | Environment variable | Contract |
@@ -45,14 +65,65 @@ and ambiguous matching rules fail closed. The source assertion and issued token 
 | `KEYRING_FILE` | Mounted Secrets Manager-backed signing keyring. |
 | `REPLAY_TABLE` | DynamoDB table with SHA-256 `jti_hash` string partition key and `expires_at` TTL. |
 | `LISTEN_ADDRESS` | Optional; defaults to `0.0.0.0:8080`. |
+| `WORKLOAD_EXCHANGE_ENABLED` | Optional; `true` enables the separate internal workload listener and requires every workload setting below. |
+| `WORKLOAD_LISTEN_ADDRESS` | Internal HTTPS listener; defaults to `0.0.0.0:8443` and must differ from `LISTEN_ADDRESS`. |
+| `WORKLOAD_INPUT_AUDIENCE` | Exact audience supplied to Kubernetes `TokenReview`. |
+| `WORKLOAD_OUTPUT_AUDIENCE` | Must be `openshell-api`. |
+| `WORKLOAD_POLICY_FILE` | Mounted private exact-username-to-subject-and-roles policy. |
+| `WORKLOAD_RSA_KEYRING_FILE` | Mounted Secrets Manager-backed RSA-3072+ compatibility keyring. |
+| `TLS_CERTIFICATE_FILE` | Server certificate chain PEM. Required when workload exchange is enabled. |
+| `TLS_PRIVATE_KEY_FILE` | Server private-key PEM. Required when workload exchange is enabled. |
+| `KUBERNETES_CA_CERTIFICATE_FILE` | Optional Kubernetes API CA path; defaults to the in-cluster service-account CA. |
+| `KUBERNETES_SERVICE_ACCOUNT_TOKEN_FILE` | Optional rotating API credential path; defaults to the in-cluster service-account token. |
 
 The production pod requires an IRSA role with only `dynamodb:DescribeTable` and
-`dynamodb:PutItem` on its one replay table. It receives no Kubernetes RBAC permissions.
-Key rotation requires an ordinary rolling restart after ESO projects the overlapping keyring;
-the prior key must remain valid until all tokens it signed have expired.
+`dynamodb:PutItem` on its one replay table. When workload exchange is disabled, it receives no
+Kubernetes RBAC permissions. Enabling workload exchange adds exactly `create` on
+`tokenreviews.authentication.k8s.io`.
+
+Workload exchange requires product-native server-authenticated TLS. The chart contract is:
+
+- endpoint `https://github-oidc-exchange.github-oidc-exchange.svc.cluster.local:8443/v1/workload/exchange`;
+- certificate SAN `github-oidc-exchange.github-oidc-exchange.svc.cluster.local`;
+- TLS Secret keys `tls.crt` and `tls.key`;
+- a caller-mounted public CA bundle supplied out of band by GitOps;
+- bearer TokenReview plus exact policy mapping for caller authentication; mTLS is not required.
+
+The public HTTP listener remains on port 8080 and serves discovery, JWKS, the GitHub exchange,
+health, readiness, and metrics. The separate HTTPS listener on port 8443 serves only workload
+exchange plus health/readiness. The public ALB backend and ServiceMonitor use port 8080; the
+workload path is never registered on that listener or added to Ingress. NetworkPolicy allows the
+configured public ingress CIDRs only to port 8080 and the exact Steward namespace/pod selectors
+only to port 8443.
+
+The pod needs outbound HTTPS for GitHub JWKS, DynamoDB, and Kubernetes TokenReview. The chart's
+`0.0.0.0/0:443` egress rule therefore does not claim destination-level Kubernetes API isolation;
+TLS verification, exact TokenReview audience, workload policy, and IAM remain the authorization
+boundaries.
+
+Signing and TLS material are loaded only at process startup; there is no hot reload. Signing-key
+rotation is two phase: first project an overlapping keyring, trigger a checksum-based rolling
+restart, and verify both old and new public keys in JWKS; then select the new current key, roll
+again, wait for every old two-minute token plus clock-skew allowance to expire, and only then remove
+the old key in a final rollout. TLS/root rotation likewise publishes an overlapping caller trust
+bundle before issuing the new serving certificate and rolling the pods. Remove the old root only
+after every caller and server replica is verified on the new chain. ESO projection alone is not a
+rollout mechanism.
+
+The chart requires deployment-owned, non-secret `rolloutRevisions` for `githubPolicy`,
+`githubKeyring`, `workloadPolicy`, `workloadRsaKeyring`, and `workloadTls`. Each revision is a short
+opaque value such as `rev-2`, stored safely in Git and never derived from Secret bytes. The chart
+combines the revision with its Kubernetes object/key references and hashes that tuple into the
+pod-template annotation. A rotation must wait for ESO or cert-manager to project and securely
+verify the new overlapping content, bump only the matching revision in a reviewed GitOps change,
+and observe the resulting rolling restart before advancing to the removal phase. This requires no
+Secret-reading principal, controller, or image. Unchanged references and revisions render stable
+annotations.
 
 See [the policy example](docs/policy-contract.example.json),
-[key rotation contract](docs/keyring-contract.example.json), and the Helm chart under
+[P-256 key rotation contract](docs/keyring-contract.example.json),
+[workload policy example](docs/workload-policy-contract.example.json),
+[RSA key rotation contract](docs/rsa-keyring-contract.example.json), and the Helm chart under
 `charts/github-oidc-exchange`.
 
 ## Development

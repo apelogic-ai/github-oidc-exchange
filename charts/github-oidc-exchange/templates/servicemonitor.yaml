@@ -11,7 +11,7 @@ spec:
       {{- include "github-oidc-exchange.selectorLabels" . | nindent 6 }}
   endpoints:
     - port: http
+      scheme: http
       path: /metrics
       interval: {{ .Values.serviceMonitor.interval }}
 {{- end }}
-

@@ -13,6 +13,10 @@ config:
   policyConfigMapName: example-policy
   keyringSecretName: example-keyring
 
+rolloutRevisions:
+  githubPolicy: rev-1
+  githubKeyring: rev-1
+
 networkPolicy:
   ingressCidrs:
     - 10.0.0.0/16
@@ -20,4 +24,3 @@ networkPolicy:
 ingress:
   enabled: true
   host: identity.example.invalid
-

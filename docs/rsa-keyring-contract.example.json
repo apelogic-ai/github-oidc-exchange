@@ -1,0 +1,18 @@
+{
+  "version": "github-oidc-exchange.apelogic.io/rsa-keyring-v1",
+  "current_kid": "2026-08-rsa-b",
+  "keys": [
+    {
+      "kid": "2026-08-rsa-a",
+      "private_key_pkcs8_pem": "replace-me",
+      "not_before": "2026-08-01T00:00:00Z",
+      "not_after": "2026-08-09T00:00:00Z"
+    },
+    {
+      "kid": "2026-08-rsa-b",
+      "private_key_pkcs8_pem": "replace-me",
+      "not_before": "2026-08-08T00:00:00Z",
+      "not_after": "2026-09-08T00:00:00Z"
+    }
+  ]
+}

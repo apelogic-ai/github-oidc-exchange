@@ -1,22 +1,40 @@
 use std::{collections::HashMap, fs, sync::Arc, sync::atomic::Ordering, time::Duration};
 
+use axum::{
+    body::Body,
+    http::{Request, StatusCode, header},
+};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{Duration as ChronoDuration, Utc};
 use github_oidc_exchange::{
-    GITHUB_ISSUER, IDENTITY_CONTRACT, KEYRING_VERSION, POLICY_VERSION,
+    GITHUB_ISSUER, IDENTITY_CONTRACT, KEYRING_VERSION, POLICY_VERSION, RSA_KEYRING_VERSION,
+    WORKLOAD_IDENTITY_CONTRACT, WORKLOAD_POLICY_VERSION,
     github::{Audience, GitHubClaims, GitHubVerifier},
-    keys::KeyRing,
+    http::separated_routers_with_workload,
+    keys::{KeyRing, RsaKeyRing},
     policy::{Actor, IdentityProfile, Policy, PolicyError, RepositoryPolicy},
     replay::{MemoryReplayLedger, ReplayError, ReplayLedger},
     service::{ExchangeError, ExchangeService, Metrics},
+    workload::{
+        ReviewError, ReviewedWorkload, TokenReviewer, WorkloadExchangeError,
+        WorkloadExchangeService, WorkloadIdentity, WorkloadMetrics, WorkloadPolicy,
+        WorkloadPolicyError,
+    },
 };
+use http_body_util::BodyExt;
 use jsonwebtoken::{
     Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode, jwk::JwkSet,
 };
 use rand::thread_rng;
-use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
+use rsa::{
+    RsaPrivateKey,
+    pkcs1::EncodeRsaPrivateKey,
+    pkcs8::{EncodePrivateKey, LineEnding},
+    traits::PublicKeyParts,
+};
 use serde::Deserialize;
 use tempfile::NamedTempFile;
+use tower::ServiceExt;
 
 const AUDIENCE: &str = "apelogic-github-identity-exchange";
 const SUBJECT: &str = "repo:apelogic-ai@227278099/steward-run@1320906141:ref:refs/heads/main";
@@ -27,6 +45,10 @@ const BOOTSTRAP_CALLER_WORKFLOW: &str =
     "apelogic-ai/steward-run/.github/workflows/bootstrap.yml@refs/heads/main";
 const BOOTSTRAP_WORKFLOW: &str =
     "apelogic-ai/steward-run/.github/workflows/bootstrap-executor.yml@refs/heads/main";
+const WORKLOAD_INPUT_AUDIENCE: &str = "apelogic-workload-exchange";
+const WORKLOAD_OUTPUT_AUDIENCE: &str = "openshell-api";
+const WORKLOAD_USERNAME: &str = "system:serviceaccount:steward:steward-controller";
+const WORKLOAD_SUBJECT: &str = "kubernetes:serviceaccount:steward:steward-controller";
 
 fn policy() -> Policy {
     Policy {
@@ -164,6 +186,75 @@ fn keyring() -> Result<KeyRing, Box<dyn std::error::Error>> {
     });
     fs::write(file.path(), serde_json::to_vec(&content)?)?;
     Ok(KeyRing::load(file.path(), now)?)
+}
+
+fn workload_policy() -> WorkloadPolicy {
+    WorkloadPolicy {
+        version: WORKLOAD_POLICY_VERSION.to_owned(),
+        identities: vec![WorkloadIdentity {
+            username: WORKLOAD_USERNAME.to_owned(),
+            subject: WORKLOAD_SUBJECT.to_owned(),
+            roles: vec!["openshell-user".to_owned(), "openshell-admin".to_owned()],
+        }],
+    }
+}
+
+fn rsa_keyring_with_bits(bits: usize) -> Result<RsaKeyRing, Box<dyn std::error::Error>> {
+    let now = Utc::now();
+    let private = RsaPrivateKey::new(&mut thread_rng(), bits)?;
+    let pem = private.to_pkcs8_pem(LineEnding::LF)?.to_string();
+    let file = NamedTempFile::new()?;
+    let content = serde_json::json!({
+        "version": RSA_KEYRING_VERSION,
+        "current_kid": "current-rsa",
+        "keys": [
+            {
+                "kid": "previous-rsa",
+                "private_key_pkcs8_pem": pem.clone(),
+                "not_before": (now - ChronoDuration::days(2)).to_rfc3339(),
+                "not_after": (now + ChronoDuration::hours(1)).to_rfc3339()
+            },
+            {
+                "kid": "current-rsa",
+                "private_key_pkcs8_pem": pem,
+                "not_before": (now - ChronoDuration::hours(1)).to_rfc3339(),
+                "not_after": (now + ChronoDuration::days(2)).to_rfc3339()
+            }
+        ]
+    });
+    fs::write(file.path(), serde_json::to_vec(&content)?)?;
+    Ok(RsaKeyRing::load(file.path(), now)?)
+}
+
+#[derive(Clone)]
+enum MockReview {
+    Accept(String),
+    Invalid,
+    Unavailable,
+}
+
+#[derive(Clone)]
+struct MockReviewer {
+    outcome: MockReview,
+}
+
+impl TokenReviewer for MockReviewer {
+    async fn review(
+        &self,
+        token: String,
+        audience: String,
+    ) -> Result<ReviewedWorkload, ReviewError> {
+        if token != "projected-source-token" || audience != WORKLOAD_INPUT_AUDIENCE {
+            return Err(ReviewError::Invalid);
+        }
+        match &self.outcome {
+            MockReview::Accept(username) => Ok(ReviewedWorkload {
+                username: username.clone(),
+            }),
+            MockReview::Invalid => Err(ReviewError::Invalid),
+            MockReview::Unavailable => Err(ReviewError::Unavailable),
+        }
+    }
 }
 
 #[test]
@@ -424,4 +515,243 @@ async fn memory_ledger_rejects_replay() {
         ledger.use_once("jti", expiry).await,
         Err(ReplayError::Replayed)
     );
+}
+
+#[test]
+fn workload_policy_is_exact_and_default_deny() -> Result<(), Box<dyn std::error::Error>> {
+    let policy = workload_policy();
+    policy.validate()?;
+    let identity = policy.authorize(WORKLOAD_USERNAME)?;
+    assert_eq!(identity.subject, WORKLOAD_SUBJECT);
+    assert_eq!(identity.roles, vec!["openshell-admin", "openshell-user"]);
+    assert_eq!(
+        policy.authorize("system:serviceaccount:steward:other"),
+        Err(WorkloadPolicyError::Unauthorized)
+    );
+
+    let mut wildcard = workload_policy();
+    wildcard.identities[0].username = "system:serviceaccount:steward:*".to_owned();
+    assert!(wildcard.validate().is_err());
+    let mut duplicate = workload_policy();
+    duplicate.identities.push(duplicate.identities[0].clone());
+    assert!(duplicate.validate().is_err());
+    let mut mismatched_subject = workload_policy();
+    mismatched_subject.identities[0].subject = "kubernetes:serviceaccount:other:caller".to_owned();
+    assert!(mismatched_subject.validate().is_err());
+    let mut duplicate_role = workload_policy();
+    duplicate_role.identities[0].roles = vec!["openshell-admin".to_owned(); 2];
+    assert!(duplicate_role.validate().is_err());
+    Ok(())
+}
+
+#[test]
+fn workload_rsa_keyring_requires_rsa_3072_and_publishes_overlap()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert!(rsa_keyring_with_bits(2048).is_err());
+    let keyring = rsa_keyring_with_bits(3072)?;
+    let jwks: JwkSet = serde_json::from_value(serde_json::to_value(keyring.jwks())?)?;
+    assert_eq!(jwks.keys.len(), 2);
+    assert!(
+        jwks.keys.iter().all(|key| {
+            key.common.key_algorithm == Some(jsonwebtoken::jwk::KeyAlgorithm::RS256)
+        })
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn workload_exchange_emits_only_server_selected_rs256_profile()
+-> Result<(), Box<dyn std::error::Error>> {
+    let keys = Arc::new(rsa_keyring_with_bits(3072)?);
+    let jwks: JwkSet = serde_json::from_value(serde_json::to_value(keys.jwks())?)?;
+    let output_key = DecodingKey::from_jwk(&jwks.keys[0])?;
+    let metrics = Arc::new(WorkloadMetrics::default());
+    let service = WorkloadExchangeService {
+        reviewer: MockReviewer {
+            outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
+        },
+        policy: Arc::new(workload_policy()),
+        keys,
+        issuer: "https://identity.dev.apelogic.io".to_owned(),
+        input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
+        output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: metrics.clone(),
+    };
+    let output = service.exchange("projected-source-token").await?;
+    assert_eq!(jsonwebtoken::decode_header(&output)?.alg, Algorithm::RS256);
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(&["https://identity.dev.apelogic.io"]);
+    validation.set_audience(&[WORKLOAD_OUTPUT_AUDIENCE]);
+    let claims = decode::<serde_json::Value>(&output, &output_key, &validation)?.claims;
+    assert_eq!(claims["sub"], WORKLOAD_SUBJECT);
+    assert_eq!(claims["aud"], serde_json::json!([WORKLOAD_OUTPUT_AUDIENCE]));
+    assert_eq!(
+        claims["roles"],
+        serde_json::json!(["openshell-admin", "openshell-user"])
+    );
+    assert_eq!(claims["identity_contract"], WORKLOAD_IDENTITY_CONTRACT);
+    assert!(claims.get("email").is_none());
+    assert!(claims.get("groups").is_none());
+    assert_eq!(metrics.issued.load(Ordering::Relaxed), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn workload_exchange_separates_denial_from_token_review_outage()
+-> Result<(), Box<dyn std::error::Error>> {
+    let keys = Arc::new(rsa_keyring_with_bits(3072)?);
+    for (outcome, expected) in [
+        (MockReview::Invalid, WorkloadExchangeError::Unauthorized),
+        (MockReview::Unavailable, WorkloadExchangeError::Unavailable),
+        (
+            MockReview::Accept("system:serviceaccount:steward:unmapped".to_owned()),
+            WorkloadExchangeError::Unauthorized,
+        ),
+    ] {
+        let service = WorkloadExchangeService {
+            reviewer: MockReviewer { outcome },
+            policy: Arc::new(workload_policy()),
+            keys: keys.clone(),
+            issuer: "https://identity.dev.apelogic.io".to_owned(),
+            input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
+            output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+            token_ttl: Duration::from_secs(120),
+            metrics: Arc::new(WorkloadMetrics::default()),
+        };
+        assert_eq!(
+            service.exchange("projected-source-token").await,
+            Err(expected)
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn workload_http_contract_is_empty_body_only_and_preserves_github_es256()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (github_encoding, github_decoding) = rsa_key()?;
+    let verifier = GitHubVerifier::with_test_key(
+        AUDIENCE.to_owned(),
+        "github-test-key".to_owned(),
+        github_decoding,
+    )
+    .await?;
+    let github_service = ExchangeService {
+        verifier,
+        policy: Arc::new(policy()),
+        ledger: Arc::new(MemoryReplayLedger::default()),
+        keys: Arc::new(keyring()?),
+        issuer: "https://identity.dev.apelogic.io".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    };
+    let workload_service = WorkloadExchangeService {
+        reviewer: MockReviewer {
+            outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
+        },
+        policy: Arc::new(workload_policy()),
+        keys: Arc::new(rsa_keyring_with_bits(3072)?),
+        issuer: "https://identity.dev.apelogic.io".to_owned(),
+        input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
+        output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(WorkloadMetrics::default()),
+    };
+    let (public_application, workload_application) =
+        separated_routers_with_workload(github_service, workload_service);
+
+    let discovery = public_application
+        .clone()
+        .oneshot(Request::get("/.well-known/openid-configuration").body(Body::empty())?)
+        .await?;
+    assert_eq!(discovery.status(), StatusCode::OK);
+    let discovery: serde_json::Value =
+        serde_json::from_slice(&discovery.into_body().collect().await?.to_bytes())?;
+    assert_eq!(
+        discovery["id_token_signing_alg_values_supported"],
+        serde_json::json!(["ES256", "RS256"])
+    );
+
+    let public_workload_route = public_application
+        .clone()
+        .oneshot(
+            Request::post("/v1/workload/exchange")
+                .header(header::AUTHORIZATION, "Bearer projected-source-token")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(public_workload_route.status(), StatusCode::NOT_FOUND);
+
+    let internal_discovery_route = workload_application
+        .clone()
+        .oneshot(Request::get("/.well-known/openid-configuration").body(Body::empty())?)
+        .await?;
+    assert_eq!(internal_discovery_route.status(), StatusCode::NOT_FOUND);
+
+    let rejected_body = workload_application
+        .clone()
+        .oneshot(
+            Request::post("/v1/workload/exchange")
+                .header(header::AUTHORIZATION, "Bearer projected-source-token")
+                .body(Body::from(r#"{"roles":["attacker"]}"#))?,
+        )
+        .await?;
+    assert_eq!(rejected_body.status(), StatusCode::BAD_REQUEST);
+
+    let missing_bearer = workload_application
+        .clone()
+        .oneshot(Request::post("/v1/workload/exchange").body(Body::empty())?)
+        .await?;
+    assert_eq!(missing_bearer.status(), StatusCode::UNAUTHORIZED);
+
+    let workload_response = workload_application
+        .clone()
+        .oneshot(
+            Request::post("/v1/workload/exchange")
+                .header(header::AUTHORIZATION, "Bearer projected-source-token")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(workload_response.status(), StatusCode::OK);
+    assert_eq!(
+        workload_response.headers().get(header::CACHE_CONTROL),
+        Some(&header::HeaderValue::from_static("no-store"))
+    );
+    let workload_response: serde_json::Value =
+        serde_json::from_slice(&workload_response.into_body().collect().await?.to_bytes())?;
+    assert_eq!(workload_response["token_type"], "Bearer");
+    assert_eq!(workload_response["expires_in"], 120);
+    assert_eq!(
+        jsonwebtoken::decode_header(
+            workload_response["access_token"]
+                .as_str()
+                .ok_or("missing workload access token")?
+        )?
+        .alg,
+        Algorithm::RS256
+    );
+
+    let github_assertion = signed_github_assertion(&claims(), &github_encoding)?;
+    let github_response = public_application
+        .oneshot(
+            Request::post("/v1/exchange")
+                .header(header::AUTHORIZATION, format!("Bearer {github_assertion}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(github_response.status(), StatusCode::OK);
+    let github_response: serde_json::Value =
+        serde_json::from_slice(&github_response.into_body().collect().await?.to_bytes())?;
+    assert_eq!(
+        jsonwebtoken::decode_header(
+            github_response["access_token"]
+                .as_str()
+                .ok_or("missing GitHub access token")?
+        )?
+        .alg,
+        Algorithm::ES256
+    );
+    Ok(())
 }

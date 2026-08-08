@@ -19,6 +19,18 @@ spec:
       ports:
         - port: 8080
           protocol: TCP
+    {{- if .Values.workloadExchange.enabled }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.workloadExchange.networkPolicy.callerNamespaceSelector | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.workloadExchange.networkPolicy.callerPodSelector | nindent 14 }}
+      ports:
+        - port: 8443
+          protocol: TCP
+    {{- end }}
     {{- if .Values.serviceMonitor.enabled }}
     - from:
         - namespaceSelector:
@@ -51,4 +63,3 @@ spec:
         - port: 443
           protocol: TCP
 {{- end }}
-
