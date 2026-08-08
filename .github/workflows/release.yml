@@ -67,7 +67,7 @@ jobs:
       - name: Validate runtime smoke contract before cloud authentication
         run: bash scripts/validate-runtime-smoke.sh
 
-      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.17.1
 
