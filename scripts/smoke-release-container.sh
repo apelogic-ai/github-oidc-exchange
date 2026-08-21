@@ -154,7 +154,7 @@ jq -n '{
     events: ["workflow_dispatch"],
     refs: ["refs/heads/main"]
   }],
-  actors: {"16106037": {email: "leo@apelogic.ai", verified: true}}
+  actors: {"16106037": {email: "leo@apelogic.ai", canonical_user_id: "usr_0123456789abcdef0123456789abcdef", verified: true}}
 }' > "$app_dir/policy.json"
 
 jq -n '{
