@@ -151,8 +151,10 @@ Never use the in-memory replay ledger in production. It exists only for determin
 The `github-oidc-exchange-integration-fixture` binary is available only with the `test-support`
 feature. It reuses the production GitHub verifier, policy authorization, replay enforcement,
 output signing, HTTP exchange, and JWKS implementation, while replacing GitHub's remote JWKS with
-one explicitly mounted ephemeral RSA public key. The normal binary has no runtime option for this
-trust substitution, and the release Dockerfile explicitly builds only `github-oidc-exchange`.
+one explicitly mounted ephemeral RSA public key for the fixture process lifetime. Injected fixture
+trust never falls back to GitHub's remote JWKS refresh path. The normal binary has no runtime option
+for this trust substitution, and the release Dockerfile explicitly builds only
+`github-oidc-exchange`.
 
 Run `serve` with the normal `ISSUER_URL`, `GITHUB_EXCHANGE_AUDIENCE`, `OUTPUT_AUDIENCE`,
 `POLICY_FILE`, `KEYRING_FILE`, and optional `LISTEN_ADDRESS` settings plus:
