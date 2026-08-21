@@ -305,7 +305,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          jq -n --arg version "$VERSION" --arg commit "$GITHUB_SHA" --arg image "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}" --arg chart "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" '{version:$version,commit:$commit,image:$image,chart:$chart}' > dist/release-manifest.json
+          policy_contract="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
+          identity_contract="$(sed -n 's/^pub const IDENTITY_CONTRACT: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
+          [[ -n "$policy_contract" && -n "$identity_contract" ]]
+          jq -n \
+            --arg version "$VERSION" \
+            --arg commit "$GITHUB_SHA" \
+            --arg image "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}" \
+            --arg chart "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" \
+            --arg policy_contract "$policy_contract" \
+            --arg identity_contract "$identity_contract" \
+            '{version:$version,commit:$commit,image:$image,chart:$chart,policy_contract:$policy_contract,identity_contract:$identity_contract}' \
+            > dist/release-manifest.json
           identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
           cosign sign-blob --yes --bundle dist/release-manifest.sigstore.json dist/release-manifest.json
           cosign verify-blob --bundle dist/release-manifest.sigstore.json --certificate-identity "$identity" --certificate-oidc-issuer https://token.actions.githubusercontent.com dist/release-manifest.json

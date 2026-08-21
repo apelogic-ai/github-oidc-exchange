@@ -32,13 +32,18 @@ The GitHub assertion must have:
 - an exact match in the private policy for subject, workflow, event, ref, and verified actor.
 
 The output contains exactly one audience, `email`, deployment-ratified `groups`, and
-`identity_contract=steward-task-v1`. Policy rules select one server-controlled identity profile:
+`identity_contract=steward-task-v2`. Policy rules select one server-controlled identity profile:
 
-- `task` emits exactly the service-principal and verified acting-user groups;
+- `task` emits exactly the service-principal, verified acting-user, and opaque canonical-user
+  groups;
 - `bootstrap` emits exactly the route-scoped service-envelope-bootstrap group.
 
 Profiles are selected only by exact GitHub claim matches. The caller cannot request a profile,
-and ambiguous matching rules fail closed. The source assertion and issued token are never logged.
+canonical user ID, or output groups, and ambiguous matching rules fail closed. Each reviewed actor
+mapping owns one unique `usr_<32 lowercase hex>` Steward user ID. GitHub claims and workflow inputs
+cannot override that mapping. The mapped ID must already resolve to the same reviewed person in
+Steward; policy rollout does not register or discover users. The source assertion and issued token
+are never logged.
 
 The workload profile has a separate default-deny policy. It asks the Kubernetes API to review the
 source token against one exact configured audience and requires an exact service-account username
@@ -120,7 +125,8 @@ and observe the resulting rolling restart before advancing to the removal phase.
 Secret-reading principal, controller, or image. Unchanged references and revisions render stable
 annotations.
 
-See [the policy example](docs/policy-contract.example.json),
+See [the policy example](docs/policy-contract.example.json) and its
+[JSON schema](docs/policy-contract.schema.json),
 [P-256 key rotation contract](docs/keyring-contract.example.json),
 [workload policy example](docs/workload-policy-contract.example.json),
 [RSA key rotation contract](docs/rsa-keyring-contract.example.json), and the Helm chart under
@@ -138,3 +144,30 @@ docker build --platform linux/amd64 -t github-oidc-exchange:test .
 ```
 
 Never use the in-memory replay ledger in production. It exists only for deterministic tests.
+
+### Local cross-product integration fixture
+
+The `github-oidc-exchange-integration-fixture` binary is available only with the `test-support`
+feature. It reuses the production GitHub verifier, policy authorization, replay enforcement,
+output signing, HTTP exchange, and JWKS implementation, while replacing GitHub's remote JWKS with
+one explicitly mounted ephemeral RSA public key. The normal binary has no runtime option for this
+trust substitution, and the release Dockerfile explicitly builds only `github-oidc-exchange`.
+
+Run `serve` with the normal `ISSUER_URL`, `GITHUB_EXCHANGE_AUDIENCE`, `OUTPUT_AUDIENCE`,
+`POLICY_FILE`, `KEYRING_FILE`, and optional `LISTEN_ADDRESS` settings plus:
+
+- `FIXTURE_SOURCE_KID` — ephemeral source signing-key ID;
+- `FIXTURE_SOURCE_PUBLIC_KEY_FILE` — mounted RSA public key PEM;
+- `FIXTURE_CLAIMS_FILE` — mounted exact `GitHubClaims` JSON selected by the integration harness.
+
+Readiness is `GET /readyz`. The configured HTTPS issuer must be reachable by the Kind API server,
+and its published JWKS URL is exactly `<ISSUER_URL>/jwks.json`. A non-secret machine-readable
+contract is available at `GET /fixture/v1/expected-identity`; it reports the issuer, JWKS and
+readiness paths, contract versions, and exact policy-derived groups, but no assertions or tokens.
+
+Run `issue` with `FIXTURE_SOURCE_KID`, `FIXTURE_SOURCE_PRIVATE_KEY_FILE`,
+`FIXTURE_CLAIMS_FILE`, `FIXTURE_EXCHANGE_URL`, and `FIXTURE_TOKEN_OUTPUT_FILE`. It signs the source
+claims in memory, calls the real `/v1/exchange`, and creates the output-token file with mode 0600.
+It prints only a token-free JSON status record. The output path must not already exist. The harness
+must delete all ephemeral source keys, output keys, claims, policies, and token files with its
+disposable run directory.

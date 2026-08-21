@@ -1,5 +1,5 @@
 {
-  "version": "github-oidc-exchange.apelogic.io/v2",
+  "version": "github-oidc-exchange.apelogic.io/v3",
   "service_group": "agents.apelogic.ai/service-principal:example-service",
   "acting_group_prefix": "agents.apelogic.ai/acting-user:",
   "bootstrap_group": "agents.apelogic.ai/service-envelope-bootstrap:example-service",
@@ -41,6 +41,7 @@
   "actors": {
     "345678": {
       "email": "verified-user@example.com",
+      "canonical_user_id": "usr_0123456789abcdef0123456789abcdef",
       "verified": true
     }
   }
