@@ -54,6 +54,7 @@ struct OutputClaims {
     nbf: u64,
     jti: String,
     email: String,
+    email_verified: bool,
     groups: Vec<String>,
     identity_contract: &'static str,
 }
@@ -100,6 +101,7 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
                 nbf: now.saturating_sub(5),
                 jti: Uuid::new_v4().to_string(),
                 email: identity.email,
+                email_verified: identity.email_verified,
                 groups: identity.groups,
                 identity_contract: IDENTITY_CONTRACT,
             })

@@ -54,6 +54,7 @@ pub struct Actor {
 pub struct Identity {
     pub actor_id: String,
     pub email: String,
+    pub email_verified: bool,
     pub subject: String,
     pub groups: Vec<String>,
     pub repository: String,
@@ -205,6 +206,7 @@ impl Policy {
         Ok(Identity {
             actor_id: claims.actor_id.clone(),
             email: actor.email.clone(),
+            email_verified: actor.verified,
             subject: format!("github-actions:actor:{}", claims.actor_id),
             groups,
             repository: format!("{}/{}", repository.owner_id, repository.repository_id),

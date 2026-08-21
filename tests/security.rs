@@ -120,6 +120,7 @@ fn workflow_selected_profiles_are_mutually_exclusive() -> Result<(), Box<dyn std
     bootstrap_claims.workflow_ref = BOOTSTRAP_CALLER_WORKFLOW.to_owned();
     bootstrap_claims.job_workflow_ref = BOOTSTRAP_WORKFLOW.to_owned();
     let bootstrap_identity = policy.authorize(&bootstrap_claims)?;
+    assert!(bootstrap_identity.email_verified);
     assert_eq!(
         bootstrap_identity.groups,
         vec!["agents.apelogic.ai/service-envelope-bootstrap:steward-run"]
@@ -329,6 +330,7 @@ fn policy_is_default_deny_and_emits_only_ratified_groups() -> Result<(), Box<dyn
     policy.validate()?;
     let identity = policy.authorize(&claims())?;
     assert_eq!(identity.email, "engineer@apelogic.io");
+    assert!(identity.email_verified);
     assert_eq!(
         identity.groups,
         vec![
@@ -372,6 +374,10 @@ fn unverified_or_noncanonical_actor_mapping_fails_closed() {
         actor.verified = false;
     }
     assert!(unverified.validate().is_err());
+    assert_eq!(
+        unverified.authorize(&claims()),
+        Err(PolicyError::Unauthorized)
+    );
 
     let mut profile_email = policy();
     if let Some(actor) = profile_email.actors.get_mut("12345") {
@@ -590,6 +596,7 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
         iss: String,
         aud: Vec<String>,
         email: String,
+        email_verified: bool,
         groups: Vec<String>,
         identity_contract: String,
     }
@@ -602,6 +609,7 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
     assert_eq!(decoded.iss, "https://identity.dev.apelogic.io");
     assert_eq!(decoded.aud, vec!["steward-task-api"]);
     assert_eq!(decoded.email, "engineer@apelogic.io");
+    assert!(decoded.email_verified);
     assert_eq!(decoded.identity_contract, IDENTITY_CONTRACT);
     assert_eq!(
         decoded.groups,
@@ -706,6 +714,7 @@ async fn workload_exchange_emits_only_server_selected_rs256_profile()
     );
     assert_eq!(claims["identity_contract"], WORKLOAD_IDENTITY_CONTRACT);
     assert!(claims.get("email").is_none());
+    assert!(claims.get("email_verified").is_none());
     assert!(claims.get("groups").is_none());
     assert_eq!(metrics.issued.load(Ordering::Relaxed), 1);
     Ok(())

@@ -43,6 +43,7 @@ struct ExpectedIdentity {
     exchange_endpoint: String,
     readiness_endpoint: String,
     expected_groups: Vec<String>,
+    expected_email_verified: bool,
     token_ttl_seconds: u64,
     workload_exchange: Option<ExpectedWorkloadExchange>,
 }
@@ -120,6 +121,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         exchange_endpoint: "/v1/exchange".to_owned(),
         readiness_endpoint: "/readyz".to_owned(),
         expected_groups: expected.groups,
+        expected_email_verified: expected.email_verified,
         token_ttl_seconds: token_ttl.as_secs(),
         workload_exchange: workload_config
             .as_ref()
@@ -358,7 +360,7 @@ async fn shutdown() {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_fixture_token_ttl;
+    use super::{ExpectedIdentity, parse_fixture_token_ttl};
 
     #[test]
     fn fixture_token_ttl_is_defaulted_and_bounded() {
@@ -373,5 +375,27 @@ mod tests {
         for invalid in ["", "0", "3601", "-1", "not-a-number"] {
             assert!(parse_fixture_token_ttl(Some(invalid)).is_none());
         }
+    }
+
+    #[test]
+    fn fixture_metadata_reports_verified_email_without_token_material()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let metadata = serde_json::to_value(ExpectedIdentity {
+            fixture_contract: "github-oidc-exchange/integration-fixture-v1",
+            policy_contract: "github-oidc-exchange.apelogic.io/v3",
+            identity_contract: "steward-task-v2",
+            issuer: "https://identity.fixture.local".to_owned(),
+            jwks_uri: "https://identity.fixture.local/jwks.json".to_owned(),
+            exchange_endpoint: "/v1/exchange".to_owned(),
+            readiness_endpoint: "/readyz".to_owned(),
+            expected_groups: vec!["example".to_owned()],
+            expected_email_verified: true,
+            token_ttl_seconds: 900,
+            workload_exchange: None,
+        })?;
+        assert_eq!(metadata["expected_email_verified"], true);
+        assert!(metadata.get("access_token").is_none());
+        assert!(metadata.get("assertion").is_none());
+        Ok(())
     }
 }

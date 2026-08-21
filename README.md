@@ -31,7 +31,8 @@ The GitHub assertion must have:
   `workflow_ref`, `job_workflow_ref`, `event_name`, and `ref` claims;
 - an exact match in the private policy for subject, workflow, event, ref, and verified actor.
 
-The output contains exactly one audience, `email`, deployment-ratified `groups`, and
+The output contains exactly one audience, the policy-verified `email`, `email_verified=true`,
+deployment-ratified `groups`, and
 `identity_contract=steward-task-v2`. Policy rules select one server-controlled identity profile:
 
 - `task` emits exactly the service-principal, verified acting-user, and opaque canonical-user
@@ -167,7 +168,8 @@ Readiness is `GET /readyz`. The configured HTTPS issuer must be reachable by the
 and its published JWKS URL is exactly `<ISSUER_URL>/jwks.json`. A non-secret machine-readable
 contract is available at `GET /fixture/v1/expected-identity`; it reports the issuer, JWKS and
 readiness paths, contract versions, configured TTL, exact policy-derived groups, and optional
-workload-listener contract, but no assertions or tokens.
+workload-listener contract. It also reports `expected_email_verified=true`; it contains no
+assertions or tokens.
 
 Set `WORKLOAD_EXCHANGE_ENABLED=true` to add the production workload path. Every normal workload
 setting is then required: `WORKLOAD_LISTEN_ADDRESS` (default `0.0.0.0:8443`),
