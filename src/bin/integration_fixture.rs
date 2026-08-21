@@ -13,12 +13,14 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
 use github_oidc_exchange::{
     IDENTITY_CONTRACT, POLICY_VERSION,
+    config::WorkloadConfig,
     github::{GitHubClaims, GitHubVerifier},
-    http::router,
-    keys::KeyRing,
+    http::{router, separated_routers_with_workload},
+    keys::{KeyRing, RsaKeyRing},
     policy::Policy,
     replay::MemoryReplayLedger,
     service::{ExchangeService, Metrics},
+    workload::{KubernetesTokenReviewer, WorkloadExchangeService, WorkloadMetrics, WorkloadPolicy},
 };
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, encode};
 use rsa::{
@@ -41,6 +43,17 @@ struct ExpectedIdentity {
     exchange_endpoint: String,
     readiness_endpoint: String,
     expected_groups: Vec<String>,
+    token_ttl_seconds: u64,
+    workload_exchange: Option<ExpectedWorkloadExchange>,
+}
+
+#[derive(Clone, Serialize)]
+struct ExpectedWorkloadExchange {
+    listen_address: String,
+    exchange_endpoint: &'static str,
+    readiness_endpoint: &'static str,
+    input_audience: String,
+    output_audience: String,
 }
 
 #[derive(Deserialize)]
@@ -74,6 +87,8 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let listen_address: SocketAddr = env::var("LISTEN_ADDRESS")
         .unwrap_or_else(|_| "0.0.0.0:8080".to_owned())
         .parse()?;
+    let token_ttl = fixture_token_ttl()?;
+    let workload_config = WorkloadConfig::from_env(listen_address)?;
     let source_kid = required("FIXTURE_SOURCE_KID")?;
     let source_public_key = fs::read(required_path("FIXTURE_SOURCE_PUBLIC_KEY_FILE")?)?;
     let claims: GitHubClaims = read_json(&required_path("FIXTURE_CLAIMS_FILE")?)?;
@@ -85,14 +100,15 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         decoding_key_from_public_pem(&source_public_key)?,
     )
     .await?;
+    let keys = Arc::new(KeyRing::load(&required_path("KEYRING_FILE")?, Utc::now())?);
     let service = ExchangeService {
         verifier,
         policy,
         ledger: Arc::new(MemoryReplayLedger::default()),
-        keys: Arc::new(KeyRing::load(&required_path("KEYRING_FILE")?, Utc::now())?),
+        keys: keys.clone(),
         issuer: issuer.clone(),
         output_audience,
-        token_ttl: Duration::from_secs(120),
+        token_ttl,
         metrics: Arc::new(Metrics::default()),
     };
     let expected_identity = ExpectedIdentity {
@@ -104,6 +120,16 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         exchange_endpoint: "/v1/exchange".to_owned(),
         readiness_endpoint: "/readyz".to_owned(),
         expected_groups: expected.groups,
+        token_ttl_seconds: token_ttl.as_secs(),
+        workload_exchange: workload_config
+            .as_ref()
+            .map(|workload| ExpectedWorkloadExchange {
+                listen_address: workload.listen_address.to_string(),
+                exchange_endpoint: "/v1/workload/exchange",
+                readiness_endpoint: "/readyz",
+                input_audience: workload.input_audience.clone(),
+                output_audience: workload.output_audience.clone(),
+            }),
     };
     let fixture_router = Router::new().route(
         "/fixture/v1/expected-identity",
@@ -112,18 +138,76 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
             async move { Json(expected_identity) }
         }),
     );
-    let application = router(service).merge(fixture_router);
-    let listener = tokio::net::TcpListener::bind(listen_address).await?;
-    info!(
-        address = %listen_address,
-        issuer,
-        readiness_endpoint = "/readyz",
-        expected_identity_endpoint = "/fixture/v1/expected-identity",
-        "test-support identity exchange fixture started"
-    );
-    axum::serve(listener, application)
-        .with_graceful_shutdown(shutdown())
+    if let Some(workload_config) = workload_config {
+        let workload_keys = Arc::new(RsaKeyRing::load(
+            &workload_config.rsa_keyring_file,
+            Utc::now(),
+        )?);
+        workload_keys.ensure_disjoint_from(&keys)?;
+        let workload = WorkloadExchangeService {
+            reviewer: KubernetesTokenReviewer::in_cluster()?,
+            policy: Arc::new(WorkloadPolicy::load(&workload_config.policy_file)?),
+            keys: workload_keys,
+            issuer: issuer.clone(),
+            input_audience: workload_config.input_audience,
+            output_audience: workload_config.output_audience,
+            token_ttl: Duration::from_secs(120),
+            metrics: Arc::new(WorkloadMetrics::default()),
+        };
+        let workload_listen_address = workload_config.listen_address;
+        let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(
+            workload_config.tls_certificate_file,
+            workload_config.tls_private_key_file,
+        )
         .await?;
+        let public_listener = tokio::net::TcpListener::bind(listen_address).await?;
+        let (public_router, workload_router) = separated_routers_with_workload(service, workload);
+        let public_router = public_router.merge(fixture_router);
+        let (shutdown_sender, _) = tokio::sync::broadcast::channel::<()>(1);
+        let mut public_shutdown = shutdown_sender.subscribe();
+        let mut workload_shutdown = shutdown_sender.subscribe();
+        let signal_sender = shutdown_sender.clone();
+        tokio::spawn(async move {
+            shutdown().await;
+            let _ = signal_sender.send(());
+        });
+        let public_server = axum::serve(public_listener, public_router.into_make_service())
+            .with_graceful_shutdown(async move {
+                let _ = public_shutdown.recv().await;
+            });
+        let handle = axum_server::Handle::new();
+        let shutdown_handle = handle.clone();
+        tokio::spawn(async move {
+            let _ = workload_shutdown.recv().await;
+            shutdown_handle.graceful_shutdown(Some(Duration::from_secs(30)));
+        });
+        info!(
+            public_address = %listen_address,
+            workload_address = %workload_listen_address,
+            issuer,
+            public_readiness_endpoint = "/readyz",
+            workload_readiness_endpoint = "/readyz",
+            expected_identity_endpoint = "/fixture/v1/expected-identity",
+            "test-support identity exchange fixture listeners started"
+        );
+        let workload_server = axum_server::bind_rustls(workload_listen_address, tls)
+            .handle(handle)
+            .serve(workload_router.into_make_service());
+        tokio::try_join!(public_server, workload_server)?;
+    } else {
+        let application = router(service).merge(fixture_router);
+        let listener = tokio::net::TcpListener::bind(listen_address).await?;
+        info!(
+            address = %listen_address,
+            issuer,
+            readiness_endpoint = "/readyz",
+            expected_identity_endpoint = "/fixture/v1/expected-identity",
+            "test-support identity exchange fixture started"
+        );
+        axum::serve(listener, application)
+            .with_graceful_shutdown(shutdown())
+            .await?;
+    }
     Ok(())
 }
 
@@ -181,6 +265,24 @@ fn validate_https_issuer(value: &str) -> Result<(), Box<dyn std::error::Error>> 
         .into());
     }
     Ok(())
+}
+
+fn fixture_token_ttl() -> Result<Duration, Box<dyn std::error::Error>> {
+    let value = env::var("FIXTURE_TOKEN_TTL_SECONDS");
+    parse_fixture_token_ttl(value.as_deref().ok()).ok_or_else(|| {
+        std::io::Error::other("FIXTURE_TOKEN_TTL_SECONDS must be an integer from 1 through 3600")
+            .into()
+    })
+}
+
+fn parse_fixture_token_ttl(value: Option<&str>) -> Option<Duration> {
+    let seconds = match value {
+        Some(value) => value.parse::<u64>().ok(),
+        None => Some(120),
+    }?;
+    (1..=3600)
+        .contains(&seconds)
+        .then(|| Duration::from_secs(seconds))
 }
 
 fn required(name: &'static str) -> Result<String, Box<dyn std::error::Error>> {
@@ -251,5 +353,25 @@ async fn shutdown() {
     tokio::select! {
         _ = interrupt => {},
         _ = terminate => {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_fixture_token_ttl;
+
+    #[test]
+    fn fixture_token_ttl_is_defaulted_and_bounded() {
+        assert_eq!(
+            parse_fixture_token_ttl(None).map(|ttl| ttl.as_secs()),
+            Some(120)
+        );
+        assert_eq!(
+            parse_fixture_token_ttl(Some("900")).map(|ttl| ttl.as_secs()),
+            Some(900)
+        );
+        for invalid in ["", "0", "3601", "-1", "not-a-number"] {
+            assert!(parse_fixture_token_ttl(Some(invalid)).is_none());
+        }
     }
 }

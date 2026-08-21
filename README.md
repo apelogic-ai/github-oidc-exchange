@@ -158,12 +158,34 @@ Run `serve` with the normal `ISSUER_URL`, `GITHUB_EXCHANGE_AUDIENCE`, `OUTPUT_AU
 
 - `FIXTURE_SOURCE_KID` — ephemeral source signing-key ID;
 - `FIXTURE_SOURCE_PUBLIC_KEY_FILE` — mounted RSA public key PEM;
-- `FIXTURE_CLAIMS_FILE` — mounted exact `GitHubClaims` JSON selected by the integration harness.
+- `FIXTURE_CLAIMS_FILE` — mounted exact `GitHubClaims` JSON selected by the integration harness;
+- `FIXTURE_TOKEN_TTL_SECONDS` — optional test-only GitHub/task output-token lifetime, default 120
+  and bounded to 1–3600 seconds. A 900-second value supports a 10–15 minute local lifecycle
+  journey. Workload tokens retain the production 120-second lifetime.
 
 Readiness is `GET /readyz`. The configured HTTPS issuer must be reachable by the Kind API server,
 and its published JWKS URL is exactly `<ISSUER_URL>/jwks.json`. A non-secret machine-readable
 contract is available at `GET /fixture/v1/expected-identity`; it reports the issuer, JWKS and
-readiness paths, contract versions, and exact policy-derived groups, but no assertions or tokens.
+readiness paths, contract versions, configured TTL, exact policy-derived groups, and optional
+workload-listener contract, but no assertions or tokens.
+
+Set `WORKLOAD_EXCHANGE_ENABLED=true` to add the production workload path. Every normal workload
+setting is then required: `WORKLOAD_LISTEN_ADDRESS` (default `0.0.0.0:8443`),
+`WORKLOAD_INPUT_AUDIENCE`, `WORKLOAD_OUTPUT_AUDIENCE=openshell-api`, `WORKLOAD_POLICY_FILE`,
+`WORKLOAD_RSA_KEYRING_FILE`, `TLS_CERTIFICATE_FILE`, and `TLS_PRIVATE_KEY_FILE`. The output RSA
+keyring must be disjoint from the public GitHub exchange keyring. The fixture constructs the
+production `KubernetesTokenReviewer`, so Kind supplies `KUBERNETES_SERVICE_HOST`,
+`KUBERNETES_SERVICE_PORT_HTTPS`, and the mounted service-account CA/token; the existing
+`KUBERNETES_CA_CERTIFICATE_FILE` and `KUBERNETES_SERVICE_ACCOUNT_TOKEN_FILE` overrides remain
+available. Its service account requires only `create` on
+`tokenreviews.authentication.k8s.io`.
+
+The workload listener is HTTPS-only and exposes `/v1/workload/exchange`, `/healthz`, and `/readyz`;
+it does not expose discovery, JWKS, the GitHub exchange, or fixture metadata. Its certificate must
+cover the exact Kind Service DNS name used by the Steward controller, and callers use the mounted
+test CA without disabling verification. The public HTTP listener continues to sit behind the
+run-local TLS proxy and publishes both ES256 and workload RS256 keys from its JWKS. Missing,
+invalid, conflicting, or partial workload configuration fails before either listener binds.
 
 Run `issue` with `FIXTURE_SOURCE_KID`, `FIXTURE_SOURCE_PRIVATE_KEY_FILE`,
 `FIXTURE_CLAIMS_FILE`, `FIXTURE_EXCHANGE_URL`, and `FIXTURE_TOKEN_OUTPUT_FILE`. It signs the source

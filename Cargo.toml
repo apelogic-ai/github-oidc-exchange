@@ -49,6 +49,11 @@ name = "github-oidc-exchange-integration-fixture"
 path = "src/bin/integration_fixture.rs"
 required-features = ["test-support"]
 
+[[test]]
+name = "integration_fixture_config"
+path = "tests/integration_fixture_config.rs"
+required-features = ["test-support"]
+
 [lints.rust]
 unsafe_code = "forbid"
 

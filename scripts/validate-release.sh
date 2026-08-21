@@ -5,6 +5,8 @@ bash scripts/validate-ci-tools.sh
 
 grep -Fq -- \
   'cargo build --locked --release --bin github-oidc-exchange' Dockerfile
+grep -Fq -- 'name = "github-oidc-exchange-integration-fixture"' Cargo.toml
+grep -Fq -- 'required-features = ["test-support"]' Cargo.toml
 if grep -Fq -- 'test-support' Dockerfile ||
   grep -Fq -- 'github-oidc-exchange-integration-fixture' Dockerfile; then
   printf 'release image must exclude the test-support integration fixture\n' >&2
