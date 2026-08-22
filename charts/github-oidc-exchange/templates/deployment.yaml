@@ -26,6 +26,9 @@ spec:
         checksum/workload-rsa-keyring: {{ printf "%s:%s:%s" .Values.workloadExchange.rsaKeyringSecretName .Values.workloadExchange.rsaKeyringSecretKey .Values.rolloutRevisions.workloadRsaKeyring | sha256sum | quote }}
         checksum/workload-tls: {{ printf "%s:%s:%s:%s" .Values.workloadExchange.tls.secretName .Values.workloadExchange.tls.certificateKey .Values.workloadExchange.tls.privateKeyKey .Values.rolloutRevisions.workloadTls | sha256sum | quote }}
         {{- end }}
+        {{- if .Values.browserHop1.enabled }}
+        checksum/browser-hop1-steward-jwks: {{ printf "%s:%s:%s" .Values.browserHop1.stewardJwksConfigMapName .Values.browserHop1.stewardJwksConfigMapKey .Values.rolloutRevisions.browserHop1Jwks | sha256sum | quote }}
+        {{- end }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       automountServiceAccountToken: true
@@ -86,6 +89,18 @@ spec:
             - name: WORKLOAD_LISTEN_ADDRESS
               value: 0.0.0.0:8443
             {{- end }}
+            {{- if .Values.browserHop1.enabled }}
+            - name: BROWSER_HOP1_ENABLED
+              value: "true"
+            - name: BROWSER_HOP1_STEWARD_ISSUER
+              value: {{ required "browserHop1.stewardIssuer is required" .Values.browserHop1.stewardIssuer | quote }}
+            - name: BROWSER_HOP1_ASSERTION_AUDIENCE
+              value: {{ required "browserHop1.assertionAudience is required" .Values.browserHop1.assertionAudience | quote }}
+            - name: BROWSER_HOP1_STEWARD_JWKS_FILE
+              value: /etc/github-oidc-exchange/browser-hop1-steward-jwks/jwks.json
+            - name: BROWSER_HOP1_OUTPUT_AUDIENCE
+              value: {{ required "browserHop1.outputAudience is required" .Values.browserHop1.outputAudience | quote }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /readyz
@@ -129,6 +144,11 @@ spec:
               mountPath: /etc/github-oidc-exchange/tls
               readOnly: true
             {{- end }}
+            {{- if .Values.browserHop1.enabled }}
+            - name: browser-hop1-steward-jwks
+              mountPath: /etc/github-oidc-exchange/browser-hop1-steward-jwks
+              readOnly: true
+            {{- end }}
       volumes:
         - name: policy
           configMap:
@@ -168,6 +188,15 @@ spec:
                 path: tls.crt
               - key: {{ .Values.workloadExchange.tls.privateKeyKey }}
                 path: tls.key
+        {{- end }}
+        {{- if .Values.browserHop1.enabled }}
+        - name: browser-hop1-steward-jwks
+          configMap:
+            name: {{ required "browserHop1.stewardJwksConfigMapName is required" .Values.browserHop1.stewardJwksConfigMapName }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.browserHop1.stewardJwksConfigMapKey }}
+                path: jwks.json
         {{- end }}
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}

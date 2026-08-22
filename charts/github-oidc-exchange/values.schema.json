@@ -29,13 +29,14 @@
     },
     "rolloutRevisions": {
       "type": "object",
-      "required": ["githubPolicy", "githubKeyring", "workloadPolicy", "workloadRsaKeyring", "workloadTls"],
+      "required": ["githubPolicy", "githubKeyring", "workloadPolicy", "workloadRsaKeyring", "workloadTls", "browserHop1Jwks"],
       "properties": {
         "githubPolicy": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
         "githubKeyring": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
         "workloadPolicy": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"},
         "workloadRsaKeyring": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"},
-        "workloadTls": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"}
+        "workloadTls": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"},
+        "browserHop1Jwks": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"}
       }
     },
     "workloadExchange": {
@@ -66,6 +67,18 @@
             "callerPodSelector": {"type": "object"}
           }
         }
+      }
+    },
+    "browserHop1": {
+      "type": "object",
+      "required": ["enabled", "stewardJwksConfigMapKey"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "stewardIssuer": {"type": "string"},
+        "assertionAudience": {"type": "string"},
+        "outputAudience": {"type": "string"},
+        "stewardJwksConfigMapName": {"type": "string"},
+        "stewardJwksConfigMapKey": {"type": "string", "minLength": 1}
       }
     },
     "service": {
@@ -133,6 +146,37 @@
               "workloadPolicy": {"pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
               "workloadRsaKeyring": {"pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
               "workloadTls": {"pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "browserHop1": {
+            "properties": {"enabled": {"const": true}},
+            "required": ["enabled"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "browserHop1": {
+            "required": ["stewardIssuer", "assertionAudience", "outputAudience", "stewardJwksConfigMapName"],
+            "properties": {
+              "stewardIssuer": {"type": "string", "pattern": "^https://[^/?#]+(?:/[^?#]*)?$"},
+              "assertionAudience": {"type": "string", "minLength": 1},
+              "outputAudience": {"type": "string", "pattern": "^https://[^?#]+$"},
+              "stewardJwksConfigMapName": {"type": "string", "minLength": 1}
+            }
+          },
+          "workloadExchange": {
+            "properties": {"enabled": {"const": true}}
+          },
+          "rolloutRevisions": {
+            "properties": {
+              "browserHop1Jwks": {"pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}
             }
           }
         }
