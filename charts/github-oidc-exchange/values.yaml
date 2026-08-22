@@ -26,6 +26,7 @@ rolloutRevisions:
   workloadPolicy: ""
   workloadRsaKeyring: ""
   workloadTls: ""
+  browserHop1Jwks: ""
 
 workloadExchange:
   enabled: false
@@ -42,6 +43,17 @@ workloadExchange:
   networkPolicy:
     callerNamespaceSelector: {}
     callerPodSelector: {}
+
+# Optional internal-only bridge from a Steward-authenticated browser session to an MCP-GW HOP-1
+# bearer. Identity receives a short-lived signed Steward attestation over the workload TLS listener;
+# it never receives a browser cookie, session identifier, or provider credential.
+browserHop1:
+  enabled: false
+  stewardIssuer: ""
+  assertionAudience: ""
+  outputAudience: ""
+  stewardJwksConfigMapName: ""
+  stewardJwksConfigMapKey: jwks.json
 
 service:
   port: 8080

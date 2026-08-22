@@ -20,6 +20,10 @@ contains only the generic engine and chart.
 - `POST /v1/workload/exchange` — HTTPS-only, requires an empty body and
   `Authorization: Bearer <projected service-account JWT>`. The chart does not publish this path
   through its Ingress.
+- `POST /v1/browser-hop1/exchange` — opt-in, HTTPS-only on that same internal workload listener.
+  It accepts an exact Steward API service-account caller plus a short-lived ES256 Steward browser
+  attestation and returns a 60-second MCP resource bearer. It is never public or browser-facing;
+  see [the browser HOP-1 contract](docs/browser-hop1-contract-v1.md).
 - `GET /healthz`, `GET /readyz`, `GET /metrics` — cluster-local operations endpoints.
 
 The GitHub assertion must have:
@@ -81,6 +85,11 @@ workload profile is migrated through a separately reviewed contract change.
 | `TLS_PRIVATE_KEY_FILE` | Server private-key PEM. Required when workload exchange is enabled. |
 | `KUBERNETES_CA_CERTIFICATE_FILE` | Optional Kubernetes API CA path; defaults to the in-cluster service-account CA. |
 | `KUBERNETES_SERVICE_ACCOUNT_TOKEN_FILE` | Optional rotating API credential path; defaults to the in-cluster service-account token. |
+| `BROWSER_HOP1_ENABLED` | Optional; `true` enables the internal-only Steward browser-attestation exchange and requires the four settings below plus workload exchange. |
+| `BROWSER_HOP1_STEWARD_ISSUER` | Exact HTTPS issuer of Steward's ES256 request attestations. |
+| `BROWSER_HOP1_ASSERTION_AUDIENCE` | Exact Identity-only audience required on every Steward request attestation. |
+| `BROWSER_HOP1_STEWARD_JWKS_FILE` | Read-only deployment-projected Steward public ES256 JWKS. |
+| `BROWSER_HOP1_OUTPUT_AUDIENCE` | Exact HTTPS MCP resource audience on the issued HOP-1 bearer. |
 
 The production pod requires an IRSA role with only `dynamodb:DescribeTable` and
 `dynamodb:PutItem` on its one replay table. When workload exchange is disabled, it receives no
