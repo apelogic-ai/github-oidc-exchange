@@ -419,7 +419,7 @@ jobs:
           cosign verify-blob --bundle dist/release-manifest.sigstore.json --certificate-identity "$identity" --certificate-oidc-issuer https://token.actions.githubusercontent.com dist/release-manifest.json
           gh release create "v$VERSION" --target "$GITHUB_SHA" --title "github-oidc-exchange v$VERSION" --notes "Signed platform identity exchange image and chart. ECR immutable artifacts are mirrored byte-for-byte to public GHCR, then signed and attested under this release workflow; anonymous exact-digest pulls and verification are required before this handoff is published." dist/*
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ always() && hashFiles('dist/*') != '' }}
         with:
           name: github-oidc-exchange-${{ inputs.version }}-release-evidence
