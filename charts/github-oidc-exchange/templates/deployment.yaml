@@ -61,8 +61,8 @@ spec:
               value: {{ required "config.githubExchangeAudience is required" .Values.config.githubExchangeAudience | quote }}
             - name: OUTPUT_AUDIENCE
               value: {{ .Values.config.outputAudience | quote }}
-            - name: REPLAY_TABLE
-              value: {{ required "config.replayTable is required" .Values.config.replayTable | quote }}
+            - name: REPLAY_LEASE_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
             - name: POLICY_FILE
               value: /etc/github-oidc-exchange/policy/policy.json
             - name: KEYRING_FILE

@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use aws_config::BehaviorVersion;
-use aws_sdk_dynamodb::Client;
 use chrono::Utc;
 use github_oidc_exchange::{
     browser_hop1::{
@@ -12,7 +10,7 @@ use github_oidc_exchange::{
     http::{router, separated_routers_with_workload, separated_routers_with_workload_and_browser},
     keys::{KeyRing, RsaKeyRing},
     policy::Policy,
-    replay::DynamoReplayLedger,
+    replay::KubernetesLeaseReplayLedger,
     service::{ExchangeService, Metrics},
     workload::{KubernetesTokenReviewer, WorkloadExchangeService, WorkloadMetrics, WorkloadPolicy},
 };
@@ -32,19 +30,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let browser_hop1_config = config.browser_hop1.clone();
     let policy = Arc::new(Policy::load(&config.policy_file)?);
     let keys = Arc::new(KeyRing::load(&config.keyring_file, Utc::now())?);
-    let aws = aws_config::defaults(BehaviorVersion::latest()).load().await;
-    let dynamodb = Client::new(&aws);
-    dynamodb
-        .describe_table()
-        .table_name(&config.replay_table)
-        .send()
-        .await?;
+    let ledger = Arc::new(KubernetesLeaseReplayLedger::in_cluster(
+        config.replay_lease_namespace.clone(),
+    )?);
     let verifier = GitHubVerifier::new(config.github_exchange_audience)?;
     verifier.warm_up().await?;
-    let ledger = Arc::new(DynamoReplayLedger::new(
-        dynamodb,
-        config.replay_table.clone(),
-    ));
     let service = ExchangeService {
         verifier,
         policy,
@@ -78,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
         let public_listener = tokio::net::TcpListener::bind(config.listen_address).await?;
-        let browser_hop1: Option<BrowserHop1ExchangeService<DynamoReplayLedger>> =
+        let browser_hop1: Option<BrowserHop1ExchangeService<KubernetesLeaseReplayLedger>> =
             if let Some(browser) = browser_hop1_config {
                 Some(BrowserHop1ExchangeService {
                     verifier: StewardBrowserAssertionVerifier::load(

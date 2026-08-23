@@ -48,7 +48,7 @@ pub fn separated_routers_with_workload<
     service: ExchangeService<L>,
     workload: WorkloadExchangeService<R>,
 ) -> (Router, Router) {
-    separated_routers_with_workload_and_browser::<L, R, crate::replay::DynamoReplayLedger>(
+    separated_routers_with_workload_and_browser::<L, R, crate::replay::KubernetesLeaseReplayLedger>(
         service, workload, None,
     )
 }

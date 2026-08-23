@@ -11,6 +11,10 @@ grep -A2 -F 'rustls::crypto::aws_lc_rs::default_provider()' src/main.rs \
   | grep -qF '.install_default()'
 grep -qF 'rustls = { version = "0.23.43", default-features = false, features = ["aws-lc-rs", "std", "tls12"] }' Cargo.toml
 grep -qF 'reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls-webpki-roots-no-provider"] }' Cargo.toml
+! grep -qE '^aws-(config|sdk-dynamodb) = ' Cargo.toml
+! grep -R -n -E 'Dynamo|dynamodb|REPLAY_TABLE|AWS_ENDPOINT_URL_DYNAMODB' src charts docs README.md scripts/smoke-release-container.sh
+grep -q 'KubernetesLeaseReplayLedger' src/main.rs
+grep -q 'REPLAY_LEASE_NAMESPACE' src/main.rs src/config.rs charts/github-oidc-exchange/templates/deployment.yaml
 
 rustls_features="$(cargo tree --locked -e features -i rustls@0.23.43)"
 grep -qF 'rustls feature "aws-lc-rs"' <<< "$rustls_features"

@@ -5,11 +5,19 @@ bash scripts/validate-ci-tools.sh
 
 grep -Fq -- \
   'cargo build --locked --release --bin github-oidc-exchange' Dockerfile
-grep -Fq -- 'name = "github-oidc-exchange-integration-fixture"' Cargo.toml
-grep -Fq -- 'required-features = ["test-support"]' Cargo.toml
 if grep -Fq -- 'test-support' Dockerfile ||
-  grep -Fq -- 'github-oidc-exchange-integration-fixture' Dockerfile; then
-  printf 'release image must exclude the test-support integration fixture\n' >&2
+  grep -R -n -E 'integration-fixture|MemoryReplayLedger' Cargo.toml src Dockerfile; then
+  printf 'release image must exclude fixture-only replay implementations\n' >&2
+  exit 1
+fi
+
+if grep -R -n -E 'Dynamo|dynamodb|REPLAY_TABLE|AWS_ENDPOINT_URL_DYNAMODB' \
+  Cargo.toml src charts docs README.md scripts/smoke-release-container.sh; then
+  printf 'normal release must not retain a DynamoDB replay dependency\n' >&2
+  exit 1
+fi
+if grep -n -E 'aws-(config|sdk-dynamodb)' Cargo.toml Cargo.lock; then
+  printf 'normal release must not retain an AWS SDK replay dependency\n' >&2
   exit 1
 fi
 
@@ -79,6 +87,16 @@ helm template test "$render_dir/chart" \
 grep -Fq -- \
   "helm.sh/chart: \"github-oidc-exchange-${package_version}_flux.test\"" \
   "$render_dir/rendered.yaml"
+grep -Fq -- 'kind: Role' "$render_dir/rendered.yaml"
+grep -Fq -- 'apiGroups: ["coordination.k8s.io"]' "$render_dir/rendered.yaml"
+grep -Fq -- 'resources: ["leases"]' "$render_dir/rendered.yaml"
+grep -Fq -- 'verbs: ["create", "get", "update", "list", "delete"]' "$render_dir/rendered.yaml"
+grep -Fq -- 'kind: RoleBinding' "$render_dir/rendered.yaml"
+grep -Fq -- 'name: REPLAY_LEASE_NAMESPACE' "$render_dir/rendered.yaml"
+if grep -Fq -- 'REPLAY_TABLE' "$render_dir/rendered.yaml"; then
+  printf 'chart must not render a replay table setting\n' >&2
+  exit 1
+fi
 
 helm template workload "$render_dir/chart" \
   --namespace github-oidc-exchange \

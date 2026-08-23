@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use axum::{
     body::Body,
@@ -19,7 +23,7 @@ use github_oidc_exchange::{
     http::separated_routers_with_workload_and_browser,
     keys::KeyRing,
     policy::Policy,
-    replay::MemoryReplayLedger,
+    replay::{ReplayError, ReplayLedger},
     service::{ExchangeService, Metrics},
     workload::{
         ReviewError, ReviewedWorkload, TokenReviewer, WorkloadExchangeService, WorkloadIdentity,
@@ -36,6 +40,20 @@ const ASSERTION_ISSUER: &str = "https://steward.example.test";
 const ASSERTION_AUDIENCE: &str = "identity-browser-hop1";
 const MCP_RESOURCE: &str = "https://mcp.example.test/mcp";
 const CANONICAL_USER: &str = "usr_0123456789abcdef0123456789abcdef";
+
+#[derive(Clone, Default)]
+struct TestReplayLedger(Arc<Mutex<HashSet<String>>>);
+
+impl ReplayLedger for TestReplayLedger {
+    async fn use_once(&self, jti: &str, _expires_at: i64) -> Result<(), ReplayError> {
+        let mut used = self.0.lock().map_err(|_| ReplayError::Unavailable)?;
+        if used.insert(jti.to_owned()) {
+            Ok(())
+        } else {
+            Err(ReplayError::Replayed)
+        }
+    }
+}
 
 #[test]
 fn browser_hop1_role_is_fixed_and_not_a_caller_supplied_scope() {
@@ -58,7 +76,7 @@ async fn browser_hop1_uses_a_steward_attestation_once_and_emits_only_the_canonic
                 roles: vec![BROWSER_HOP1_ISSUER_ROLE.to_owned()],
             }],
         }),
-        ledger: Arc::new(MemoryReplayLedger::default()),
+        ledger: Arc::new(TestReplayLedger::default()),
         keys: Arc::new(identity_keyring()?),
         issuer: IDENTITY_ISSUER.to_owned(),
         output_audience: MCP_RESOURCE.to_owned(),
@@ -112,7 +130,7 @@ async fn browser_hop1_rejects_a_browser_cookie_surrogate_wrong_workload_or_unbou
                 roles: vec![],
             }],
         }),
-        ledger: Arc::new(MemoryReplayLedger::default()),
+        ledger: Arc::new(TestReplayLedger::default()),
         keys: Arc::new(identity_keyring()?),
         issuer: IDENTITY_ISSUER.to_owned(),
         output_audience: MCP_RESOURCE.to_owned(),
@@ -163,7 +181,7 @@ async fn browser_hop1_route_is_internal_tls_listener_only_and_requires_the_signe
                 roles: vec![BROWSER_HOP1_ISSUER_ROLE.to_owned()],
             }],
         }),
-        ledger: Arc::new(MemoryReplayLedger::default()),
+        ledger: Arc::new(TestReplayLedger::default()),
         keys: Arc::new(identity_keyring()?),
         issuer: IDENTITY_ISSUER.to_owned(),
         output_audience: MCP_RESOURCE.to_owned(),
@@ -186,7 +204,7 @@ async fn browser_hop1_route_is_internal_tls_listener_only_and_requires_the_signe
     let public = ExchangeService {
         verifier: GitHubVerifier::new("unused-test-audience".to_owned())?,
         policy: Arc::new(empty_policy()),
-        ledger: Arc::new(MemoryReplayLedger::default()),
+        ledger: Arc::new(TestReplayLedger::default()),
         keys: browser.keys.clone(),
         issuer: IDENTITY_ISSUER.to_owned(),
         output_audience: "steward-task-api".to_owned(),

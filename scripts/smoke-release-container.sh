@@ -79,13 +79,6 @@ class BaseHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
-class DynamoHandler(BaseHandler):
-    def do_POST(self):
-        length = int(self.headers.get("content-length", "0"))
-        self.rfile.read(length)
-        record("dynamodb request received")
-        self.reply({})
-
 class TokenReviewHandler(BaseHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length", "0"))
@@ -109,7 +102,6 @@ class TokenReviewHandler(BaseHandler):
         }})
         record("tokenreview response authenticated=true audience=exact username=mapped")
 
-dynamodb = ThreadingHTTPServer(("127.0.0.1", 0), DynamoHandler)
 token_review = ThreadingHTTPServer(("127.0.0.1", 0), TokenReviewHandler)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(sys.argv[1], sys.argv[2])
@@ -117,11 +109,9 @@ token_review.socket = context.wrap_socket(token_review.socket, server_side=True)
 temporary = coordination + ".tmp"
 descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-    output.write(f"dynamodb={dynamodb.server_port}\n")
     output.write(f"tokenreview={token_review.server_port}\n")
 os.replace(temporary, coordination)
-threading.Thread(target=token_review.serve_forever, daemon=True).start()
-dynamodb.serve_forever()
+token_review.serve_forever()
 ' "$app_dir/tls.crt" "$app_dir/tls.key" "$tmp/mock-events" "$tmp/mock-ports" &
 mock_pid="$!"
 
@@ -132,11 +122,8 @@ for _ in $(seq 1 50); do
 done
 coordination_mode="$(python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "$tmp/mock-ports")"
 [[ "$coordination_mode" == 600 ]]
-dynamodb_port="$(sed -n 's/^dynamodb=//p' "$tmp/mock-ports")"
 token_review_port="$(sed -n 's/^tokenreview=//p' "$tmp/mock-ports")"
-[[ "$dynamodb_port" =~ ^[0-9]+$ ]]
 [[ "$token_review_port" =~ ^[0-9]+$ ]]
-[[ "$dynamodb_port" != "$token_review_port" ]]
 
 jq -n '{
   version: "github-oidc-exchange.apelogic.io/v3",
@@ -201,9 +188,7 @@ case "$(uname -s)" in
     public_port="$(free_port)"
     workload_port="$(free_port)"
     while [[ "$public_port" == "$workload_port" \
-      || "$public_port" == "$dynamodb_port" \
       || "$public_port" == "$token_review_port" \
-      || "$workload_port" == "$dynamodb_port" \
       || "$workload_port" == "$token_review_port" ]]; do
       public_port="$(free_port)"
       workload_port="$(free_port)"
@@ -233,17 +218,12 @@ docker run --detach --name "$container" \
   --platform linux/amd64 \
   "${docker_network[@]}" \
   --volume "$app_dir:/smoke:ro" \
-  --env AWS_ACCESS_KEY_ID=smoke \
-  --env AWS_SECRET_ACCESS_KEY=smoke \
-  --env AWS_REGION=us-east-1 \
-  --env AWS_EC2_METADATA_DISABLED=true \
-  --env AWS_ENDPOINT_URL_DYNAMODB="http://$mock_host:$dynamodb_port" \
   --env ISSUER_URL=https://identity.dev.apelogic.io \
   --env GITHUB_EXCHANGE_AUDIENCE=apelogic-github-exchange \
   --env OUTPUT_AUDIENCE=steward-task-api \
   --env POLICY_FILE=/smoke/policy.json \
   --env KEYRING_FILE=/smoke/keyring.json \
-  --env REPLAY_TABLE=smoke-replay \
+  --env REPLAY_LEASE_NAMESPACE=smoke \
   --env LISTEN_ADDRESS="$public_listen" \
   --env WORKLOAD_EXCHANGE_ENABLED=true \
   --env WORKLOAD_LISTEN_ADDRESS="$workload_listen" \

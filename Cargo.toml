@@ -1,6 +1,6 @@
 [package]
 name = "github-oidc-exchange"
-version = "0.3.5"
+version = "0.3.6"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
@@ -11,8 +11,6 @@ default = []
 test-support = []
 
 [dependencies]
-aws-config = "1.10.1"
-aws-sdk-dynamodb = "1.120.0"
 axum = "0.8.8"
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 base64 = "0.22.1"
@@ -42,16 +40,6 @@ tempfile = "3.27.0"
 [[test]]
 name = "security"
 path = "tests/security.rs"
-required-features = ["test-support"]
-
-[[bin]]
-name = "github-oidc-exchange-integration-fixture"
-path = "src/bin/integration_fixture.rs"
-required-features = ["test-support"]
-
-[[test]]
-name = "integration_fixture_config"
-path = "tests/integration_fixture_config.rs"
 required-features = ["test-support"]
 
 [[test]]

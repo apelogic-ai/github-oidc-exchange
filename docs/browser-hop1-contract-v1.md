@@ -61,9 +61,12 @@ the verified email, `github_oauth_connect`, the opaque operation ID, and
 `identity_contract=steward-browser-mcp-hop1-v1`. It intentionally contains no browser session,
 Steward RBAC groups, service principal, GitHub claims, OAuth grant, or provider credential.
 
-The existing DynamoDB replay ledger stores a namespaced hash of the source request identifier. Logs
-record only event class, reviewed Kubernetes username, reason, and a truncated hash of the source
-identifier—never JWTs, emails, browser state, or provider credentials.
+The normal Kubernetes Lease replay ledger hashes the source request identifier into a deterministic
+namespaced Lease. Atomic creation accepts the first request; an existing unexpired Lease rejects
+replay, while an expired record may be reclaimed only with its current `resourceVersion`. Records
+carry the versioned replay-ledger label and remain through source-token expiry plus five minutes.
+Logs record only event class, reviewed Kubernetes username, reason, and a truncated hash of the
+source identifier—never JWTs, emails, browser state, or provider credentials.
 
 ## Deployment inputs
 
