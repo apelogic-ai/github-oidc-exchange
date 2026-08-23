@@ -13,6 +13,7 @@ pub struct Config {
     pub listen_address: SocketAddr,
     pub token_ttl: Duration,
     pub workload: Option<WorkloadConfig>,
+    pub browser_hop1: Option<BrowserHop1Config>,
 }
 
 #[derive(Clone, Debug)]
@@ -24,6 +25,17 @@ pub struct WorkloadConfig {
     pub rsa_keyring_file: PathBuf,
     pub tls_certificate_file: PathBuf,
     pub tls_private_key_file: PathBuf,
+}
+
+/// Configuration for the internal-only Steward browser-session attestation exchange.
+/// All source identity is verified by Steward before it signs the assertion; Identity only reads
+/// its static public JWKS and never receives browser state.
+#[derive(Clone, Debug)]
+pub struct BrowserHop1Config {
+    pub steward_issuer: String,
+    pub assertion_audience: String,
+    pub steward_jwks_file: PathBuf,
+    pub output_audience: String,
 }
 
 #[derive(Debug, Error)]
@@ -44,6 +56,18 @@ pub enum ConfigError {
     InvalidWorkloadEnabled,
     #[error("WORKLOAD_OUTPUT_AUDIENCE must be openshell-api")]
     InvalidWorkloadOutputAudience,
+    #[error("BROWSER_HOP1_ENABLED must be true or false")]
+    InvalidBrowserHop1Enabled,
+    #[error("browser HOP-1 requires WORKLOAD_EXCHANGE_ENABLED=true")]
+    BrowserHop1RequiresWorkload,
+    #[error(
+        "BROWSER_HOP1_STEWARD_ISSUER must be an absolute HTTPS URL without a query or fragment"
+    )]
+    InvalidBrowserHop1StewardIssuer,
+    #[error(
+        "BROWSER_HOP1_OUTPUT_AUDIENCE must be an absolute HTTPS URL without a query or fragment"
+    )]
+    InvalidBrowserHop1OutputAudience,
 }
 
 impl Config {
@@ -68,6 +92,7 @@ impl Config {
             .parse()
             .map_err(|_| ConfigError::InvalidListenAddress)?;
         let workload = WorkloadConfig::from_env(listen_address)?;
+        let browser_hop1 = BrowserHop1Config::from_env(workload.is_some())?;
         Ok(Self {
             issuer_url,
             github_exchange_audience: required("GITHUB_EXCHANGE_AUDIENCE")?,
@@ -78,7 +103,42 @@ impl Config {
             listen_address,
             token_ttl: Duration::from_secs(120),
             workload,
+            browser_hop1,
         })
+    }
+}
+
+impl BrowserHop1Config {
+    fn from_env(workload_enabled: bool) -> Result<Option<Self>, ConfigError> {
+        let enabled = match env::var("BROWSER_HOP1_ENABLED").as_deref() {
+            Ok("true") => true,
+            Ok("false") | Err(env::VarError::NotPresent) => false,
+            Ok(_) | Err(env::VarError::NotUnicode(_)) => {
+                return Err(ConfigError::InvalidBrowserHop1Enabled);
+            }
+        };
+        if !enabled {
+            return Ok(None);
+        }
+        if !workload_enabled {
+            return Err(ConfigError::BrowserHop1RequiresWorkload);
+        }
+        let steward_issuer = required("BROWSER_HOP1_STEWARD_ISSUER")?
+            .trim_end_matches('/')
+            .to_owned();
+        if !valid_https_url(&steward_issuer) {
+            return Err(ConfigError::InvalidBrowserHop1StewardIssuer);
+        }
+        let output_audience = required("BROWSER_HOP1_OUTPUT_AUDIENCE")?;
+        if !valid_https_url(&output_audience) {
+            return Err(ConfigError::InvalidBrowserHop1OutputAudience);
+        }
+        Ok(Some(Self {
+            steward_issuer,
+            assertion_audience: required("BROWSER_HOP1_ASSERTION_AUDIENCE")?,
+            steward_jwks_file: PathBuf::from(required("BROWSER_HOP1_STEWARD_JWKS_FILE")?),
+            output_audience,
+        }))
     }
 }
 
@@ -127,4 +187,15 @@ fn required(name: &'static str) -> Result<String, ConfigError> {
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or(ConfigError::Missing(name))
+}
+
+fn valid_https_url(value: &str) -> bool {
+    reqwest::Url::parse(value).is_ok_and(|parsed| {
+        parsed.scheme() == "https"
+            && parsed.host_str().is_some()
+            && parsed.username().is_empty()
+            && parsed.password().is_none()
+            && parsed.query().is_none()
+            && parsed.fragment().is_none()
+    })
 }

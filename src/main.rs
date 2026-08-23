@@ -4,9 +4,12 @@ use aws_config::BehaviorVersion;
 use aws_sdk_dynamodb::Client;
 use chrono::Utc;
 use github_oidc_exchange::{
+    browser_hop1::{
+        BrowserHop1ExchangeService, BrowserHop1Metrics, StewardBrowserAssertionVerifier,
+    },
     config::Config,
     github::GitHubVerifier,
-    http::{router, separated_routers_with_workload},
+    http::{router, separated_routers_with_workload, separated_routers_with_workload_and_browser},
     keys::{KeyRing, RsaKeyRing},
     policy::Policy,
     replay::DynamoReplayLedger,
@@ -26,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
     let config = Config::from_env()?;
+    let browser_hop1_config = config.browser_hop1.clone();
     let policy = Arc::new(Policy::load(&config.policy_file)?);
     let keys = Arc::new(KeyRing::load(&config.keyring_file, Utc::now())?);
     let aws = aws_config::defaults(BehaviorVersion::latest()).load().await;
@@ -44,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = ExchangeService {
         verifier,
         policy,
-        ledger,
+        ledger: ledger.clone(),
         keys: keys.clone(),
         issuer: config.issuer_url,
         output_audience: config.output_audience,
@@ -74,7 +78,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
         let public_listener = tokio::net::TcpListener::bind(config.listen_address).await?;
-        let (public_router, workload_router) = separated_routers_with_workload(service, workload);
+        let browser_hop1: Option<BrowserHop1ExchangeService<DynamoReplayLedger>> =
+            if let Some(browser) = browser_hop1_config {
+                Some(BrowserHop1ExchangeService {
+                    verifier: StewardBrowserAssertionVerifier::load(
+                        &browser.steward_jwks_file,
+                        browser.steward_issuer,
+                        browser.assertion_audience,
+                    )?,
+                    policy: workload.policy.clone(),
+                    ledger: ledger.clone(),
+                    keys: keys.clone(),
+                    issuer: service.issuer.clone(),
+                    output_audience: browser.output_audience,
+                    token_ttl: std::time::Duration::from_secs(60),
+                    metrics: Arc::new(BrowserHop1Metrics::default()),
+                })
+            } else {
+                None
+            };
+        let (public_router, workload_router) = if let Some(browser_hop1) = browser_hop1 {
+            separated_routers_with_workload_and_browser(service, workload, Some(browser_hop1))
+        } else {
+            separated_routers_with_workload(service, workload)
+        };
         let (shutdown_sender, _) = tokio::sync::broadcast::channel::<()>(1);
         let mut public_shutdown = shutdown_sender.subscribe();
         let mut workload_shutdown = shutdown_sender.subscribe();
