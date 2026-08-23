@@ -2,7 +2,7 @@
 
 `github-oidc-exchange` is a platform-owned identity boundary. Its primary profile validates a
 short-lived GitHub OIDC assertion, applies a private default-deny authorization and corporate
-identity mapping, records the source `jti` in a DynamoDB replay ledger, and issues a two-minute
+identity mapping, records the source `jti` in a Kubernetes Lease replay ledger, and issues a two-minute
 ES256 token that an EKS external OIDC identity provider can authenticate. An opt-in workload
 profile validates a projected Kubernetes service-account token through `TokenReview` and issues a
 separate, two-minute RS256 token with server-selected roles for OpenShell 0.0.98 compatibility.
@@ -73,7 +73,7 @@ workload profile is migrated through a separately reviewed contract change.
 | `OUTPUT_AUDIENCE` | Must be `steward-task-api`. |
 | `POLICY_FILE` | Mounted private JSON authorization/mapping policy. |
 | `KEYRING_FILE` | Mounted Secrets Manager-backed signing keyring. |
-| `REPLAY_TABLE` | DynamoDB table with SHA-256 `jti_hash` string partition key and `expires_at` TTL. |
+| `REPLAY_LEASE_NAMESPACE` | Exact Kubernetes namespace where Identity creates namespaced replay `Lease` records. The chart sets this to its release namespace. |
 | `LISTEN_ADDRESS` | Optional; defaults to `0.0.0.0:8080`. |
 | `WORKLOAD_EXCHANGE_ENABLED` | Optional; `true` enables the separate internal workload listener and requires every workload setting below. |
 | `WORKLOAD_LISTEN_ADDRESS` | Internal HTTPS listener; defaults to `0.0.0.0:8443` and must differ from `LISTEN_ADDRESS`. |
@@ -91,10 +91,21 @@ workload profile is migrated through a separately reviewed contract change.
 | `BROWSER_HOP1_STEWARD_JWKS_FILE` | Read-only deployment-projected Steward public ES256 JWKS. |
 | `BROWSER_HOP1_OUTPUT_AUDIENCE` | Exact HTTPS MCP resource audience on the issued HOP-1 bearer. |
 
-The production pod requires an IRSA role with only `dynamodb:DescribeTable` and
-`dynamodb:PutItem` on its one replay table. When workload exchange is disabled, it receives no
-Kubernetes RBAC permissions. Enabling workload exchange adds exactly `create` on
-`tokenreviews.authentication.k8s.io`.
+Every accepted source assertion creates one deterministic, SHA-256-derived Kubernetes
+`coordination.k8s.io/v1 Lease` in the configured namespace. The first atomic `create` accepts;
+an existing unexpired record rejects replay. An expired record is reclaimed only with its current
+`resourceVersion`, with one bounded re-read/retry on conflict. Every record is labelled
+`github-oidc-exchange.apelogic.io/replay-ledger=v1`, retained through the source token expiry plus
+five minutes, and never logged. Cleanup is best-effort: each accepted exchange scans at most two
+50-item labelled pages from a persisted Kubernetes continuation cursor and deletes at most one
+expired record. It re-reads that Lease and uses a resource-version precondition before deleting.
+Correct replay protection never depends on cleanup succeeding.
+
+The chart grants the Identity service account only namespaced `create`, `get`, `update`, `list`,
+and `delete` on `coordination.k8s.io` `leases`; it has no cloud replay-store, AWS SDK, IRSA, database, or
+Steward/Postgres dependency. When workload exchange is disabled, this Lease permission is still
+required for GitHub assertion replay protection. Enabling workload exchange separately adds exactly
+`create` on `tokenreviews.authentication.k8s.io`.
 
 Workload exchange requires product-native server-authenticated TLS. The chart contract is:
 
@@ -111,7 +122,7 @@ workload path is never registered on that listener or added to Ingress. NetworkP
 configured public ingress CIDRs only to port 8080 and the exact Steward namespace/pod selectors
 only to port 8443.
 
-The pod needs outbound HTTPS for GitHub JWKS, DynamoDB, and Kubernetes TokenReview. The chart's
+The pod needs outbound HTTPS for GitHub JWKS and the Kubernetes API. The chart's
 `0.0.0.0/0:443` egress rule therefore does not claim destination-level Kubernetes API isolation;
 TLS verification, exact TokenReview audience, workload policy, and IAM remain the authorization
 boundaries.
@@ -153,56 +164,8 @@ helm template test charts/github-oidc-exchange -f charts/github-oidc-exchange/ci
 docker build --platform linux/amd64 -t github-oidc-exchange:test .
 ```
 
-Never use the in-memory replay ledger in production. It exists only for deterministic tests.
-
-### Local cross-product integration fixture
-
-The `github-oidc-exchange-integration-fixture` binary is available only with the `test-support`
-feature. It reuses the production GitHub verifier, policy authorization, replay enforcement,
-output signing, HTTP exchange, and JWKS implementation, while replacing GitHub's remote JWKS with
-one explicitly mounted ephemeral RSA public key for the fixture process lifetime. Injected fixture
-trust never falls back to GitHub's remote JWKS refresh path. The normal binary has no runtime option
-for this trust substitution, and the release Dockerfile explicitly builds only
-`github-oidc-exchange`.
-
-Run `serve` with the normal `ISSUER_URL`, `GITHUB_EXCHANGE_AUDIENCE`, `OUTPUT_AUDIENCE`,
-`POLICY_FILE`, `KEYRING_FILE`, and optional `LISTEN_ADDRESS` settings plus:
-
-- `FIXTURE_SOURCE_KID` — ephemeral source signing-key ID;
-- `FIXTURE_SOURCE_PUBLIC_KEY_FILE` — mounted RSA public key PEM;
-- `FIXTURE_CLAIMS_FILE` — mounted exact `GitHubClaims` JSON selected by the integration harness;
-- `FIXTURE_TOKEN_TTL_SECONDS` — optional test-only GitHub/task output-token lifetime, default 120
-  and bounded to 1–3600 seconds. A 900-second value supports a 10–15 minute local lifecycle
-  journey. Workload tokens retain the production 120-second lifetime.
-
-Readiness is `GET /readyz`. The configured HTTPS issuer must be reachable by the Kind API server,
-and its published JWKS URL is exactly `<ISSUER_URL>/jwks.json`. A non-secret machine-readable
-contract is available at `GET /fixture/v1/expected-identity`; it reports the issuer, JWKS and
-readiness paths, contract versions, configured TTL, exact policy-derived groups, and optional
-workload-listener contract. It also reports `expected_email_verified=true`; it contains no
-assertions or tokens.
-
-Set `WORKLOAD_EXCHANGE_ENABLED=true` to add the production workload path. Every normal workload
-setting is then required: `WORKLOAD_LISTEN_ADDRESS` (default `0.0.0.0:8443`),
-`WORKLOAD_INPUT_AUDIENCE`, `WORKLOAD_OUTPUT_AUDIENCE=openshell-api`, `WORKLOAD_POLICY_FILE`,
-`WORKLOAD_RSA_KEYRING_FILE`, `TLS_CERTIFICATE_FILE`, and `TLS_PRIVATE_KEY_FILE`. The output RSA
-keyring must be disjoint from the public GitHub exchange keyring. The fixture constructs the
-production `KubernetesTokenReviewer`, so Kind supplies `KUBERNETES_SERVICE_HOST`,
-`KUBERNETES_SERVICE_PORT_HTTPS`, and the mounted service-account CA/token; the existing
-`KUBERNETES_CA_CERTIFICATE_FILE` and `KUBERNETES_SERVICE_ACCOUNT_TOKEN_FILE` overrides remain
-available. Its service account requires only `create` on
-`tokenreviews.authentication.k8s.io`.
-
-The workload listener is HTTPS-only and exposes `/v1/workload/exchange`, `/healthz`, and `/readyz`;
-it does not expose discovery, JWKS, the GitHub exchange, or fixture metadata. Its certificate must
-cover the exact Kind Service DNS name used by the Steward controller, and callers use the mounted
-test CA without disabling verification. The public HTTP listener continues to sit behind the
-run-local TLS proxy and publishes both ES256 and workload RS256 keys from its JWKS. Missing,
-invalid, conflicting, or partial workload configuration fails before either listener binds.
-
-Run `issue` with `FIXTURE_SOURCE_KID`, `FIXTURE_SOURCE_PRIVATE_KEY_FILE`,
-`FIXTURE_CLAIMS_FILE`, `FIXTURE_EXCHANGE_URL`, and `FIXTURE_TOKEN_OUTPUT_FILE`. It signs the source
-claims in memory, calls the real `/v1/exchange`, and creates the output-token file with mode 0600.
-It prints only a token-free JSON status record. The output path must not already exist. The harness
-must delete all ephemeral source keys, output keys, claims, policies, and token files with its
-disposable run directory.
+The normal release binary has no integration fixture or in-memory replay implementation. Its
+replay behavior is verified against a disposable real Kind API by
+`scripts/test-kubernetes-lease-replay-kind.sh`; that test creates only a temporary namespaced
+service account and Lease records, uses a generated mode-0600 token file, and destroys the cluster
+and all test material on exit.

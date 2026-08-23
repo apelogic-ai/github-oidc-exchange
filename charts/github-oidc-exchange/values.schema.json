@@ -15,12 +15,11 @@
     },
     "config": {
       "type": "object",
-      "required": ["issuerUrl", "githubExchangeAudience", "outputAudience", "replayTable", "policyConfigMapName", "keyringSecretName"],
+      "required": ["issuerUrl", "githubExchangeAudience", "outputAudience", "policyConfigMapName", "keyringSecretName"],
       "properties": {
         "issuerUrl": {"type": "string", "pattern": "^https://[^/?#]+(?:/[^?#]*)?$"},
         "githubExchangeAudience": {"type": "string", "minLength": 1},
         "outputAudience": {"const": "steward-task-api"},
-        "replayTable": {"type": "string", "minLength": 1},
         "policyConfigMapName": {"type": "string", "minLength": 1},
         "policyConfigMapKey": {"type": "string", "minLength": 1},
         "keyringSecretName": {"type": "string", "minLength": 1},

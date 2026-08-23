@@ -1,5 +1,7 @@
 The issuer is fail-closed until image.repository, image.digest, policy ConfigMap, keyring Secret,
-IRSA annotation, replay table, issuer URL, exchange audience, and ingress CIDRs are supplied.
+service account, issuer URL, exchange audience, and ingress CIDRs are supplied. The chart grants
+that service account namespaced Kubernetes Lease replay-ledger access; no replay table or IRSA
+annotation is required.
 {{- if .Values.workloadExchange.enabled }}
 
 Workload exchange is HTTPS-only at:

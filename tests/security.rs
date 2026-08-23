@@ -1,7 +1,7 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
-    sync::{Arc, OnceLock, atomic::Ordering},
+    sync::{Arc, Mutex, OnceLock, atomic::Ordering},
     time::Duration,
 };
 
@@ -18,7 +18,7 @@ use github_oidc_exchange::{
     http::separated_routers_with_workload,
     keys::{KeyRing, RsaKeyRing},
     policy::{Actor, IdentityProfile, Policy, PolicyError, RepositoryPolicy},
-    replay::{MemoryReplayLedger, ReplayError, ReplayLedger},
+    replay::{ReplayError, ReplayLedger},
     service::{ExchangeError, ExchangeService, Metrics},
     workload::{
         ReviewError, ReviewedWorkload, TokenReviewer, WorkloadExchangeError,
@@ -67,6 +67,20 @@ const WORKLOAD_INPUT_AUDIENCE: &str = "apelogic-workload-exchange";
 const WORKLOAD_OUTPUT_AUDIENCE: &str = "openshell-api";
 const WORKLOAD_USERNAME: &str = "system:serviceaccount:steward:steward-controller";
 const WORKLOAD_SUBJECT: &str = "kubernetes:serviceaccount:steward:steward-controller";
+
+#[derive(Clone, Default)]
+struct TestReplayLedger(Arc<Mutex<HashSet<String>>>);
+
+impl ReplayLedger for TestReplayLedger {
+    async fn use_once(&self, jti: &str, _expires_at: i64) -> Result<(), ReplayError> {
+        let mut used = self.0.lock().map_err(|_| ReplayError::Unavailable)?;
+        if used.insert(jti.to_owned()) {
+            Ok(())
+        } else {
+            Err(ReplayError::Replayed)
+        }
+    }
+}
 
 fn policy() -> Policy {
     Policy {
@@ -581,7 +595,7 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
     let service = ExchangeService {
         verifier,
         policy: Arc::new(policy()),
-        ledger: Arc::new(MemoryReplayLedger::default()),
+        ledger: Arc::new(TestReplayLedger::default()),
         keys: Arc::new(keyring),
         issuer: "https://identity.dev.apelogic.io".to_owned(),
         output_audience: "steward-task-api".to_owned(),
@@ -629,8 +643,8 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
 }
 
 #[tokio::test]
-async fn memory_ledger_rejects_replay() {
-    let ledger = MemoryReplayLedger::default();
+async fn test_ledger_rejects_replay() {
+    let ledger = TestReplayLedger::default();
     let expiry = Utc::now().timestamp() + 60;
     assert_eq!(ledger.use_once("jti", expiry).await, Ok(()));
     assert_eq!(
@@ -764,7 +778,7 @@ async fn workload_http_contract_is_empty_body_only_and_preserves_github_es256()
     let github_service = ExchangeService {
         verifier,
         policy: Arc::new(policy()),
-        ledger: Arc::new(MemoryReplayLedger::default()),
+        ledger: Arc::new(TestReplayLedger::default()),
         keys: Arc::new(keyring()?),
         issuer: "https://identity.dev.apelogic.io".to_owned(),
         output_audience: "steward-task-api".to_owned(),

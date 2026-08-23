@@ -68,3 +68,15 @@ jobs:
           format: table
           exit-code: "1"
           severity: CRITICAL
+
+  kubernetes-lease-replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install pinned Kind
+        run: go install sigs.k8s.io/kind@v0.31.0
+      - name: Verify Kubernetes Lease replay semantics against Kind
+        run: PATH="$(go env GOPATH)/bin:$PATH" bash scripts/test-kubernetes-lease-replay-kind.sh
