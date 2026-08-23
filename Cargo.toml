@@ -54,6 +54,11 @@ name = "integration_fixture_config"
 path = "tests/integration_fixture_config.rs"
 required-features = ["test-support"]
 
+[[test]]
+name = "browser_hop1_contract"
+path = "tests/browser_hop1_contract.rs"
+required-features = ["test-support"]
+
 [lints.rust]
 unsafe_code = "forbid"
 
