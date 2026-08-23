@@ -16,6 +16,7 @@ config:
 rolloutRevisions:
   githubPolicy: rev-1
   githubKeyring: rev-1
+  browserHop1Jwks: ""
 
 networkPolicy:
   ingressCidrs:
