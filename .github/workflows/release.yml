@@ -329,7 +329,7 @@ jobs:
           printf 'image_digest=%s\n' "$image_digest" >> "$GITHUB_OUTPUT"
           printf 'chart_digest=%s\n' "$chart_digest" >> "$GITHUB_OUTPUT"
 
-      - name: Make mirrored GHCR packages public
+      - name: Verify mirrored GHCR packages remain public
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -337,7 +337,6 @@ jobs:
           set -euo pipefail
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           for package in github-oidc-exchange charts%2Fgithub-oidc-exchange; do
-            gh api --method PATCH "orgs/$owner/packages/container/$package" -f visibility=public > /dev/null
             visibility="$(gh api "orgs/$owner/packages/container/$package" --jq .visibility)"
             [[ "$visibility" == public ]]
           done
