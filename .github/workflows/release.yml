@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  packages: write
 
 concurrency:
   group: release-${{ inputs.version }}
@@ -55,11 +56,15 @@ jobs:
           : "${ECR_REGISTRY:?Set ECR_REGISTRY}"
           : "${IMAGE_REPOSITORY_NAME:?Set ECR_IMAGE_REPOSITORY}"
           : "${CHART_REPOSITORY_NAME:?Set ECR_CHART_REPOSITORY}"
+          ghcr_owner="${GITHUB_REPOSITORY_OWNER,,}"
+          [[ "$ghcr_owner" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
           printf 'VERSION=%s\n' "$REQUESTED_VERSION" >> "$GITHUB_ENV"
           printf 'CANDIDATE_TAG=candidate-%s-%s-%s\n' "$REQUESTED_VERSION" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
           printf 'CHART_CANDIDATE_TAG=candidate-%s-%s-%s\n' "$REQUESTED_VERSION" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
           printf 'IMAGE_REFERENCE=%s/%s\n' "$ECR_REGISTRY" "$IMAGE_REPOSITORY_NAME" >> "$GITHUB_ENV"
           printf 'CHART_REFERENCE=%s/%s\n' "$ECR_REGISTRY" "$CHART_REPOSITORY_NAME" >> "$GITHUB_ENV"
+          printf 'PUBLIC_IMAGE_REFERENCE=ghcr.io/%s/github-oidc-exchange\n' "$ghcr_owner" >> "$GITHUB_ENV"
+          printf 'PUBLIC_CHART_REFERENCE=ghcr.io/%s/charts/github-oidc-exchange\n' "$ghcr_owner" >> "$GITHUB_ENV"
 
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
@@ -221,6 +226,7 @@ jobs:
             --config dist/chart-config.json:application/vnd.cncf.helm.config.v1+json \
             --annotation "org.opencontainers.image.created=$created" \
             --annotation "org.opencontainers.image.description=Platform OIDC exchange issuer for GitHub and Kubernetes workload identity" \
+            --annotation "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --annotation "org.opencontainers.image.title=github-oidc-exchange" \
             --annotation "org.opencontainers.image.version=$VERSION" \
             --format json \
@@ -299,6 +305,95 @@ jobs:
           cmp "dist/github-oidc-exchange-$VERSION.tgz" \
             "/tmp/promoted-chart/github-oidc-exchange-$VERSION.tgz"
 
+      - name: Authenticate to GitHub Container Registry
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Mirror verified immutable ECR artifacts to GHCR
+        id: public
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_image="$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"
+          source_chart="$CHART_REFERENCE@${{ steps.chart.outputs.digest }}"
+          oras cp "$source_image" "$PUBLIC_IMAGE_REFERENCE:$VERSION"
+          oras cp "$source_chart" "$PUBLIC_CHART_REFERENCE:$VERSION"
+          image_digest="$(oras manifest fetch --descriptor "$PUBLIC_IMAGE_REFERENCE:$VERSION" | jq -r '.digest')"
+          chart_digest="$(oras manifest fetch --descriptor "$PUBLIC_CHART_REFERENCE:$VERSION" | jq -r '.digest')"
+          [[ "$image_digest" == "${{ steps.image.outputs.digest }}" ]]
+          [[ "$chart_digest" == "${{ steps.chart.outputs.digest }}" ]]
+          printf 'image_digest=%s\n' "$image_digest" >> "$GITHUB_OUTPUT"
+          printf 'chart_digest=%s\n' "$chart_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Make mirrored GHCR packages public
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          for package in github-oidc-exchange charts%2Fgithub-oidc-exchange; do
+            gh api --method PATCH "orgs/$owner/packages/container/$package" -f visibility=public > /dev/null
+            visibility="$(gh api "orgs/$owner/packages/container/$package" --jq .visibility)"
+            [[ "$visibility" == public ]]
+          done
+
+      - name: Sign, attest, and verify public GHCR artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
+          issuer="https://token.actions.githubusercontent.com"
+          public_image="$PUBLIC_IMAGE_REFERENCE@${{ steps.public.outputs.image_digest }}"
+          public_chart="$PUBLIC_CHART_REFERENCE@${{ steps.public.outputs.chart_digest }}"
+          for artifact in public-image public-chart; do
+            if [[ "$artifact" == public-image ]]; then
+              reference="$public_image"
+              sbom=dist/image.spdx.json
+            else
+              reference="$public_chart"
+              sbom=dist/chart.spdx.json
+            fi
+            cosign sign --yes --bundle "dist/$artifact-signature.sigstore.json" --new-bundle-format=true --registry-referrers-mode=oci-1-1 "$reference"
+            cosign attest --yes --new-bundle-format=true --type spdxjson --predicate "$sbom" "$reference"
+            cosign attest --yes --new-bundle-format=true --type slsaprovenance1 --predicate dist/release.slsa.json "$reference"
+            cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true "$reference" > /dev/null
+            cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type spdxjson "$reference" > /dev/null
+            cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type slsaprovenance1 "$reference" > /dev/null
+          done
+
+      - name: Verify anonymous exact-digest GHCR pulls
+        shell: bash
+        run: |
+          set -euo pipefail
+          public_image="$PUBLIC_IMAGE_REFERENCE@${{ steps.public.outputs.image_digest }}"
+          public_chart="$PUBLIC_CHART_REFERENCE@${{ steps.public.outputs.chart_digest }}"
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
+          issuer="https://token.actions.githubusercontent.com"
+          docker logout ghcr.io || true
+          helm registry logout ghcr.io || true
+          oras logout ghcr.io || true
+          docker pull "$public_image"
+          docker image inspect "$public_image" --format '{{json .RepoDigests}}' | jq -e --arg ref "$public_image" 'index($ref) != null' > /dev/null
+          image_digest="$(oras manifest fetch --descriptor "$public_image" | jq -r '.digest')"
+          chart_digest="$(oras manifest fetch --descriptor "$public_chart" | jq -r '.digest')"
+          [[ "$image_digest" == "${{ steps.public.outputs.image_digest }}" ]]
+          [[ "$chart_digest" == "${{ steps.public.outputs.chart_digest }}" ]]
+          mkdir -p /tmp/public-chart
+          helm pull "oci://$PUBLIC_CHART_REFERENCE" --version "$VERSION" --destination /tmp/public-chart
+          cmp "dist/github-oidc-exchange-$VERSION.tgz" \
+            "/tmp/public-chart/github-oidc-exchange-$VERSION.tgz"
+          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true "$public_image" > /dev/null
+          cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type spdxjson "$public_image" > /dev/null
+          cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type slsaprovenance1 "$public_image" > /dev/null
+          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true "$public_chart" > /dev/null
+          cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type spdxjson "$public_chart" > /dev/null
+          cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type slsaprovenance1 "$public_chart" > /dev/null
+
       - name: Publish signed release handoff
         env:
           GH_TOKEN: ${{ github.token }}
@@ -311,16 +406,18 @@ jobs:
           jq -n \
             --arg version "$VERSION" \
             --arg commit "$GITHUB_SHA" \
-            --arg image "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}" \
-            --arg chart "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" \
+            --arg image "$PUBLIC_IMAGE_REFERENCE@${{ steps.public.outputs.image_digest }}" \
+            --arg chart "$PUBLIC_CHART_REFERENCE@${{ steps.public.outputs.chart_digest }}" \
+            --arg ecr_image "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}" \
+            --arg ecr_chart "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" \
             --arg policy_contract "$policy_contract" \
             --arg identity_contract "$identity_contract" \
-            '{version:$version,commit:$commit,image:$image,chart:$chart,policy_contract:$policy_contract,identity_contract:$identity_contract}' \
+            '{version:$version,commit:$commit,image:$image,chart:$chart,ecr_image:$ecr_image,ecr_chart:$ecr_chart,public_distribution:{registry:"ghcr.io",anonymous_pull_verified:true},policy_contract:$policy_contract,identity_contract:$identity_contract}' \
             > dist/release-manifest.json
           identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
           cosign sign-blob --yes --bundle dist/release-manifest.sigstore.json dist/release-manifest.json
           cosign verify-blob --bundle dist/release-manifest.sigstore.json --certificate-identity "$identity" --certificate-oidc-issuer https://token.actions.githubusercontent.com dist/release-manifest.json
-          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "github-oidc-exchange v$VERSION" --notes "Signed platform identity exchange image and chart with OCI 1.1 signatures, SPDX SBOMs, SLSA v1 provenance, and critical-vulnerability evidence." dist/*
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "github-oidc-exchange v$VERSION" --notes "Signed platform identity exchange image and chart. ECR immutable artifacts are mirrored byte-for-byte to public GHCR, then signed and attested under this release workflow; anonymous exact-digest pulls and verification are required before this handoff is published." dist/*
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ always() && hashFiles('dist/*') != '' }}

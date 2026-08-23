@@ -17,6 +17,7 @@ workflow=".github/workflows/release.yml"
 
 required=(
   'workflow_dispatch:'
+  'packages: write'
   'cosign-release: v3.1.2'
   '--registry-referrers-mode=oci-1-1'
   '--new-bundle-format=true'
@@ -26,10 +27,26 @@ required=(
   'CANDIDATE_TAG=candidate-'
   'CHART_CANDIDATE_TAG=candidate-'
   'oras push --image-spec v1.0'
+  'org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY'
   'aws ecr describe-images'
   'Promote verified image candidate'
   'Promote verified chart candidate'
   'oras tag "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" "$VERSION"'
+  'PUBLIC_IMAGE_REFERENCE=ghcr.io/'
+  'PUBLIC_CHART_REFERENCE=ghcr.io/'
+  'Authenticate to GitHub Container Registry'
+  'Mirror verified immutable ECR artifacts to GHCR'
+  'Make mirrored GHCR packages public'
+  'Sign, attest, and verify public GHCR artifacts'
+  'Verify anonymous exact-digest GHCR pulls'
+  'oras cp "$source_image" "$PUBLIC_IMAGE_REFERENCE:$VERSION"'
+  'oras cp "$source_chart" "$PUBLIC_CHART_REFERENCE:$VERSION"'
+  'docker logout ghcr.io || true'
+  'helm registry logout ghcr.io || true'
+  'oras logout ghcr.io || true'
+  'ecr_image:$ecr_image'
+  'ecr_chart:$ecr_chart'
+  'anonymous_pull_verified:true'
   'gh release create "v$VERSION"'
   '--arg policy_contract "$policy_contract"'
   '--arg identity_contract "$identity_contract"'
@@ -193,6 +210,10 @@ chart_candidate_line="$(grep -n 'Publish unique immutable chart candidate' "$wor
 verification_line="$(grep -n 'Sign, attest, and verify immutable candidate artifacts' "$workflow" | cut -d: -f1)"
 image_promotion_line="$(grep -n 'Promote verified image candidate' "$workflow" | cut -d: -f1)"
 chart_promotion_line="$(grep -n 'Promote verified chart candidate' "$workflow" | cut -d: -f1)"
+public_mirror_line="$(grep -n 'Mirror verified immutable ECR artifacts to GHCR' "$workflow" | cut -d: -f1)"
+public_visibility_line="$(grep -n 'Make mirrored GHCR packages public' "$workflow" | cut -d: -f1)"
+public_sign_line="$(grep -n 'Sign, attest, and verify public GHCR artifacts' "$workflow" | cut -d: -f1)"
+anonymous_verify_line="$(grep -n 'Verify anonymous exact-digest GHCR pulls' "$workflow" | cut -d: -f1)"
 release_line="$(grep -n 'gh release create' "$workflow" | cut -d: -f1)"
 [[ "$image_candidate_line" -lt "$verification_line" ]]
 [[ "$chart_candidate_line" -lt "$verification_line" ]]
@@ -200,3 +221,9 @@ release_line="$(grep -n 'gh release create' "$workflow" | cut -d: -f1)"
 [[ "$verification_line" -lt "$chart_promotion_line" ]]
 [[ "$image_promotion_line" -lt "$release_line" ]]
 [[ "$chart_promotion_line" -lt "$release_line" ]]
+[[ "$image_promotion_line" -lt "$public_mirror_line" ]]
+[[ "$chart_promotion_line" -lt "$public_mirror_line" ]]
+[[ "$public_mirror_line" -lt "$public_visibility_line" ]]
+[[ "$public_visibility_line" -lt "$public_sign_line" ]]
+[[ "$public_sign_line" -lt "$anonymous_verify_line" ]]
+[[ "$anonymous_verify_line" -lt "$release_line" ]]
