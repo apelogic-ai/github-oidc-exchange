@@ -36,7 +36,7 @@ required=(
   'PUBLIC_CHART_REFERENCE=ghcr.io/'
   'Authenticate to GitHub Container Registry'
   'Mirror verified immutable ECR artifacts to GHCR'
-  'Make mirrored GHCR packages public'
+  'Verify mirrored GHCR packages remain public'
   'Sign, attest, and verify public GHCR artifacts'
   'Verify anonymous exact-digest GHCR pulls'
   'oras cp "$source_image" "$PUBLIC_IMAGE_REFERENCE:$VERSION"'
@@ -211,7 +211,7 @@ verification_line="$(grep -n 'Sign, attest, and verify immutable candidate artif
 image_promotion_line="$(grep -n 'Promote verified image candidate' "$workflow" | cut -d: -f1)"
 chart_promotion_line="$(grep -n 'Promote verified chart candidate' "$workflow" | cut -d: -f1)"
 public_mirror_line="$(grep -n 'Mirror verified immutable ECR artifacts to GHCR' "$workflow" | cut -d: -f1)"
-public_visibility_line="$(grep -n 'Make mirrored GHCR packages public' "$workflow" | cut -d: -f1)"
+public_visibility_line="$(grep -n 'Verify mirrored GHCR packages remain public' "$workflow" | cut -d: -f1)"
 public_sign_line="$(grep -n 'Sign, attest, and verify public GHCR artifacts' "$workflow" | cut -d: -f1)"
 anonymous_verify_line="$(grep -n 'Verify anonymous exact-digest GHCR pulls' "$workflow" | cut -d: -f1)"
 release_line="$(grep -n 'gh release create' "$workflow" | cut -d: -f1)"
