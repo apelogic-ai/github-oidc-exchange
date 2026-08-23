@@ -63,6 +63,27 @@ impl Config {
         if output_audience != "steward-task-api" {
             return Err(ConfigError::InvalidOutputAudience);
         }
+        let listen_address = env::var("LISTEN_ADDRESS")
+            .unwrap_or_else(|_| "0.0.0.0:8080".to_owned())
+            .parse()
+            .map_err(|_| ConfigError::InvalidListenAddress)?;
+        let workload = WorkloadConfig::from_env(listen_address)?;
+        Ok(Self {
+            issuer_url,
+            github_exchange_audience: required("GITHUB_EXCHANGE_AUDIENCE")?,
+            output_audience,
+            policy_file: PathBuf::from(required("POLICY_FILE")?),
+            keyring_file: PathBuf::from(required("KEYRING_FILE")?),
+            replay_table: required("REPLAY_TABLE")?,
+            listen_address,
+            token_ttl: Duration::from_secs(120),
+            workload,
+        })
+    }
+}
+
+impl WorkloadConfig {
+    pub fn from_env(public_listen_address: SocketAddr) -> Result<Option<Self>, ConfigError> {
         let workload_enabled = match env::var("WORKLOAD_EXCHANGE_ENABLED").as_deref() {
             Ok("true") => true,
             Ok("false") | Err(env::VarError::NotPresent) => false,
@@ -70,10 +91,6 @@ impl Config {
                 return Err(ConfigError::InvalidWorkloadEnabled);
             }
         };
-        let listen_address = env::var("LISTEN_ADDRESS")
-            .unwrap_or_else(|_| "0.0.0.0:8080".to_owned())
-            .parse()
-            .map_err(|_| ConfigError::InvalidListenAddress)?;
         let workload = if workload_enabled {
             let output_audience = required("WORKLOAD_OUTPUT_AUDIENCE")?;
             if output_audience != "openshell-api" {
@@ -96,21 +113,11 @@ impl Config {
         };
         if workload
             .as_ref()
-            .is_some_and(|workload| workload.listen_address == listen_address)
+            .is_some_and(|workload| workload.listen_address == public_listen_address)
         {
             return Err(ConfigError::ConflictingListenAddresses);
         }
-        Ok(Self {
-            issuer_url,
-            github_exchange_audience: required("GITHUB_EXCHANGE_AUDIENCE")?,
-            output_audience,
-            policy_file: PathBuf::from(required("POLICY_FILE")?),
-            keyring_file: PathBuf::from(required("KEYRING_FILE")?),
-            replay_table: required("REPLAY_TABLE")?,
-            listen_address,
-            token_ttl: Duration::from_secs(120),
-            workload,
-        })
+        Ok(workload)
     }
 }
 

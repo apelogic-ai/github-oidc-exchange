@@ -139,7 +139,7 @@ token_review_port="$(sed -n 's/^tokenreview=//p' "$tmp/mock-ports")"
 [[ "$dynamodb_port" != "$token_review_port" ]]
 
 jq -n '{
-  version: "github-oidc-exchange.apelogic.io/v2",
+  version: "github-oidc-exchange.apelogic.io/v3",
   service_group: "agents.apelogic.ai/service-principal:steward-run",
   acting_group_prefix: "agents.apelogic.ai/acting-user:",
   bootstrap_group: "agents.apelogic.ai/service-envelope-bootstrap:steward-run",
@@ -154,7 +154,7 @@ jq -n '{
     events: ["workflow_dispatch"],
     refs: ["refs/heads/main"]
   }],
-  actors: {"16106037": {email: "leo@apelogic.ai", verified: true}}
+  actors: {"16106037": {email: "leo@apelogic.ai", canonical_user_id: "usr_0123456789abcdef0123456789abcdef", verified: true}}
 }' > "$app_dir/policy.json"
 
 jq -n '{

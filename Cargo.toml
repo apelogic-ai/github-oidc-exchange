@@ -1,6 +1,6 @@
 [package]
 name = "github-oidc-exchange"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
@@ -42,6 +42,16 @@ tempfile = "3.27.0"
 [[test]]
 name = "security"
 path = "tests/security.rs"
+required-features = ["test-support"]
+
+[[bin]]
+name = "github-oidc-exchange-integration-fixture"
+path = "src/bin/integration_fixture.rs"
+required-features = ["test-support"]
+
+[[test]]
+name = "integration_fixture_config"
+path = "tests/integration_fixture_config.rs"
 required-features = ["test-support"]
 
 [lints.rust]

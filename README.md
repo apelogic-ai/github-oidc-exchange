@@ -31,14 +31,20 @@ The GitHub assertion must have:
   `workflow_ref`, `job_workflow_ref`, `event_name`, and `ref` claims;
 - an exact match in the private policy for subject, workflow, event, ref, and verified actor.
 
-The output contains exactly one audience, `email`, deployment-ratified `groups`, and
-`identity_contract=steward-task-v1`. Policy rules select one server-controlled identity profile:
+The output contains exactly one audience, the policy-verified `email`, `email_verified=true`,
+deployment-ratified `groups`, and
+`identity_contract=steward-task-v2`. Policy rules select one server-controlled identity profile:
 
-- `task` emits exactly the service-principal and verified acting-user groups;
+- `task` emits exactly the service-principal, verified acting-user, and opaque canonical-user
+  groups;
 - `bootstrap` emits exactly the route-scoped service-envelope-bootstrap group.
 
 Profiles are selected only by exact GitHub claim matches. The caller cannot request a profile,
-and ambiguous matching rules fail closed. The source assertion and issued token are never logged.
+canonical user ID, or output groups, and ambiguous matching rules fail closed. Each reviewed actor
+mapping owns one unique `usr_<32 lowercase hex>` Steward user ID. GitHub claims and workflow inputs
+cannot override that mapping. The mapped ID must already resolve to the same reviewed person in
+Steward; policy rollout does not register or discover users. The source assertion and issued token
+are never logged.
 
 The workload profile has a separate default-deny policy. It asks the Kubernetes API to review the
 source token against one exact configured audience and requires an exact service-account username
@@ -120,7 +126,8 @@ and observe the resulting rolling restart before advancing to the removal phase.
 Secret-reading principal, controller, or image. Unchanged references and revisions render stable
 annotations.
 
-See [the policy example](docs/policy-contract.example.json),
+See [the policy example](docs/policy-contract.example.json) and its
+[JSON schema](docs/policy-contract.schema.json),
 [P-256 key rotation contract](docs/keyring-contract.example.json),
 [workload policy example](docs/workload-policy-contract.example.json),
 [RSA key rotation contract](docs/rsa-keyring-contract.example.json), and the Helm chart under
@@ -138,3 +145,55 @@ docker build --platform linux/amd64 -t github-oidc-exchange:test .
 ```
 
 Never use the in-memory replay ledger in production. It exists only for deterministic tests.
+
+### Local cross-product integration fixture
+
+The `github-oidc-exchange-integration-fixture` binary is available only with the `test-support`
+feature. It reuses the production GitHub verifier, policy authorization, replay enforcement,
+output signing, HTTP exchange, and JWKS implementation, while replacing GitHub's remote JWKS with
+one explicitly mounted ephemeral RSA public key for the fixture process lifetime. Injected fixture
+trust never falls back to GitHub's remote JWKS refresh path. The normal binary has no runtime option
+for this trust substitution, and the release Dockerfile explicitly builds only
+`github-oidc-exchange`.
+
+Run `serve` with the normal `ISSUER_URL`, `GITHUB_EXCHANGE_AUDIENCE`, `OUTPUT_AUDIENCE`,
+`POLICY_FILE`, `KEYRING_FILE`, and optional `LISTEN_ADDRESS` settings plus:
+
+- `FIXTURE_SOURCE_KID` — ephemeral source signing-key ID;
+- `FIXTURE_SOURCE_PUBLIC_KEY_FILE` — mounted RSA public key PEM;
+- `FIXTURE_CLAIMS_FILE` — mounted exact `GitHubClaims` JSON selected by the integration harness;
+- `FIXTURE_TOKEN_TTL_SECONDS` — optional test-only GitHub/task output-token lifetime, default 120
+  and bounded to 1–3600 seconds. A 900-second value supports a 10–15 minute local lifecycle
+  journey. Workload tokens retain the production 120-second lifetime.
+
+Readiness is `GET /readyz`. The configured HTTPS issuer must be reachable by the Kind API server,
+and its published JWKS URL is exactly `<ISSUER_URL>/jwks.json`. A non-secret machine-readable
+contract is available at `GET /fixture/v1/expected-identity`; it reports the issuer, JWKS and
+readiness paths, contract versions, configured TTL, exact policy-derived groups, and optional
+workload-listener contract. It also reports `expected_email_verified=true`; it contains no
+assertions or tokens.
+
+Set `WORKLOAD_EXCHANGE_ENABLED=true` to add the production workload path. Every normal workload
+setting is then required: `WORKLOAD_LISTEN_ADDRESS` (default `0.0.0.0:8443`),
+`WORKLOAD_INPUT_AUDIENCE`, `WORKLOAD_OUTPUT_AUDIENCE=openshell-api`, `WORKLOAD_POLICY_FILE`,
+`WORKLOAD_RSA_KEYRING_FILE`, `TLS_CERTIFICATE_FILE`, and `TLS_PRIVATE_KEY_FILE`. The output RSA
+keyring must be disjoint from the public GitHub exchange keyring. The fixture constructs the
+production `KubernetesTokenReviewer`, so Kind supplies `KUBERNETES_SERVICE_HOST`,
+`KUBERNETES_SERVICE_PORT_HTTPS`, and the mounted service-account CA/token; the existing
+`KUBERNETES_CA_CERTIFICATE_FILE` and `KUBERNETES_SERVICE_ACCOUNT_TOKEN_FILE` overrides remain
+available. Its service account requires only `create` on
+`tokenreviews.authentication.k8s.io`.
+
+The workload listener is HTTPS-only and exposes `/v1/workload/exchange`, `/healthz`, and `/readyz`;
+it does not expose discovery, JWKS, the GitHub exchange, or fixture metadata. Its certificate must
+cover the exact Kind Service DNS name used by the Steward controller, and callers use the mounted
+test CA without disabling verification. The public HTTP listener continues to sit behind the
+run-local TLS proxy and publishes both ES256 and workload RS256 keys from its JWKS. Missing,
+invalid, conflicting, or partial workload configuration fails before either listener binds.
+
+Run `issue` with `FIXTURE_SOURCE_KID`, `FIXTURE_SOURCE_PRIVATE_KEY_FILE`,
+`FIXTURE_CLAIMS_FILE`, `FIXTURE_EXCHANGE_URL`, and `FIXTURE_TOKEN_OUTPUT_FILE`. It signs the source
+claims in memory, calls the real `/v1/exchange`, and creates the output-token file with mode 0600.
+It prints only a token-free JSON status record. The output path must not already exist. The harness
+must delete all ephemeral source keys, output keys, claims, policies, and token files with its
+disposable run directory.

@@ -37,7 +37,7 @@ use rsa::{
     pkcs8::{EncodePrivateKey, LineEnding},
     traits::PublicKeyParts,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use tower::ServiceExt;
 
@@ -89,6 +89,7 @@ fn policy() -> Policy {
             "12345".to_owned(),
             Actor {
                 email: "engineer@apelogic.io".to_owned(),
+                canonical_user_id: "usr_0123456789abcdef0123456789abcdef".to_owned(),
                 verified: true,
             },
         )]),
@@ -110,6 +111,7 @@ fn workflow_selected_profiles_are_mutually_exclusive() -> Result<(), Box<dyn std
         task_identity.groups,
         vec![
             "agents.apelogic.ai/acting-user:engineer@apelogic.io",
+            "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef",
             "agents.apelogic.ai/service-principal:steward-run",
         ]
     );
@@ -118,6 +120,7 @@ fn workflow_selected_profiles_are_mutually_exclusive() -> Result<(), Box<dyn std
     bootstrap_claims.workflow_ref = BOOTSTRAP_CALLER_WORKFLOW.to_owned();
     bootstrap_claims.job_workflow_ref = BOOTSTRAP_WORKFLOW.to_owned();
     let bootstrap_identity = policy.authorize(&bootstrap_claims)?;
+    assert!(bootstrap_identity.email_verified);
     assert_eq!(
         bootstrap_identity.groups,
         vec!["agents.apelogic.ai/service-envelope-bootstrap:steward-run"]
@@ -171,14 +174,59 @@ fn rsa_key() -> Result<(EncodingKey, DecodingKey), Box<dyn std::error::Error>> {
     ))
 }
 
-fn signed_github_assertion(
-    claims: &GitHubClaims,
+fn signed_github_assertion<T: Serialize>(
+    claims: &T,
     key: &EncodingKey,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some("github-test-key".to_owned());
     header.typ = Some("JWT".to_owned());
     Ok(encode(&header, claims, key)?)
+}
+
+#[tokio::test]
+async fn source_claims_cannot_select_or_override_canonical_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (encoding, decoding) = rsa_key()?;
+    let verifier =
+        GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
+            .await?;
+    let mut attacker_controlled = serde_json::to_value(claims())?;
+    let object = attacker_controlled
+        .as_object_mut()
+        .ok_or("claims fixture must be an object")?;
+    object.insert(
+        "canonical_user_id".to_owned(),
+        serde_json::json!("usr_ffffffffffffffffffffffffffffffff"),
+    );
+    object.insert(
+        "groups".to_owned(),
+        serde_json::json!([
+            "agents.apelogic.ai/canonical-user:usr_ffffffffffffffffffffffffffffffff"
+        ]),
+    );
+    object.insert(
+        "inputs".to_owned(),
+        serde_json::json!({
+            "canonical_user_id": "usr_ffffffffffffffffffffffffffffffff"
+        }),
+    );
+
+    let reviewed = verifier
+        .verify(&signed_github_assertion(&attacker_controlled, &encoding)?)
+        .await?;
+    let identity = policy().authorize(&reviewed)?;
+    assert!(identity.groups.contains(
+        &"agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef".to_owned()
+    ));
+    assert!(
+        !identity
+            .groups
+            .iter()
+            .any(|group| group.contains("ffffffff"))
+    );
+    Ok(())
 }
 
 fn keyring() -> Result<KeyRing, Box<dyn std::error::Error>> {
@@ -282,10 +330,12 @@ fn policy_is_default_deny_and_emits_only_ratified_groups() -> Result<(), Box<dyn
     policy.validate()?;
     let identity = policy.authorize(&claims())?;
     assert_eq!(identity.email, "engineer@apelogic.io");
+    assert!(identity.email_verified);
     assert_eq!(
         identity.groups,
         vec![
             "agents.apelogic.ai/acting-user:engineer@apelogic.io",
+            "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef",
             "agents.apelogic.ai/service-principal:steward-run",
         ]
     );
@@ -324,6 +374,10 @@ fn unverified_or_noncanonical_actor_mapping_fails_closed() {
         actor.verified = false;
     }
     assert!(unverified.validate().is_err());
+    assert_eq!(
+        unverified.authorize(&claims()),
+        Err(PolicyError::Unauthorized)
+    );
 
     let mut profile_email = policy();
     if let Some(actor) = profile_email.actors.get_mut("12345") {
@@ -336,6 +390,45 @@ fn unverified_or_noncanonical_actor_mapping_fails_closed() {
         actor.email = "engineer@example.com".to_owned();
     }
     assert!(personal_email.validate().is_err());
+
+    for malformed in [
+        "",
+        "0123456789abcdef0123456789abcdef",
+        "usr_0123456789abcdef0123456789abcde",
+        "usr_0123456789abcdef0123456789abcdef0",
+        "usr_0123456789abcdef0123456789abcdeg",
+        "usr_0123456789ABCDEF0123456789ABCDEF",
+    ] {
+        let mut invalid_canonical_user = policy();
+        if let Some(actor) = invalid_canonical_user.actors.get_mut("12345") {
+            actor.canonical_user_id = malformed.to_owned();
+        }
+        assert!(invalid_canonical_user.validate().is_err());
+    }
+
+    let mut duplicate_canonical_user = policy();
+    duplicate_canonical_user.actors.insert(
+        "67890".to_owned(),
+        Actor {
+            email: "other@apelogic.io".to_owned(),
+            canonical_user_id: "usr_0123456789abcdef0123456789abcdef".to_owned(),
+            verified: true,
+        },
+    );
+    assert!(duplicate_canonical_user.validate().is_err());
+}
+
+#[test]
+fn policy_file_requires_canonical_user_mapping() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let mut content = serde_json::to_value(policy())?;
+    content["actors"]["12345"]
+        .as_object_mut()
+        .ok_or("actor fixture must be an object")?
+        .remove("canonical_user_id");
+    fs::write(file.path(), serde_json::to_vec(&content)?)?;
+    assert!(Policy::load(file.path()).is_err());
+    Ok(())
 }
 
 #[tokio::test]
@@ -503,6 +596,7 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
         iss: String,
         aud: Vec<String>,
         email: String,
+        email_verified: bool,
         groups: Vec<String>,
         identity_contract: String,
     }
@@ -515,8 +609,16 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
     assert_eq!(decoded.iss, "https://identity.dev.apelogic.io");
     assert_eq!(decoded.aud, vec!["steward-task-api"]);
     assert_eq!(decoded.email, "engineer@apelogic.io");
+    assert!(decoded.email_verified);
     assert_eq!(decoded.identity_contract, IDENTITY_CONTRACT);
-    assert_eq!(decoded.groups.len(), 2);
+    assert_eq!(
+        decoded.groups,
+        vec![
+            "agents.apelogic.ai/acting-user:engineer@apelogic.io",
+            "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef",
+            "agents.apelogic.ai/service-principal:steward-run",
+        ]
+    );
     assert_eq!(
         service.exchange(&assertion).await,
         Err(ExchangeError::Unauthorized)
@@ -612,6 +714,7 @@ async fn workload_exchange_emits_only_server_selected_rs256_profile()
     );
     assert_eq!(claims["identity_contract"], WORKLOAD_IDENTITY_CONTRACT);
     assert!(claims.get("email").is_none());
+    assert!(claims.get("email_verified").is_none());
     assert!(claims.get("groups").is_none());
     assert_eq!(metrics.issued.load(Ordering::Relaxed), 1);
     Ok(())

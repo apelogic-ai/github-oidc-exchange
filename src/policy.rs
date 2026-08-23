@@ -1,15 +1,16 @@
 use std::{collections::HashSet, fs::File, path::Path};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::POLICY_VERSION;
 
 const SERVICE_PREFIX: &str = "agents.apelogic.ai/service-principal:";
 const ACTING_PREFIX: &str = "agents.apelogic.ai/acting-user:";
+const CANONICAL_USER_PREFIX: &str = "agents.apelogic.ai/canonical-user:";
 const BOOTSTRAP_PREFIX: &str = "agents.apelogic.ai/service-envelope-bootstrap:";
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
     pub version: String,
@@ -21,7 +22,7 @@ pub struct Policy {
     pub actors: std::collections::HashMap<String, Actor>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepositoryPolicy {
     pub profile: IdentityProfile,
@@ -34,17 +35,18 @@ pub struct RepositoryPolicy {
     pub refs: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentityProfile {
     Task,
     Bootstrap,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Actor {
     pub email: String,
+    pub canonical_user_id: String,
     pub verified: bool,
 }
 
@@ -52,6 +54,7 @@ pub struct Actor {
 pub struct Identity {
     pub actor_id: String,
     pub email: String,
+    pub email_verified: bool,
     pub subject: String,
     pub groups: Vec<String>,
     pub repository: String,
@@ -147,18 +150,25 @@ impl Policy {
                 ));
             }
         }
+        let mut canonical_user_ids = HashSet::new();
         for (actor_id, actor) in &self.actors {
             if actor_id.is_empty()
                 || !actor_id.chars().all(|character| character.is_ascii_digit())
                 || !actor.verified
                 || !canonical_email(&actor.email)
+                || !canonical_user_id(&actor.canonical_user_id)
                 || !self
                     .allowed_email_domains
                     .iter()
                     .any(|domain| actor.email.ends_with(&format!("@{domain}")))
             {
                 return Err(invalid(
-                    "actor mappings require a numeric ID and verified canonical corporate email",
+                    "actor mappings require a numeric ID, verified canonical corporate email, and opaque canonical user ID",
+                ));
+            }
+            if !canonical_user_ids.insert(actor.canonical_user_id.as_str()) {
+                return Err(invalid(
+                    "canonical user IDs must be unique across actor mappings",
                 ));
             }
         }
@@ -188,6 +198,7 @@ impl Policy {
             IdentityProfile::Task => vec![
                 self.service_group.clone(),
                 format!("{}{}", self.acting_group_prefix, actor.email),
+                format!("{CANONICAL_USER_PREFIX}{}", actor.canonical_user_id),
             ],
             IdentityProfile::Bootstrap => vec![self.bootstrap_group.clone()],
         };
@@ -195,6 +206,7 @@ impl Policy {
         Ok(Identity {
             actor_id: claims.actor_id.clone(),
             email: actor.email.clone(),
+            email_verified: actor.verified,
             subject: format!("github-actions:actor:{}", claims.actor_id),
             groups,
             repository: format!("{}/{}", repository.owner_id, repository.repository_id),
@@ -229,6 +241,15 @@ fn canonical_email(value: &str) -> bool {
         && !domain.is_empty()
         && !value.contains(char::is_whitespace)
         && value == value.to_ascii_lowercase()
+}
+
+fn canonical_user_id(value: &str) -> bool {
+    value.strip_prefix("usr_").is_some_and(|suffix| {
+        suffix.len() == 32
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
 }
 
 fn invalid(message: &str) -> PolicyError {

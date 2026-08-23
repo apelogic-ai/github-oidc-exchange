@@ -3,6 +3,16 @@ set -euo pipefail
 
 bash scripts/validate-ci-tools.sh
 
+grep -Fq -- \
+  'cargo build --locked --release --bin github-oidc-exchange' Dockerfile
+grep -Fq -- 'name = "github-oidc-exchange-integration-fixture"' Cargo.toml
+grep -Fq -- 'required-features = ["test-support"]' Cargo.toml
+if grep -Fq -- 'test-support' Dockerfile ||
+  grep -Fq -- 'github-oidc-exchange-integration-fixture' Dockerfile; then
+  printf 'release image must exclude the test-support integration fixture\n' >&2
+  exit 1
+fi
+
 workflow=".github/workflows/release.yml"
 
 required=(
@@ -21,6 +31,10 @@ required=(
   'Promote verified chart candidate'
   'oras tag "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" "$VERSION"'
   'gh release create "v$VERSION"'
+  '--arg policy_contract "$policy_contract"'
+  '--arg identity_contract "$identity_contract"'
+  'policy_contract:$policy_contract'
+  'identity_contract:$identity_contract'
 )
 
 for contract in "${required[@]}"; do

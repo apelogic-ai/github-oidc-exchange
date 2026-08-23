@@ -56,6 +56,16 @@ pub struct GitHubVerifier {
     client: reqwest::Client,
     cache: Arc<RwLock<KeyCache>>,
     jwks_url: String,
+    #[cfg(feature = "test-support")]
+    key_source: KeySource,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum KeySource {
+    Remote,
+    #[cfg(feature = "test-support")]
+    Injected,
 }
 
 #[derive(Default)]
@@ -77,6 +87,8 @@ impl GitHubVerifier {
             client,
             cache: Arc::new(RwLock::new(KeyCache::default())),
             jwks_url: JWKS_URL.to_owned(),
+            #[cfg(feature = "test-support")]
+            key_source: KeySource::Remote,
         })
     }
 
@@ -87,7 +99,8 @@ impl GitHubVerifier {
         kid: String,
         key: DecodingKey,
     ) -> Result<Self, VerifyError> {
-        let verifier = Self::new(audience)?;
+        let mut verifier = Self::new(audience)?;
+        verifier.key_source = KeySource::Injected;
         verifier.cache.write().await.keys.insert(kid, key);
         verifier.cache.write().await.fetched_at = Utc::now().timestamp();
         Ok(verifier)
@@ -143,6 +156,17 @@ impl GitHubVerifier {
     }
 
     async fn key(&self, kid: &str) -> Result<DecodingKey, VerifyError> {
+        #[cfg(feature = "test-support")]
+        if self.key_source == KeySource::Injected {
+            return self
+                .cache
+                .read()
+                .await
+                .keys
+                .get(kid)
+                .cloned()
+                .ok_or(VerifyError::Invalid);
+        }
         let now = Utc::now().timestamp();
         {
             let cache = self.cache.read().await;
@@ -163,6 +187,14 @@ impl GitHubVerifier {
     }
 
     async fn refresh(&self) -> Result<(), VerifyError> {
+        #[cfg(feature = "test-support")]
+        if self.key_source == KeySource::Injected {
+            return if self.cache.read().await.keys.is_empty() {
+                Err(VerifyError::KeysUnavailable)
+            } else {
+                Ok(())
+            };
+        }
         let response = self
             .client
             .get(&self.jwks_url)
@@ -197,6 +229,62 @@ impl GitHubVerifier {
             keys,
             fetched_at: Utc::now().timestamp(),
         };
+        Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod tests {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use rand::thread_rng;
+    use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn injected_test_key_does_not_expire_into_production_jwks_refresh()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let private = RsaPrivateKey::new(&mut thread_rng(), 2048)?;
+        let document = private.to_pkcs1_der()?;
+        let encoding = EncodingKey::from_rsa_der(document.as_bytes());
+        let decoding = DecodingKey::from_rsa_components(
+            &URL_SAFE_NO_PAD.encode(private.n().to_bytes_be()),
+            &URL_SAFE_NO_PAD.encode(private.e().to_bytes_be()),
+        )?;
+        let verifier = GitHubVerifier::with_test_key(
+            "local-steward-run".to_owned(),
+            "local-source-a".to_owned(),
+            decoding,
+        )
+        .await?;
+        verifier.cache.write().await.fetched_at = Utc::now().timestamp() - 301;
+
+        let now = Utc::now().timestamp();
+        let claims = GitHubClaims {
+            iss: GITHUB_ISSUER.to_owned(),
+            sub: "repo:local-fixture/steward-run:ref:refs/heads/main".to_owned(),
+            aud: Audience::One("local-steward-run".to_owned()),
+            exp: now + 300,
+            iat: now,
+            nbf: now - 5,
+            jti: "fresh-after-cold-build".to_owned(),
+            actor_id: "300001".to_owned(),
+            repository_id: "200001".to_owned(),
+            repository_owner_id: "100001".to_owned(),
+            workflow_ref: "local-fixture/workflow@refs/heads/main".to_owned(),
+            job_workflow_ref: "local-fixture/job@refs/heads/main".to_owned(),
+            event_name: "workflow_dispatch".to_owned(),
+            git_ref: "refs/heads/main".to_owned(),
+        };
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("local-source-a".to_owned());
+        header.typ = Some("JWT".to_owned());
+        let assertion = encode(&header, &claims, &encoding)?;
+
+        verifier.warm_up().await?;
+        assert!(verifier.verify(&assertion).await.is_ok());
         Ok(())
     }
 }
