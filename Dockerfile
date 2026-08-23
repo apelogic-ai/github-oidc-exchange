@@ -5,7 +5,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 RUN cargo build --locked --release --bin github-oidc-exchange && strip target/release/github-oidc-exchange
 
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:fccdbb0a547c14e23fcf4ce8ad62ca5d43b4faae8d22cd292f490fef9946c96e
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
 COPY --from=build /src/target/release/github-oidc-exchange /github-oidc-exchange
 USER 65532:65532
 EXPOSE 8080 8443
