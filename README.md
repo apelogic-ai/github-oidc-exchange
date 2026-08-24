@@ -162,6 +162,7 @@ cargo test --all-targets --all-features
 helm lint charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/test-values.yaml
 helm template test charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/test-values.yaml
 docker build --platform linux/amd64 -t github-oidc-exchange:test .
+docker build --platform linux/arm64 -t github-oidc-exchange:test-arm64 .
 ```
 
 The normal release binary has no integration fixture or in-memory replay implementation. Its
