@@ -2,6 +2,11 @@
 set -euo pipefail
 
 image="${1:?usage: smoke-release-container.sh IMAGE}"
+smoke_platform="${SMOKE_PLATFORM:-linux/amd64}"
+[[ "${smoke_platform}" == linux/amd64 || "${smoke_platform}" == linux/arm64 ]] || {
+  printf 'unsupported release smoke platform: %s\n' "${smoke_platform}" >&2
+  exit 64
+}
 tmp="$(mktemp -d)"
 app_dir="$tmp/app"
 container="github-oidc-exchange-smoke-$$"
@@ -215,7 +220,7 @@ case "$(uname -s)" in
 esac
 
 docker run --detach --name "$container" \
-  --platform linux/amd64 \
+  --platform "${smoke_platform}" \
   "${docker_network[@]}" \
   --volume "$app_dir:/smoke:ro" \
   --env ISSUER_URL=https://identity.dev.apelogic.io \

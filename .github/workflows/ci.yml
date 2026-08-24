@@ -58,10 +58,17 @@ jobs:
           grep -q 'verbs: \["create"\]' /tmp/workload.yaml
           ! grep -q 'path: /v1/workload/exchange' /tmp/workload.yaml
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.6.0
+        with:
+          platforms: arm64
       - name: Build release image locally
         run: docker buildx build --platform linux/amd64 --load --tag github-oidc-exchange:ci .
       - name: Smoke final release image
         run: bash scripts/smoke-release-container.sh github-oidc-exchange:ci
+      - name: Build and smoke arm64 release image
+        run: |
+          docker buildx build --platform linux/arm64 --load --tag github-oidc-exchange:ci-arm64 .
+          SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh github-oidc-exchange:ci-arm64
       - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
         with:
           image-ref: github-oidc-exchange:ci

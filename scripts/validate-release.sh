@@ -26,6 +26,9 @@ workflow=".github/workflows/release.yml"
 required=(
   'workflow_dispatch:'
   'packages: write'
+  'docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130'
+  'platforms: linux/amd64,linux/arm64'
+  'SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh'
   'cosign-release: v3.1.2'
   '--registry-referrers-mode=oci-1-1'
   '--new-bundle-format=true'
@@ -55,6 +58,7 @@ required=(
   'ecr_image:$ecr_image'
   'ecr_chart:$ecr_chart'
   'anonymous_pull_verified:true'
+  'image_platforms:$platforms[0]'
   'gh release create "v$VERSION"'
   '--arg policy_contract "$policy_contract"'
   '--arg identity_contract "$identity_contract"'
@@ -65,6 +69,12 @@ required=(
 for contract in "${required[@]}"; do
   grep -Fq -- "$contract" "$workflow"
 done
+
+for architecture in amd64 arm64; do
+  grep -Fq -- "image-platform-$architecture.digest" "$workflow"
+  grep -Fq -- "architecture == \$architecture" "$workflow"
+done
+grep -Fq -- 'image.ecr-scan-$architecture.json' "$workflow"
 
 package_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
 chart_version="$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)"

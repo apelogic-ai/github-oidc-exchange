@@ -38,10 +38,12 @@ grep -q -- '--cacert "$tmp/ca.crt"' "$target"
 
 [[ "$(grep -cF 'bash scripts/validate-runtime-smoke.sh' "$ci")" == 1 ]]
 [[ "$(grep -cF 'bash scripts/validate-runtime-smoke.sh' "$release")" == 1 ]]
-[[ "$(grep -cF 'bash scripts/smoke-release-container.sh' "$ci")" == 1 ]]
-[[ "$(grep -cF 'bash scripts/smoke-release-container.sh' "$release")" == 1 ]]
+[[ "$(grep -cF 'bash scripts/smoke-release-container.sh' "$ci")" == 2 ]]
+[[ "$(grep -cF 'bash scripts/smoke-release-container.sh' "$release")" == 2 ]]
 grep -qF 'bash scripts/smoke-release-container.sh github-oidc-exchange:ci' "$ci"
+grep -qF 'SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh github-oidc-exchange:ci-arm64' "$ci"
 grep -qF 'bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"' "$release"
+grep -qF 'SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"' "$release"
 
 line_number() {
   grep -n -m1 -F "$2" "$1" | cut -d: -f1
