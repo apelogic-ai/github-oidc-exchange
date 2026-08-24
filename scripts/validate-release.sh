@@ -73,8 +73,8 @@ done
 for architecture in amd64 arm64; do
   grep -Fq -- "image-platform-$architecture.digest" "$workflow"
   grep -Fq -- "architecture == \$architecture" "$workflow"
-  grep -Fq -- "image.ecr-scan-$architecture.json" "$workflow"
 done
+grep -Fq -- 'image.ecr-scan-$architecture.json' "$workflow"
 
 package_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
 chart_version="$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)"
