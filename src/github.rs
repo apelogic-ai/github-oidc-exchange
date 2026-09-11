@@ -269,6 +269,15 @@ mod numeric_string {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(deserializer)?;
+        if value.is_empty()
+            || value.len() > 10
+            || !value.bytes().all(|character| character.is_ascii_digit())
+            || value.len() > 1 && value.starts_with('0')
+        {
+            return Err(serde::de::Error::custom(
+                "numeric claim must use canonical u32 decimal notation",
+            ));
+        }
         value.parse().map_err(serde::de::Error::custom)
     }
 }
@@ -294,6 +303,8 @@ fn github_repository(value: &str) -> bool {
 fn github_slug(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 100
+        && value != "."
+        && value != ".."
         && value.bytes().all(|character| {
             character.is_ascii_alphanumeric() || matches!(character, b'-' | b'_' | b'.')
         })

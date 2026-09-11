@@ -422,6 +422,10 @@ async fn malformed_source_provenance_claims_fail_closed() -> Result<(), Box<dyn 
         ("actor_id", "alice"),
         ("actor", "alice example"),
         ("repository", "example-org/../example-repo"),
+        ("repository", "../example-repo"),
+        ("repository", "./example-repo"),
+        ("repository", "example-org/.."),
+        ("repository", "example-org/."),
         ("repository_id", "example-repo"),
         ("repository_owner_id", "example-org"),
         ("sha", "0123456789ABCDEF0123456789ABCDEF01234567"),
@@ -443,6 +447,28 @@ async fn malformed_source_provenance_claims_fail_closed() -> Result<(), Box<dyn 
                 .await
                 .is_err(),
             "GitHub assertion with malformed {claim} must fail closed"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn noncanonical_run_attempt_claims_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (encoding, decoding) = rsa_key()?;
+    let verifier =
+        GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
+            .await?;
+
+    for malformed in ["+1", "01", "00000000001", "0"] {
+        let mut claims = claims_with_source_provenance()?;
+        claims["run_attempt"] = serde_json::json!(malformed);
+        assert!(
+            verifier
+                .verify(&signed_github_assertion(&claims, &encoding)?)
+                .await
+                .is_err(),
+            "GitHub assertion with noncanonical run_attempt {malformed:?} must fail closed"
         );
     }
     Ok(())
