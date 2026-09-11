@@ -24,10 +24,18 @@ pub struct GitHubClaims {
     pub nbf: i64,
     pub jti: String,
     pub actor_id: String,
+    pub actor: String,
+    pub repository: String,
     pub repository_id: String,
     pub repository_owner_id: String,
+    pub sha: String,
+    pub run_id: String,
+    #[serde(with = "numeric_string")]
+    pub run_attempt: u32,
     pub workflow_ref: String,
+    pub workflow_sha: String,
     pub job_workflow_ref: String,
+    pub job_workflow_sha: String,
     pub event_name: String,
     #[serde(rename = "ref")]
     pub git_ref: String,
@@ -138,13 +146,20 @@ impl GitHubVerifier {
             || claims.nbf > claims.iat
             || claims.sub.is_empty()
             || claims.jti.is_empty()
-            || claims.actor_id.is_empty()
-            || claims.repository_id.is_empty()
-            || claims.repository_owner_id.is_empty()
-            || claims.workflow_ref.is_empty()
-            || claims.job_workflow_ref.is_empty()
-            || claims.event_name.is_empty()
-            || claims.git_ref.is_empty()
+            || !numeric_identifier(&claims.actor_id)
+            || !bounded_ascii(&claims.actor, 255)
+            || !github_repository(&claims.repository)
+            || !numeric_identifier(&claims.repository_id)
+            || !numeric_identifier(&claims.repository_owner_id)
+            || !git_sha1(&claims.sha)
+            || !numeric_identifier(&claims.run_id)
+            || claims.run_attempt == 0
+            || !bounded_ascii(&claims.workflow_ref, 2_048)
+            || !git_sha1(&claims.workflow_sha)
+            || !bounded_ascii(&claims.job_workflow_ref, 2_048)
+            || !git_sha1(&claims.job_workflow_sha)
+            || !bounded_ascii(&claims.event_name, 255)
+            || !bounded_ascii(&claims.git_ref, 2_048)
         {
             return Err(VerifyError::Invalid);
         }
@@ -233,6 +248,75 @@ impl GitHubVerifier {
     }
 }
 
+fn numeric_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 20
+        && value.bytes().all(|character| character.is_ascii_digit())
+}
+
+mod numeric_string {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u32, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u32, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        if value.is_empty()
+            || value.len() > 10
+            || !value.bytes().all(|character| character.is_ascii_digit())
+            || value.len() > 1 && value.starts_with('0')
+        {
+            return Err(serde::de::Error::custom(
+                "numeric claim must use canonical u32 decimal notation",
+            ));
+        }
+        value.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+fn bounded_ascii(value: &str, maximum: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= maximum
+        && value.is_ascii()
+        && !value.chars().any(char::is_whitespace)
+}
+
+fn github_repository(value: &str) -> bool {
+    let mut components = value.split('/');
+    let owner = components.next().unwrap_or_default();
+    let repository = components.next().unwrap_or_default();
+    components.next().is_none()
+        && github_slug(owner)
+        && github_slug(repository)
+        && repository != "."
+        && repository != ".."
+}
+
+fn github_slug(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 100
+        && value != "."
+        && value != ".."
+        && value.bytes().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, b'-' | b'_' | b'.')
+        })
+}
+
+fn git_sha1(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|character| character.is_ascii_digit() || (b'a'..=b'f').contains(&character))
+}
+
 #[cfg(all(test, feature = "test-support"))]
 mod tests {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -271,10 +355,17 @@ mod tests {
             nbf: now - 5,
             jti: "fresh-after-cold-build".to_owned(),
             actor_id: "300001".to_owned(),
+            actor: "alice".to_owned(),
+            repository: "local-fixture/steward-run".to_owned(),
             repository_id: "200001".to_owned(),
             repository_owner_id: "100001".to_owned(),
+            sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+            run_id: "400001".to_owned(),
+            run_attempt: 1,
             workflow_ref: "local-fixture/workflow@refs/heads/main".to_owned(),
+            workflow_sha: "123456789abcdef0123456789abcdef012345678".to_owned(),
             job_workflow_ref: "local-fixture/job@refs/heads/main".to_owned(),
+            job_workflow_sha: "23456789abcdef0123456789abcdef0123456789".to_owned(),
             event_name: "workflow_dispatch".to_owned(),
             git_ref: "refs/heads/main".to_owned(),
         };

@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
-    IDENTITY_CONTRACT,
+    IDENTITY_CONTRACT, SOURCE_PROVENANCE_CONTRACT,
     github::{GitHubClaims, GitHubVerifier},
     keys::KeyRing,
     policy::Policy,
@@ -57,6 +57,76 @@ struct OutputClaims {
     email_verified: bool,
     groups: Vec<String>,
     identity_contract: &'static str,
+    source_provenance: SourceProvenance,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SourceProvenance {
+    contract_version: &'static str,
+    provider: &'static str,
+    repository: SourceRepository,
+    triggered_sha: String,
+    run: SourceRun,
+    event: String,
+    #[serde(rename = "ref")]
+    git_ref: String,
+    actor_id: String,
+    actor: String,
+    caller_workflow: SourceWorkflow,
+    reusable_workflow: SourceWorkflow,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SourceRepository {
+    id: String,
+    owner_id: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+struct SourceRun {
+    id: String,
+    attempt: u32,
+}
+
+#[derive(Serialize)]
+struct SourceWorkflow {
+    #[serde(rename = "ref")]
+    workflow_ref: String,
+    sha: String,
+}
+
+impl From<&GitHubClaims> for SourceProvenance {
+    fn from(claims: &GitHubClaims) -> Self {
+        Self {
+            contract_version: SOURCE_PROVENANCE_CONTRACT,
+            provider: "github",
+            repository: SourceRepository {
+                id: claims.repository_id.clone(),
+                owner_id: claims.repository_owner_id.clone(),
+                name: claims.repository.clone(),
+            },
+            triggered_sha: typed_git_sha1(&claims.sha),
+            run: SourceRun {
+                id: claims.run_id.clone(),
+                attempt: claims.run_attempt,
+            },
+            event: claims.event_name.clone(),
+            git_ref: claims.git_ref.clone(),
+            actor_id: claims.actor_id.clone(),
+            actor: claims.actor.clone(),
+            caller_workflow: SourceWorkflow {
+                workflow_ref: claims.workflow_ref.clone(),
+                sha: typed_git_sha1(&claims.workflow_sha),
+            },
+            reusable_workflow: SourceWorkflow {
+                workflow_ref: claims.job_workflow_ref.clone(),
+                sha: typed_git_sha1(&claims.job_workflow_sha),
+            },
+        }
+    }
 }
 
 impl<L: ReplayLedger + 'static> ExchangeService<L> {
@@ -104,6 +174,7 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
                 email_verified: identity.email_verified,
                 groups: identity.groups,
                 identity_contract: IDENTITY_CONTRACT,
+                source_provenance: SourceProvenance::from(&claims),
             })
             .map_err(|_| ExchangeError::Unavailable)?;
         self.metrics
@@ -141,6 +212,10 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
             "identity exchange rejected"
         );
     }
+}
+
+fn typed_git_sha1(value: &str) -> String {
+    format!("git:sha1:{value}")
 }
 
 fn hash_identifier(value: &str) -> String {
