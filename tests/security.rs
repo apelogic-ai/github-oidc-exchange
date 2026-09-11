@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    io::Write,
     sync::{Arc, Mutex, OnceLock, atomic::Ordering},
     time::Duration,
 };
@@ -13,7 +14,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{Duration as ChronoDuration, Utc};
 use github_oidc_exchange::{
     GITHUB_ISSUER, IDENTITY_CONTRACT, KEYRING_VERSION, POLICY_VERSION, RSA_KEYRING_VERSION,
-    WORKLOAD_IDENTITY_CONTRACT, WORKLOAD_POLICY_VERSION,
+    SOURCE_PROVENANCE_CONTRACT, WORKLOAD_IDENTITY_CONTRACT, WORKLOAD_POLICY_VERSION,
     github::{Audience, GitHubClaims, GitHubVerifier},
     http::separated_routers_with_workload,
     keys::{KeyRing, RsaKeyRing},
@@ -40,6 +41,8 @@ use rsa::{
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use tower::ServiceExt;
+use tracing::instrument::WithSubscriber;
+use tracing_subscriber::fmt::MakeWriter;
 
 static TEST_CRYPTO_PROVIDER: OnceLock<Result<(), &'static str>> = OnceLock::new();
 
@@ -59,6 +62,11 @@ const SUBJECT: &str = "repo:apelogic-ai@227278099/steward-run@1320906141:ref:ref
 const CALLER_WORKFLOW: &str =
     "apelogic-ai/steward-run/.github/workflows/roundtrip.yml@refs/heads/main";
 const WORKFLOW: &str = "apelogic-ai/steward-run/.github/workflows/steward-task.yml@refs/heads/main";
+const TRIGGERED_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+const CALLER_WORKFLOW_SHA: &str = "123456789abcdef0123456789abcdef012345678";
+const REUSABLE_WORKFLOW_SHA: &str = "23456789abcdef0123456789abcdef0123456789";
+const REPOSITORY: &str = "apelogic-ai/steward-run";
+const ACTOR: &str = "alice";
 const BOOTSTRAP_CALLER_WORKFLOW: &str =
     "apelogic-ai/steward-run/.github/workflows/bootstrap.yml@refs/heads/main";
 const BOOTSTRAP_WORKFLOW: &str =
@@ -168,13 +176,41 @@ fn claims() -> GitHubClaims {
         nbf: now - 5,
         jti: "one-time-source-token".to_owned(),
         actor_id: "12345".to_owned(),
+        actor: ACTOR.to_owned(),
+        repository: REPOSITORY.to_owned(),
         repository_id: "1320906141".to_owned(),
         repository_owner_id: "227278099".to_owned(),
+        sha: TRIGGERED_SHA.to_owned(),
+        run_id: "3456789012".to_owned(),
+        run_attempt: 2,
         workflow_ref: CALLER_WORKFLOW.to_owned(),
+        workflow_sha: CALLER_WORKFLOW_SHA.to_owned(),
         job_workflow_ref: WORKFLOW.to_owned(),
+        job_workflow_sha: REUSABLE_WORKFLOW_SHA.to_owned(),
         event_name: "workflow_dispatch".to_owned(),
         git_ref: "refs/heads/main".to_owned(),
     }
+}
+
+fn claims_with_source_provenance() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let mut value = serde_json::to_value(claims())?;
+    let object = value
+        .as_object_mut()
+        .ok_or("claims fixture must be an object")?;
+    object.insert("repository".to_owned(), serde_json::json!(REPOSITORY));
+    object.insert("sha".to_owned(), serde_json::json!(TRIGGERED_SHA));
+    object.insert("run_id".to_owned(), serde_json::json!("3456789012"));
+    object.insert("run_attempt".to_owned(), serde_json::json!("2"));
+    object.insert("actor".to_owned(), serde_json::json!(ACTOR));
+    object.insert(
+        "workflow_sha".to_owned(),
+        serde_json::json!(CALLER_WORKFLOW_SHA),
+    );
+    object.insert(
+        "job_workflow_sha".to_owned(),
+        serde_json::json!(REUSABLE_WORKFLOW_SHA),
+    );
+    Ok(value)
 }
 
 fn rsa_key() -> Result<(EncodingKey, DecodingKey), Box<dyn std::error::Error>> {
@@ -240,6 +276,271 @@ async fn source_claims_cannot_select_or_override_canonical_identity()
             .iter()
             .any(|group| group.contains("ffffffff"))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_provenance_is_derived_from_verified_claims_not_an_embedded_override()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (encoding, decoding) = rsa_key()?;
+    let verifier =
+        GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
+            .await?;
+    let mut asserted = claims_with_source_provenance()?;
+    asserted
+        .as_object_mut()
+        .ok_or("claims fixture must be an object")?
+        .insert(
+            "source_provenance".to_owned(),
+            serde_json::json!({
+                "contractVersion": SOURCE_PROVENANCE_CONTRACT,
+                "provider": "github",
+                "repository": {
+                    "id": "999",
+                    "ownerId": "999",
+                    "name": "attacker/example"
+                },
+                "triggeredSha": "git:sha1:ffffffffffffffffffffffffffffffffffffffff",
+                "run": {"id": "999", "attempt": "999"},
+                "event": "pull_request_target",
+                "ref": "refs/heads/attacker",
+                "actorId": "999",
+                "actor": "attacker",
+                "callerWorkflow": {
+                    "ref": "attacker/example/.github/workflows/caller.yml@refs/heads/main",
+                    "sha": "git:sha1:ffffffffffffffffffffffffffffffffffffffff"
+                },
+                "reusableWorkflow": {
+                    "ref": "attacker/example/.github/workflows/reusable.yml@refs/heads/main",
+                    "sha": "git:sha1:ffffffffffffffffffffffffffffffffffffffff"
+                }
+            }),
+        );
+    let keyring = keyring()?;
+    let jwks: JwkSet = serde_json::from_value(serde_json::to_value(keyring.jwks())?)?;
+    let output_key = DecodingKey::from_jwk(&jwks.keys[0])?;
+    let service = ExchangeService {
+        verifier,
+        policy: Arc::new(policy()),
+        ledger: Arc::new(TestReplayLedger::default()),
+        keys: Arc::new(keyring),
+        issuer: "https://identity.example.com".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    };
+
+    let output = service
+        .exchange(&signed_github_assertion(&asserted, &encoding)?)
+        .await?;
+    let mut validation = Validation::new(Algorithm::ES256);
+    validation.set_issuer(&["https://identity.example.com"]);
+    validation.set_audience(&["steward-task-api"]);
+    let decoded = decode::<serde_json::Value>(&output, &output_key, &validation)?.claims;
+
+    assert_eq!(
+        decoded["source_provenance"],
+        serde_json::json!({
+            "contractVersion": SOURCE_PROVENANCE_CONTRACT,
+            "provider": "github",
+            "repository": {
+                "id": "1320906141",
+                "ownerId": "227278099",
+                "name": REPOSITORY
+            },
+            "triggeredSha": format!("git:sha1:{TRIGGERED_SHA}"),
+            "run": {"id": "3456789012", "attempt": 2},
+            "event": "workflow_dispatch",
+            "ref": "refs/heads/main",
+            "actorId": "12345",
+            "actor": ACTOR,
+            "callerWorkflow": {
+                "ref": CALLER_WORKFLOW,
+                "sha": format!("git:sha1:{CALLER_WORKFLOW_SHA}")
+            },
+            "reusableWorkflow": {
+                "ref": WORKFLOW,
+                "sha": format!("git:sha1:{REUSABLE_WORKFLOW_SHA}")
+            }
+        })
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn github_assertions_require_every_source_provenance_claim()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (encoding, decoding) = rsa_key()?;
+    let verifier =
+        GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
+            .await?;
+
+    for required in [
+        "actor_id",
+        "repository_id",
+        "repository_owner_id",
+        "workflow_ref",
+        "job_workflow_ref",
+        "event_name",
+        "ref",
+        "repository",
+        "sha",
+        "run_id",
+        "run_attempt",
+        "actor",
+        "workflow_sha",
+        "job_workflow_sha",
+    ] {
+        let mut missing = claims_with_source_provenance()?;
+        missing
+            .as_object_mut()
+            .ok_or("claims fixture must be an object")?
+            .remove(required);
+        assert!(
+            verifier
+                .verify(&signed_github_assertion(&missing, &encoding)?)
+                .await
+                .is_err(),
+            "GitHub assertion missing {required} must fail closed"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn malformed_source_provenance_claims_fail_closed() -> Result<(), Box<dyn std::error::Error>>
+{
+    install_test_crypto_provider()?;
+    let (encoding, decoding) = rsa_key()?;
+    let verifier =
+        GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
+            .await?;
+
+    for (claim, malformed) in [
+        ("actor_id", "alice"),
+        ("actor", "alice example"),
+        ("repository", "example-org/../example-repo"),
+        ("repository_id", "example-repo"),
+        ("repository_owner_id", "example-org"),
+        ("sha", "0123456789ABCDEF0123456789ABCDEF01234567"),
+        ("run_id", "run-3456789012"),
+        ("run_attempt", "attempt-2"),
+        ("workflow_sha", "123456789abcdef0123456789abcdef01234567"),
+        (
+            "job_workflow_sha",
+            "23456789abcdef0123456789abcdef012345678z",
+        ),
+        ("event_name", "workflow dispatch"),
+        ("ref", "refs/heads/main branch"),
+    ] {
+        let mut claims = claims_with_source_provenance()?;
+        claims[claim] = serde_json::json!(malformed);
+        assert!(
+            verifier
+                .verify(&signed_github_assertion(&claims, &encoding)?)
+                .await
+                .is_err(),
+            "GitHub assertion with malformed {claim} must fail closed"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn repository_name_cannot_substitute_for_a_mismatched_stable_id()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (encoding, decoding) = rsa_key()?;
+    let verifier =
+        GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
+            .await?;
+    let mut mismatched = claims_with_source_provenance()?;
+    mismatched["repository_id"] = serde_json::json!("999");
+    mismatched["repository"] = serde_json::json!(REPOSITORY);
+
+    let verified = verifier
+        .verify(&signed_github_assertion(&mismatched, &encoding)?)
+        .await?;
+    assert_eq!(
+        policy().authorize(&verified),
+        Err(PolicyError::Unauthorized)
+    );
+    Ok(())
+}
+
+#[derive(Clone, Default)]
+struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+struct CapturedLogWriter(CapturedLogs);
+
+impl Write for CapturedLogWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .0
+            .lock()
+            .map_err(|_| std::io::Error::other("captured log mutex poisoned"))?
+            .extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'writer> MakeWriter<'writer> for CapturedLogs {
+    type Writer = CapturedLogWriter;
+
+    fn make_writer(&'writer self) -> Self::Writer {
+        CapturedLogWriter(self.clone())
+    }
+}
+
+#[tokio::test]
+async fn rejected_assertions_never_enter_identity_logs() -> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (encoding, decoding) = rsa_key()?;
+    let verifier =
+        GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
+            .await?;
+    let keyring = keyring()?;
+    let service = ExchangeService {
+        verifier,
+        policy: Arc::new(policy()),
+        ledger: Arc::new(TestReplayLedger::default()),
+        keys: Arc::new(keyring),
+        issuer: "https://identity.example.com".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    };
+    let mut rejected = claims_with_source_provenance()?;
+    rejected["repository_id"] = serde_json::json!("999");
+    let assertion = signed_github_assertion(&rejected, &encoding)?;
+    let logs = CapturedLogs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(logs.clone())
+        .finish();
+
+    assert_eq!(
+        service
+            .exchange(&assertion)
+            .with_subscriber(subscriber)
+            .await,
+        Err(ExchangeError::Unauthorized)
+    );
+    let captured = String::from_utf8(
+        logs.0
+            .lock()
+            .map_err(|_| "captured log mutex poisoned")?
+            .clone(),
+    )?;
+    assert!(!captured.contains(&assertion));
+    assert!(!captured.contains("source_provenance"));
     Ok(())
 }
 

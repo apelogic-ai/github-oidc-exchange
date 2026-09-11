@@ -31,17 +31,30 @@ The GitHub assertion must have:
 - exact issuer `https://token.actions.githubusercontent.com` and a deployment-selected audience;
 - `RS256` and a currently published GitHub signing key;
 - a maximum ten-minute lifetime and valid `exp`, `iat`, and `nbf`;
-- non-empty immutable `repository_owner_id`, `repository_id`, `actor_id`, `sub`, `jti`,
-  `workflow_ref`, `job_workflow_ref`, `event_name`, and `ref` claims;
+- immutable numeric `repository_owner_id`, `repository_id`, `actor_id`, `run_id`, and
+  `run_attempt` claims;
+- a canonical `repository`, exact lowercase 40-hex `sha`, bounded `actor`, `sub`, `jti`,
+  `event_name`, and `ref` claims;
+- caller `workflow_ref` plus `workflow_sha`, and reusable `job_workflow_ref` plus
+  `job_workflow_sha`, with both SHAs exact lowercase 40-hex Git object identities; and
 - an exact match in the private policy for subject, workflow, event, ref, and verified actor.
 
 The output contains exactly one audience, the policy-verified `email`, `email_verified=true`,
 deployment-ratified `groups`, and
-`identity_contract=steward-task-v2`. Policy rules select one server-controlled identity profile:
+`identity_contract=steward-task-v2`. It also contains one signed `source_provenance` object using
+`steward.source-provenance/v1`. That object carries the verified repository and owner IDs,
+repository name, triggering and workflow SHAs as typed `git:sha1:` identities, run ID and numeric
+attempt, event, ref, actor ID and display name, and caller/reusable workflow refs. The actor name is
+display metadata only; stable IDs remain authoritative. Policy rules select one server-controlled
+identity profile:
 
 - `task` emits exactly the service-principal, verified acting-user, and opaque canonical-user
   groups;
 - `bootstrap` emits exactly the route-scoped service-envelope-bootstrap group.
+
+Steward's direct Identity-token verifier is the intended consumer of the signed provenance claim.
+The separate Kubernetes `TokenReview` workload profile is not a transport for GitHub source
+provenance, and a caller-supplied request field cannot replace the claim.
 
 Profiles are selected only by exact GitHub claim matches. The caller cannot request a profile,
 canonical user ID, or output groups, and ambiguous matching rules fail closed. Each reviewed actor
