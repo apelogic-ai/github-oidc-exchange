@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/apelogic-ai/github-oidc-exchange/blob/main/docs/policy-contract.schema.json",
-  "title": "GitHub OIDC exchange policy v3",
+  "title": "GitHub OIDC exchange policy v4",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -14,7 +14,7 @@
     "actors"
   ],
   "properties": {
-    "version": {"const": "github-oidc-exchange.apelogic.io/v3"},
+    "version": {"const": "github-oidc-exchange.apelogic.io/v4"},
     "service_group": {
       "type": "string",
       "pattern": "^agents\\.apelogic\\.ai/service-principal:.+$"
@@ -60,8 +60,6 @@
         "owner_id",
         "repository_id",
         "subjects",
-        "workflow_refs",
-        "job_workflow_refs",
         "events",
         "refs"
       ],
@@ -74,7 +72,22 @@
         "job_workflow_refs": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
         "events": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
         "refs": {"$ref": "#/$defs/nonEmptyUniqueStrings"}
-      }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"profile": {"const": "task"}}},
+          "then": {
+            "properties": {
+              "workflow_refs": {"maxItems": 0},
+              "job_workflow_refs": {"maxItems": 0}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"profile": {"const": "bootstrap"}}},
+          "then": {"required": ["workflow_refs", "job_workflow_refs"]}
+        }
+      ]
     },
     "actor": {
       "type": "object",
