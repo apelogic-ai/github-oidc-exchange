@@ -29,7 +29,9 @@ pub struct RepositoryPolicy {
     pub owner_id: String,
     pub repository_id: String,
     pub subjects: Vec<String>,
+    #[serde(default)]
     pub workflow_refs: Vec<String>,
+    #[serde(default)]
     pub job_workflow_refs: Vec<String>,
     pub events: Vec<String>,
     pub refs: Vec<String>,
@@ -123,8 +125,21 @@ impl Policy {
                 return Err(invalid("repository numeric IDs are required"));
             }
             require_values("subjects", &repository.subjects)?;
-            require_values("workflow_refs", &repository.workflow_refs)?;
-            require_values("job_workflow_refs", &repository.job_workflow_refs)?;
+            match repository.profile {
+                IdentityProfile::Task => {
+                    if !repository.workflow_refs.is_empty()
+                        || !repository.job_workflow_refs.is_empty()
+                    {
+                        return Err(invalid(
+                            "task rules derive authority from repository identity and must not select workflow paths",
+                        ));
+                    }
+                }
+                IdentityProfile::Bootstrap => {
+                    require_values("workflow_refs", &repository.workflow_refs)?;
+                    require_values("job_workflow_refs", &repository.job_workflow_refs)?;
+                }
+            }
             require_values("events", &repository.events)?;
             require_values("refs", &repository.refs)?;
             if !repository_rules.insert((
@@ -181,12 +196,22 @@ impl Policy {
             .get(&claims.actor_id)
             .filter(|actor| actor.verified)
             .ok_or(PolicyError::Unauthorized)?;
+        let bootstrap_workflow = self.repositories.iter().any(|repository| {
+            repository.profile == IdentityProfile::Bootstrap
+                && contains(&repository.workflow_refs, &claims.workflow_ref)
+                && contains(&repository.job_workflow_refs, &claims.job_workflow_ref)
+        });
         let mut matching_rules = self.repositories.iter().filter(|repository| {
             repository.owner_id == claims.repository_owner_id
                 && repository.repository_id == claims.repository_id
                 && contains(&repository.subjects, &claims.sub)
-                && contains(&repository.workflow_refs, &claims.workflow_ref)
-                && contains(&repository.job_workflow_refs, &claims.job_workflow_ref)
+                && match repository.profile {
+                    IdentityProfile::Task => !bootstrap_workflow,
+                    IdentityProfile::Bootstrap => {
+                        contains(&repository.workflow_refs, &claims.workflow_ref)
+                            && contains(&repository.job_workflow_refs, &claims.job_workflow_ref)
+                    }
+                }
                 && contains(&repository.events, &claims.event_name)
                 && contains(&repository.refs, &claims.git_ref)
         });

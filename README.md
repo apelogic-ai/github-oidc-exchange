@@ -37,7 +37,8 @@ The GitHub assertion must have:
   `event_name`, and `ref` claims;
 - caller `workflow_ref` plus `workflow_sha`, and reusable `job_workflow_ref` plus
   `job_workflow_sha`, with both SHAs exact lowercase 40-hex Git object identities; and
-- an exact match in the private policy for subject, workflow, event, ref, and verified actor.
+- an exact match in the private policy for subject, event, ref, and verified actor;
+- for the privileged `bootstrap` profile only, exact caller and job workflow references.
 
 The output contains exactly one audience, the policy-verified `email`, `email_verified=true`,
 deployment-ratified `groups`, and
@@ -56,7 +57,11 @@ Steward's direct Identity-token verifier is the intended consumer of the signed 
 The separate Kubernetes `TokenReview` workload profile is not a transport for GitHub source
 provenance, and a caller-supplied request field cannot replace the claim.
 
-Profiles are selected only by exact GitHub claim matches. The caller cannot request a profile,
+Task authority is repository-scoped: `workflow_ref` and `job_workflow_ref` remain required source
+claims and are preserved as identity evidence, but task rules must not use workflow paths as an
+authorization gate. This leaves workflow composition under the authorized repository's developer
+controls. Bootstrap authority remains selected by exact caller and job workflow references in
+addition to the repository, subject, event, and ref checks. The caller cannot request a profile,
 canonical user ID, or output groups, and ambiguous matching rules fail closed. Each reviewed actor
 mapping owns one unique `usr_<32 lowercase hex>` Steward user ID. GitHub claims and workflow inputs
 cannot override that mapping. The mapped ID must already resolve to the same reviewed person in

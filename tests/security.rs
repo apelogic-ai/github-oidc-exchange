@@ -102,8 +102,8 @@ fn policy() -> Policy {
             owner_id: "227278099".to_owned(),
             repository_id: "1320906141".to_owned(),
             subjects: vec![SUBJECT.to_owned()],
-            workflow_refs: vec![CALLER_WORKFLOW.to_owned()],
-            job_workflow_refs: vec![WORKFLOW.to_owned()],
+            workflow_refs: vec![],
+            job_workflow_refs: vec![],
             events: vec!["workflow_dispatch".to_owned()],
             refs: vec!["refs/heads/main".to_owned()],
         }],
@@ -138,6 +138,16 @@ fn workflow_selected_profiles_are_mutually_exclusive() -> Result<(), Box<dyn std
         ]
     );
 
+    let mut alternate_task_workflow = claims();
+    alternate_task_workflow.workflow_ref =
+        "apelogic-ai/steward-run/.github/workflows/developer-owned.yml@refs/heads/main".to_owned();
+    alternate_task_workflow.job_workflow_ref =
+        "apelogic-ai/steward-run/.github/workflows/another-job.yml@refs/heads/main".to_owned();
+    assert_eq!(
+        policy.authorize(&alternate_task_workflow)?.groups,
+        task_identity.groups
+    );
+
     let mut bootstrap_claims = claims();
     bootstrap_claims.workflow_ref = BOOTSTRAP_CALLER_WORKFLOW.to_owned();
     bootstrap_claims.job_workflow_ref = BOOTSTRAP_WORKFLOW.to_owned();
@@ -148,15 +158,18 @@ fn workflow_selected_profiles_are_mutually_exclusive() -> Result<(), Box<dyn std
         vec!["agents.apelogic.ai/service-envelope-bootstrap:steward-run"]
     );
 
+    let mut wrong_bootstrap_workflow = bootstrap_claims.clone();
+    wrong_bootstrap_workflow.workflow_ref = CALLER_WORKFLOW.to_owned();
+    assert_eq!(
+        policy.authorize(&wrong_bootstrap_workflow)?.groups,
+        task_identity.groups
+    );
+
     let mut ambiguous = policy.clone();
     let mut overlapping_rule = ambiguous.repositories[0].clone();
     overlapping_rule.profile = IdentityProfile::Bootstrap;
     ambiguous.repositories.push(overlapping_rule);
     assert!(ambiguous.validate().is_err());
-    assert_eq!(
-        ambiguous.authorize(&claims()),
-        Err(PolicyError::Unauthorized)
-    );
 
     let mut invalid_bootstrap_group = policy;
     invalid_bootstrap_group.bootstrap_group =
@@ -687,18 +700,21 @@ fn policy_is_default_deny_and_emits_only_ratified_groups() -> Result<(), Box<dyn
         policy.authorize(&wrong_repository),
         Err(PolicyError::Unauthorized)
     );
-    let mut wrong_workflow = claims();
-    wrong_workflow.job_workflow_ref = "untrusted/workflow@refs/heads/main".to_owned();
+    let mut wrong_subject = claims();
+    wrong_subject.sub = "repo:apelogic-ai@227278099/other@999:ref:refs/heads/main".to_owned();
     assert_eq!(
-        policy.authorize(&wrong_workflow),
+        policy.authorize(&wrong_subject),
         Err(PolicyError::Unauthorized)
     );
-    let mut wrong_caller = claims();
-    wrong_caller.workflow_ref = "untrusted/caller@refs/heads/main".to_owned();
+    let mut wrong_event = claims();
+    wrong_event.event_name = "push".to_owned();
     assert_eq!(
-        policy.authorize(&wrong_caller),
+        policy.authorize(&wrong_event),
         Err(PolicyError::Unauthorized)
     );
+    let mut wrong_ref = claims();
+    wrong_ref.git_ref = "refs/heads/feature".to_owned();
+    assert_eq!(policy.authorize(&wrong_ref), Err(PolicyError::Unauthorized));
     let mut unmapped_actor = claims();
     unmapped_actor.actor_id = "999".to_owned();
     assert_eq!(
@@ -706,6 +722,17 @@ fn policy_is_default_deny_and_emits_only_ratified_groups() -> Result<(), Box<dyn
         Err(PolicyError::Unauthorized)
     );
     Ok(())
+}
+
+#[test]
+fn task_policy_rejects_workflow_path_gates() {
+    let mut caller_gated_policy = policy();
+    caller_gated_policy.repositories[0].workflow_refs = vec![CALLER_WORKFLOW.to_owned()];
+    assert!(caller_gated_policy.validate().is_err());
+
+    let mut job_gated_policy = policy();
+    job_gated_policy.repositories[0].job_workflow_refs = vec![WORKFLOW.to_owned()];
+    assert!(job_gated_policy.validate().is_err());
 }
 
 #[test]

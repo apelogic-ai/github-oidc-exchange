@@ -131,7 +131,7 @@ token_review_port="$(sed -n 's/^tokenreview=//p' "$tmp/mock-ports")"
 [[ "$token_review_port" =~ ^[0-9]+$ ]]
 
 jq -n '{
-  version: "github-oidc-exchange.apelogic.io/v3",
+  version: "github-oidc-exchange.apelogic.io/v4",
   service_group: "agents.apelogic.ai/service-principal:steward-run",
   acting_group_prefix: "agents.apelogic.ai/acting-user:",
   bootstrap_group: "agents.apelogic.ai/service-envelope-bootstrap:steward-run",
@@ -141,8 +141,6 @@ jq -n '{
     owner_id: "227278099",
     repository_id: "1320906141",
     subjects: ["repo:apelogic-ai@227278099/steward-run@1320906141:ref:refs/heads/main"],
-    workflow_refs: ["apelogic-ai/steward-run/.github/workflows/caller.yml@refs/heads/main"],
-    job_workflow_refs: ["apelogic-ai/steward-run/.github/workflows/steward-task.yml@refs/heads/main"],
     events: ["workflow_dispatch"],
     refs: ["refs/heads/main"]
   }],
