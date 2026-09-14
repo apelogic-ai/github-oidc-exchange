@@ -221,7 +221,7 @@ docker run --detach --name "$container" \
   --platform "${smoke_platform}" \
   "${docker_network[@]}" \
   --volume "$app_dir:/smoke:ro" \
-  --env ISSUER_URL=https://identity.dev.apelogic.io \
+  --env ISSUER_URL=https://identity.example.invalid \
   --env GITHUB_EXCHANGE_AUDIENCE=apelogic-github-exchange \
   --env OUTPUT_AUDIENCE=steward-task-api \
   --env POLICY_FILE=/smoke/policy.json \
