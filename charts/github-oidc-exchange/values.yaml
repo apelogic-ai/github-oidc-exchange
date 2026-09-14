@@ -4,6 +4,9 @@ image:
   # This is a reserved, non-routable example reference. Select a signed,
   # immutable image digest before installing this chart in any cluster.
   repository: registry.example.invalid/apelogic/github-oidc-exchange
+  # Optional immutable release tag for registries that require a SemVer path.
+  # The digest remains the authoritative image identity.
+  tag: ""
   digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   pullPolicy: IfNotPresent
   # References only; chart values must never contain registry credentials.

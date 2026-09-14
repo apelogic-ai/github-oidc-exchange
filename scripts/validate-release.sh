@@ -145,6 +145,33 @@ if helm template missing-workload-checksum "$render_dir/chart" \
   exit 1
 fi
 
+# An empty selector in either dimension would make port 8443 reachable from
+# more workloads than the operator intended. Keep the schema guard executable.
+for selector in callerNamespaceSelector callerPodSelector; do
+  if helm template empty-workload-caller "$render_dir/chart" \
+    --namespace github-oidc-exchange \
+    -f charts/github-oidc-exchange/ci/workload-values.yaml \
+    --set-json "workloadExchange.networkPolicy.${selector}={}" \
+    >/dev/null 2>&1; then
+    printf 'workload profile must reject an empty %s\n' "$selector" >&2
+    exit 1
+  fi
+done
+
+helm template tagged "$render_dir/chart" \
+  -f charts/github-oidc-exchange/examples/production-values.yaml \
+  >"$render_dir/tagged.yaml"
+grep -Fq -- \
+  'image: registry.example.invalid/acme/github-oidc-exchange:0.3.8@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  "$render_dir/tagged.yaml"
+if helm template malformed-tag "$render_dir/chart" \
+  -f charts/github-oidc-exchange/examples/production-values.yaml \
+  --set-string image.tag=not/a/tag \
+  >/dev/null 2>&1; then
+  printf 'image tag must remain a single registry tag component\n' >&2
+  exit 1
+fi
+
 workload_contracts=(
   'name: WORKLOAD_EXCHANGE_ENABLED'
   'name: WORKLOAD_INPUT_AUDIENCE'
