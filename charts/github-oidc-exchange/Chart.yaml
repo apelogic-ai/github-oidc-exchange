@@ -6,3 +6,13 @@ type: application
 version: 0.3.8
 appVersion: "0.3.8"
 kubeVersion: ">=1.30.0-0"
+home: https://github.com/apelogic-ai/github-oidc-exchange
+sources:
+  - https://github.com/apelogic-ai/github-oidc-exchange
+keywords:
+  - oidc
+  - github-actions
+  - workload-identity
+  - kubernetes
+annotations:
+  artifacthub.io/license: Apache-2.0

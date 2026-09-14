@@ -5,6 +5,9 @@ metadata:
   name: {{ include "github-oidc-exchange.name" . }}
   labels:
     {{- include "github-oidc-exchange.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   selector:
     matchLabels:

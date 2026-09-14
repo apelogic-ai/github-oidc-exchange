@@ -1,0 +1,44 @@
+{{- if .Values.httpRoute.enabled }}
+{{- if .Values.ingress.enabled }}
+{{- fail "enable either httpRoute or ingress, not both" }}
+{{- end }}
+{{- if not .Values.httpRoute.parentRefs }}
+{{- fail "httpRoute.parentRefs is required when httpRoute is enabled" }}
+{{- end }}
+{{- if not .Values.httpRoute.hostnames }}
+{{- fail "httpRoute.hostnames is required when httpRoute is enabled" }}
+{{- end }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "github-oidc-exchange.name" . }}
+  labels:
+    {{- include "github-oidc-exchange.labels" . | nindent 4 }}
+  {{- with .Values.httpRoute.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    {{- toYaml .Values.httpRoute.parentRefs | nindent 4 }}
+  hostnames:
+    {{- toYaml .Values.httpRoute.hostnames | nindent 4 }}
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /.well-known/openid-configuration
+      backendRefs: &backendRefs
+        - name: {{ include "github-oidc-exchange.name" . }}
+          port: {{ .Values.service.port }}
+    - matches:
+        - path:
+            type: Exact
+            value: /jwks.json
+      backendRefs: *backendRefs
+    - matches:
+        - path:
+            type: Exact
+            value: /v1/exchange
+      backendRefs: *backendRefs
+{{- end }}

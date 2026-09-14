@@ -1,9 +1,13 @@
 replicaCount: 2
 
 image:
-  repository: ""
-  digest: ""
+  # This is a reserved, non-routable example reference. Select a signed,
+  # immutable image digest before installing this chart in any cluster.
+  repository: registry.example.invalid/apelogic/github-oidc-exchange
+  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   pullPolicy: IfNotPresent
+  # References only; chart values must never contain registry credentials.
+  pullSecrets: []
 
 serviceAccount:
   create: true
@@ -11,17 +15,20 @@ serviceAccount:
   annotations: {}
 
 config:
-  issuerUrl: ""
-  githubExchangeAudience: ""
+  # Reserved examples make `helm lint` and `helm template` reproducible while
+  # keeping an unconfigured release unable to serve a real identity boundary.
+  issuerUrl: https://identity.example.invalid
+  githubExchangeAudience: replace-with-dedicated-github-oidc-audience
   outputAudience: steward-task-api
-  policyConfigMapName: ""
+  # These are Kubernetes object references, not policy or key material.
+  policyConfigMapName: replace-with-github-policy
   policyConfigMapKey: policy.json
-  keyringSecretName: ""
+  keyringSecretName: replace-with-github-keyring
   keyringSecretKey: keyring.json
 
 rolloutRevisions:
-  githubPolicy: ""
-  githubKeyring: ""
+  githubPolicy: initial
+  githubKeyring: initial
   workloadPolicy: ""
   workloadRsaKeyring: ""
   workloadTls: ""
@@ -63,9 +70,22 @@ ingress:
   annotations: {}
   host: ""
 
+# Gateway API is the preferred public-routing integration. The platform owns
+# the Gateway and its TLS policy; this chart emits only the narrow HTTPRoute.
+# Set this to false and create an equivalent platform-owned HTTPRoute separately
+# when routing is managed outside the release.
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs: []
+  hostnames: []
+
 networkPolicy:
   enabled: true
-  ingressCidrs: []
+  # TEST-NET-1 is intentionally non-production. Replace with the trusted
+  # ingress/load-balancer source ranges for the target cluster.
+  ingressCidrs:
+    - 192.0.2.0/24
   dnsNamespaceSelector:
     kubernetes.io/metadata.name: kube-system
   dnsPodSelector:
@@ -87,6 +107,7 @@ podDisruptionBudget:
 serviceMonitor:
   enabled: false
   interval: 30s
+  labels: {}
 
 nodeSelector: {}
 tolerations: []

@@ -34,13 +34,20 @@ jobs:
           bash scripts/validate-release.sh
       - name: Helm contract
         run: |
+          helm lint charts/github-oidc-exchange --strict
+          helm template default charts/github-oidc-exchange > /tmp/default.yaml
           helm lint charts/github-oidc-exchange \
             -f charts/github-oidc-exchange/ci/test-values.yaml
           helm lint charts/github-oidc-exchange \
             -f charts/github-oidc-exchange/ci/workload-values.yaml
+          helm lint charts/github-oidc-exchange --strict \
+            -f charts/github-oidc-exchange/examples/production-values.yaml
           helm template test charts/github-oidc-exchange \
             -f charts/github-oidc-exchange/ci/test-values.yaml \
             > /tmp/rendered.yaml
+          helm template production-example charts/github-oidc-exchange \
+            -f charts/github-oidc-exchange/examples/production-values.yaml \
+            > /tmp/production-example.yaml
           helm template workload charts/github-oidc-exchange \
             --namespace github-oidc-exchange \
             -f charts/github-oidc-exchange/ci/workload-values.yaml \
@@ -57,6 +64,12 @@ jobs:
           grep -q 'resources: \["tokenreviews"\]' /tmp/workload.yaml
           grep -q 'verbs: \["create"\]' /tmp/workload.yaml
           ! grep -q 'path: /v1/workload/exchange' /tmp/workload.yaml
+          grep -q 'registry.example.invalid/apelogic/github-oidc-exchange@sha256:aaaaaaaa' /tmp/default.yaml
+          grep -q 'cidr: 192.0.2.0/24' /tmp/default.yaml
+          grep -q 'name: acme-registry-pull' /tmp/production-example.yaml
+          grep -q 'kind: HTTPRoute' /tmp/production-example.yaml
+          ! grep -q 'kind: Ingress' /tmp/production-example.yaml
+          ! grep -q 'path: /v1/workload/exchange' /tmp/production-example.yaml
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Build release image locally
         run: docker buildx build --platform linux/amd64 --load --tag github-oidc-exchange:ci .
