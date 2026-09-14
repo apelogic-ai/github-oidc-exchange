@@ -50,7 +50,7 @@ neither creates cloud identities nor contains their credentials.
 
 There is one deliberate product compatibility boundary: this is not a general
 purpose OIDC issuer. The GitHub exchange contract has the fixed output audience
-`steward-task-api` and emits `identity_contract=steward-task-v1`; the optional
+`steward-task-api` and emits `identity_contract=steward-task-v2`; the optional
 workload profile has the fixed output audience `openshell-api`. Deploying it for
 an arbitrary relying-party audience or identity contract requires a separately
 reviewed product protocol change, not a Helm override. The optional
@@ -62,6 +62,7 @@ default; it is not required for the ordinary GitHub or workload profiles.
 | Value | Requirement |
 | --- | --- |
 | `image.repository`, `image.digest` | Registry path and exact `sha256` digest for a signed release image. |
+| `image.tag` | Optional immutable release tag (for example, SemVer `0.3.8`) when the platform requires a tag path; the rendered `repository:tag@sha256:digest` still selects the digest. Verify that the tag resolves to that digest before deployment. |
 | `config.issuerUrl` | Public HTTPS issuer URL; it must match the URL advertised to GitHub and token consumers. |
 | `config.githubExchangeAudience` | Dedicated inbound GitHub OIDC audience, not a generic cloud audience. |
 | `config.policyConfigMapName` | Deployment-owned ConfigMap containing the reviewed GitHub authorization/mapping policy. |
@@ -96,7 +97,8 @@ workload identity, leave it empty.
   authorization boundary for those destinations.
 - `workloadExchange.enabled: true` adds a dedicated HTTPS `8443` Service port,
   a narrow TokenReview ClusterRole (`create` only), and an ingress rule limited
-  to the exact configured namespace and pod selectors. Its TLS Secret,
+  to the exact configured namespace and pod selectors. Helm rejects an enabled
+  workload profile if either caller selector is empty. Its TLS Secret,
   workload policy ConfigMap, and RSA keyring Secret must be separately
   projected and reviewed. The workload endpoint is never added to Ingress.
 

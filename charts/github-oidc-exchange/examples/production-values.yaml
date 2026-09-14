@@ -4,6 +4,8 @@
 
 image:
   repository: registry.example.invalid/acme/github-oidc-exchange
+  # Optional immutable release tag; verify that it resolves to this digest.
+  tag: 0.3.8
   digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   pullPolicy: IfNotPresent
   # For a private registry, reference a pre-created image-pull secret. Do not

@@ -47,7 +47,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: exchange
-          image: {{ required "image.repository is required" .Values.image.repository }}@{{ required "image.digest is required" .Values.image.digest }}
+          image: {{ required "image.repository is required" .Values.image.repository }}{{- with .Values.image.tag }}:{{ . }}{{- end }}@{{ required "image.digest is required" .Values.image.digest }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
