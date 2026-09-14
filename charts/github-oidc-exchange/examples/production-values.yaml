@@ -1,0 +1,70 @@
+# Copy this file into a deployment-owned repository and replace every
+# example.invalid value, object reference, digest, CIDR, and revision. It is
+# deliberately valid for Helm rendering but cannot be a working issuer as-is.
+
+image:
+  repository: registry.example.invalid/acme/github-oidc-exchange
+  digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  pullPolicy: IfNotPresent
+  # For a private registry, reference a pre-created image-pull secret. Do not
+  # place credentials in Helm values.
+  pullSecrets:
+    - name: acme-registry-pull
+
+serviceAccount:
+  create: true
+  name: github-oidc-exchange
+  annotations: {}
+
+config:
+  issuerUrl: https://identity.example.invalid
+  githubExchangeAudience: acme-github-oidc-exchange
+  outputAudience: steward-task-api
+  policyConfigMapName: github-oidc-exchange-policy
+  policyConfigMapKey: policy.json
+  keyringSecretName: github-oidc-exchange-keyring
+  keyringSecretKey: keyring.json
+
+# Bump only the matching revision after the referenced projected object has
+# been verified in the cluster. These opaque values must never contain secret
+# content or be derived from it.
+rolloutRevisions:
+  githubPolicy: rev-1
+  githubKeyring: rev-1
+
+# Gateway API is preferred. The Gateway and its TLS policy are platform-owned;
+# this route owns only the three public Identity paths. Replace the parent ref
+# with the platform Gateway listener that accepts this namespace and hostname.
+httpRoute:
+  enabled: true
+  annotations: {}
+  parentRefs:
+    - name: public-https
+      namespace: gateway-system
+      sectionName: https
+  hostnames:
+    - identity.example.invalid
+
+networkPolicy:
+  enabled: true
+  # Replace with the trusted ingress/load-balancer source range for this
+  # cluster. Do not use 0.0.0.0/0 for an identity issuer.
+  ingressCidrs:
+    - 10.0.0.0/16
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+podDisruptionBudget:
+  minAvailable: 1
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  # Example for Prometheus Operator discovery, if enabled:
+  labels: {}

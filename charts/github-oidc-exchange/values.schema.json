@@ -1,5 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "github-oidc-exchange chart values",
+  "description": "Values for a fail-closed GitHub and Kubernetes workload OIDC exchange issuer.",
   "type": "object",
   "required": ["replicaCount", "image", "serviceAccount", "config", "rolloutRevisions", "workloadExchange", "service", "networkPolicy", "resources"],
   "properties": {
@@ -10,7 +12,30 @@
       "properties": {
         "repository": {"type": "string", "minLength": 1},
         "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
-        "pullPolicy": {"enum": ["IfNotPresent", "Always", "Never"]}
+        "pullPolicy": {"enum": ["IfNotPresent", "Always", "Never"]},
+        "pullSecrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "required": ["create", "name", "annotations"],
+      "properties": {
+        "create": {"type": "boolean"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 253},
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        }
       }
     },
     "config": {
@@ -87,6 +112,25 @@
         "port": {"const": 8080}
       }
     },
+    "podDisruptionBudget": {
+      "type": "object",
+      "required": ["minAvailable"],
+      "properties": {
+        "minAvailable": {"type": "integer", "minimum": 1}
+      }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "required": ["enabled", "interval", "labels"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "interval": {"type": "string", "pattern": "^[1-9][0-9]*(ms|s|m|h)$"},
+        "labels": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        }
+      }
+    },
     "networkPolicy": {
       "type": "object",
       "required": ["enabled", "ingressCidrs"],
@@ -103,13 +147,76 @@
       "type": "object",
       "properties": {
         "enabled": {"type": "boolean"},
+        "className": {"type": "string", "minLength": 1},
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
         "host": {"type": "string"}
       },
       "if": {"properties": {"enabled": {"const": true}}},
       "then": {"properties": {"host": {"type": "string", "minLength": 1}}}
+    },
+    "httpRoute": {
+      "type": "object",
+      "required": ["enabled", "annotations", "parentRefs", "hostnames"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "parentRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "group": {"type": "string", "minLength": 1},
+              "kind": {"type": "string", "minLength": 1},
+              "name": {"type": "string", "minLength": 1},
+              "namespace": {"type": "string", "minLength": 1},
+              "sectionName": {"type": "string", "minLength": 1},
+              "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+            }
+          }
+        },
+        "hostnames": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"enabled": {"const": true}}},
+          "then": {
+            "properties": {
+              "parentRefs": {"minItems": 1},
+              "hostnames": {"minItems": 1}
+            }
+          }
+        }
+      ]
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "ingress": {
+            "properties": {"enabled": {"const": true}},
+            "required": ["enabled"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "httpRoute": {
+            "properties": {"enabled": {"const": false}}
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {
