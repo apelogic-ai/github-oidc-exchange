@@ -11,6 +11,9 @@ tmp="$(mktemp -d)"
 app_dir="$tmp/app"
 container="github-oidc-exchange-smoke-$$"
 mock_pid=""
+workload_auth_name=Authorization
+workload_auth_scheme=Bearer
+workload_source_token=projected-source-token
 mkdir -p "$app_dir"
 
 cleanup() {
@@ -221,7 +224,7 @@ docker run --detach --name "$container" \
   --platform "${smoke_platform}" \
   "${docker_network[@]}" \
   --volume "$app_dir:/smoke:ro" \
-  --env ISSUER_URL=https://identity.dev.apelogic.io \
+  --env ISSUER_URL=https://identity.example.invalid \
   --env GITHUB_EXCHANGE_AUDIENCE=apelogic-github-exchange \
   --env OUTPUT_AUDIENCE=steward-task-api \
   --env POLICY_FILE=/smoke/policy.json \
@@ -261,7 +264,7 @@ for _ in $(seq 1 60); do
       "https://127.0.0.1:$workload_port/readyz" >/dev/null; then
     if ! response="$(curl --fail --silent --show-error --cacert "$tmp/ca.crt" \
       --request POST \
-      --header 'Authorization: Bearer projected-source-token' \
+      --header "$workload_auth_name: $workload_auth_scheme $workload_source_token" \
       "https://127.0.0.1:$workload_port/v1/workload/exchange")"; then
       diagnose
       exit 1

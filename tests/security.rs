@@ -96,7 +96,7 @@ fn policy() -> Policy {
         service_group: "agents.apelogic.ai/service-principal:steward-run".to_owned(),
         acting_group_prefix: "agents.apelogic.ai/acting-user:".to_owned(),
         bootstrap_group: "agents.apelogic.ai/service-envelope-bootstrap:steward-run".to_owned(),
-        allowed_email_domains: vec!["apelogic.io".to_owned()],
+        allowed_email_domains: vec!["example.invalid".to_owned()],
         repositories: vec![RepositoryPolicy {
             profile: IdentityProfile::Task,
             owner_id: "227278099".to_owned(),
@@ -110,7 +110,7 @@ fn policy() -> Policy {
         actors: HashMap::from([(
             "12345".to_owned(),
             Actor {
-                email: "engineer@apelogic.io".to_owned(),
+                email: "engineer@example.invalid".to_owned(),
                 canonical_user_id: "usr_0123456789abcdef0123456789abcdef".to_owned(),
                 verified: true,
             },
@@ -132,7 +132,7 @@ fn workflow_selected_profiles_are_mutually_exclusive() -> Result<(), Box<dyn std
     assert_eq!(
         task_identity.groups,
         vec![
-            "agents.apelogic.ai/acting-user:engineer@apelogic.io",
+            "agents.apelogic.ai/acting-user:engineer@example.invalid",
             "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef",
             "agents.apelogic.ai/service-principal:steward-run",
         ]
@@ -683,12 +683,12 @@ fn policy_is_default_deny_and_emits_only_ratified_groups() -> Result<(), Box<dyn
     let policy = policy();
     policy.validate()?;
     let identity = policy.authorize(&claims())?;
-    assert_eq!(identity.email, "engineer@apelogic.io");
+    assert_eq!(identity.email, "engineer@example.invalid");
     assert!(identity.email_verified);
     assert_eq!(
         identity.groups,
         vec![
-            "agents.apelogic.ai/acting-user:engineer@apelogic.io",
+            "agents.apelogic.ai/acting-user:engineer@example.invalid",
             "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef",
             "agents.apelogic.ai/service-principal:steward-run",
         ]
@@ -749,7 +749,7 @@ fn unverified_or_noncanonical_actor_mapping_fails_closed() {
 
     let mut profile_email = policy();
     if let Some(actor) = profile_email.actors.get_mut("12345") {
-        actor.email = "Display Name <Engineer@apelogic.io>".to_owned();
+        actor.email = "Display Name <Engineer@example.invalid>".to_owned();
     }
     assert!(profile_email.validate().is_err());
 
@@ -778,7 +778,7 @@ fn unverified_or_noncanonical_actor_mapping_fails_closed() {
     duplicate_canonical_user.actors.insert(
         "67890".to_owned(),
         Actor {
-            email: "other@apelogic.io".to_owned(),
+            email: "other@example.invalid".to_owned(),
             canonical_user_id: "usr_0123456789abcdef0123456789abcdef".to_owned(),
             verified: true,
         },
@@ -924,7 +924,7 @@ fn policy_file_rejects_unknown_fields() -> Result<(), Box<dyn std::error::Error>
         "service_group": "agents.apelogic.ai/service-principal:steward-run",
         "acting_group_prefix": "agents.apelogic.ai/acting-user:",
         "bootstrap_group": "agents.apelogic.ai/service-envelope-bootstrap:steward-run",
-        "allowed_email_domains": ["apelogic.io"],
+        "allowed_email_domains": ["example.invalid"],
         "repositories": [],
         "actors": {},
         "unexpected": true
@@ -951,7 +951,7 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
         policy: Arc::new(policy()),
         ledger: Arc::new(TestReplayLedger::default()),
         keys: Arc::new(keyring),
-        issuer: "https://identity.dev.apelogic.io".to_owned(),
+        issuer: "https://identity.example.invalid".to_owned(),
         output_audience: "steward-task-api".to_owned(),
         token_ttl: Duration::from_secs(120),
         metrics: metrics.clone(),
@@ -971,18 +971,18 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
     let output_header = jsonwebtoken::decode_header(&output)?;
     assert_eq!(output_header.alg, Algorithm::ES256);
     let mut validation = Validation::new(Algorithm::ES256);
-    validation.set_issuer(&["https://identity.dev.apelogic.io"]);
+    validation.set_issuer(&["https://identity.example.invalid"]);
     validation.set_audience(&["steward-task-api"]);
     let decoded = decode::<OutputClaims>(&output, &output_key, &validation)?.claims;
-    assert_eq!(decoded.iss, "https://identity.dev.apelogic.io");
+    assert_eq!(decoded.iss, "https://identity.example.invalid");
     assert_eq!(decoded.aud, vec!["steward-task-api"]);
-    assert_eq!(decoded.email, "engineer@apelogic.io");
+    assert_eq!(decoded.email, "engineer@example.invalid");
     assert!(decoded.email_verified);
     assert_eq!(decoded.identity_contract, IDENTITY_CONTRACT);
     assert_eq!(
         decoded.groups,
         vec![
-            "agents.apelogic.ai/acting-user:engineer@apelogic.io",
+            "agents.apelogic.ai/acting-user:engineer@example.invalid",
             "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef",
             "agents.apelogic.ai/service-principal:steward-run",
         ]
@@ -1062,7 +1062,7 @@ async fn workload_exchange_emits_only_server_selected_rs256_profile()
         },
         policy: Arc::new(workload_policy()),
         keys,
-        issuer: "https://identity.dev.apelogic.io".to_owned(),
+        issuer: "https://identity.example.invalid".to_owned(),
         input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
         output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
         token_ttl: Duration::from_secs(120),
@@ -1071,7 +1071,7 @@ async fn workload_exchange_emits_only_server_selected_rs256_profile()
     let output = service.exchange("projected-source-token").await?;
     assert_eq!(jsonwebtoken::decode_header(&output)?.alg, Algorithm::RS256);
     let mut validation = Validation::new(Algorithm::RS256);
-    validation.set_issuer(&["https://identity.dev.apelogic.io"]);
+    validation.set_issuer(&["https://identity.example.invalid"]);
     validation.set_audience(&[WORKLOAD_OUTPUT_AUDIENCE]);
     let claims = decode::<serde_json::Value>(&output, &output_key, &validation)?.claims;
     assert_eq!(claims["sub"], WORKLOAD_SUBJECT);
@@ -1104,7 +1104,7 @@ async fn workload_exchange_separates_denial_from_token_review_outage()
             reviewer: MockReviewer { outcome },
             policy: Arc::new(workload_policy()),
             keys: keys.clone(),
-            issuer: "https://identity.dev.apelogic.io".to_owned(),
+            issuer: "https://identity.example.invalid".to_owned(),
             input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
             output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
             token_ttl: Duration::from_secs(120),
@@ -1134,7 +1134,7 @@ async fn workload_http_contract_is_empty_body_only_and_preserves_github_es256()
         policy: Arc::new(policy()),
         ledger: Arc::new(TestReplayLedger::default()),
         keys: Arc::new(keyring()?),
-        issuer: "https://identity.dev.apelogic.io".to_owned(),
+        issuer: "https://identity.example.invalid".to_owned(),
         output_audience: "steward-task-api".to_owned(),
         token_ttl: Duration::from_secs(120),
         metrics: Arc::new(Metrics::default()),
@@ -1145,7 +1145,7 @@ async fn workload_http_contract_is_empty_body_only_and_preserves_github_es256()
         },
         policy: Arc::new(workload_policy()),
         keys: Arc::new(rsa_keyring_with_bits(3072)?),
-        issuer: "https://identity.dev.apelogic.io".to_owned(),
+        issuer: "https://identity.example.invalid".to_owned(),
         input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
         output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
         token_ttl: Duration::from_secs(120),
