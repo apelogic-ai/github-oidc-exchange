@@ -26,8 +26,15 @@ workflow=".github/workflows/release.yml"
 required=(
   'workflow_dispatch:'
   'packages: write'
-  'docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130'
-  'platforms: linux/amd64,linux/arm64'
+  'runs-on: ubuntu-24.04-arm'
+  'Build and publish native amd64 image candidate'
+  'Build and publish native arm64 image candidate'
+  'Compose native multi-platform image candidate'
+  'platforms: linux/amd64'
+  'platforms: linux/arm64'
+  'needs.build-amd64.outputs.digest'
+  'needs.build-arm64.outputs.digest'
+  'SMOKE_PLATFORM=linux/amd64 bash scripts/smoke-release-container.sh'
   'SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh'
   'cosign-release: v3.1.2'
   '--registry-referrers-mode=oci-1-1'
@@ -69,6 +76,11 @@ required=(
 for contract in "${required[@]}"; do
   grep -Fq -- "$contract" "$workflow"
 done
+
+if grep -R -n -i -E 'qemu|binfmt' .github/workflows; then
+  printf 'emulated image builds are forbidden; use native architecture runners\n' >&2
+  exit 1
+fi
 
 for architecture in amd64 arm64; do
   grep -Fq -- "image-platform-$architecture.digest" "$workflow"
@@ -260,7 +272,9 @@ if grep -Fq -- 'aws ecr put-image' "$workflow" ||
   exit 1
 fi
 
-image_candidate_line="$(grep -n 'Build and publish unique image candidate' "$workflow" | cut -d: -f1)"
+amd64_candidate_line="$(grep -n 'Build and publish native amd64 image candidate' "$workflow" | cut -d: -f1)"
+arm64_candidate_line="$(grep -n 'Build and publish native arm64 image candidate' "$workflow" | cut -d: -f1)"
+image_candidate_line="$(grep -n 'Compose native multi-platform image candidate' "$workflow" | cut -d: -f1)"
 chart_candidate_line="$(grep -n 'Publish unique immutable chart candidate' "$workflow" | cut -d: -f1)"
 verification_line="$(grep -n 'Sign, attest, and verify immutable candidate artifacts' "$workflow" | cut -d: -f1)"
 image_promotion_line="$(grep -n 'Promote verified image candidate' "$workflow" | cut -d: -f1)"
@@ -271,6 +285,8 @@ public_sign_line="$(grep -n 'Sign, attest, and verify public GHCR artifacts' "$w
 anonymous_verify_line="$(grep -n 'Verify anonymous exact-digest GHCR pulls' "$workflow" | cut -d: -f1)"
 release_line="$(grep -n 'gh release create' "$workflow" | cut -d: -f1)"
 [[ "$image_candidate_line" -lt "$verification_line" ]]
+[[ "$amd64_candidate_line" -lt "$image_candidate_line" ]]
+[[ "$arm64_candidate_line" -lt "$image_candidate_line" ]]
 [[ "$chart_candidate_line" -lt "$verification_line" ]]
 [[ "$verification_line" -lt "$image_promotion_line" ]]
 [[ "$verification_line" -lt "$chart_promotion_line" ]]
