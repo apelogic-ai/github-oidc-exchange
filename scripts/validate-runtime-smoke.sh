@@ -42,8 +42,8 @@ grep -q -- '--cacert "$tmp/ca.crt"' "$target"
 [[ "$(grep -cF 'bash scripts/smoke-release-container.sh' "$release")" == 2 ]]
 grep -qF 'bash scripts/smoke-release-container.sh github-oidc-exchange:ci' "$ci"
 grep -qF 'SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh github-oidc-exchange:ci-arm64' "$ci"
-grep -qF 'bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"' "$release"
-grep -qF 'SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"' "$release"
+grep -qF 'SMOKE_PLATFORM=linux/amd64 bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@$IMAGE_DIGEST"' "$release"
+grep -qF 'SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@$IMAGE_DIGEST"' "$release"
 
 line_number() {
   grep -n -m1 -F "$2" "$1" | cut -d: -f1
@@ -59,11 +59,16 @@ ci_trivy="$(line_number "$ci" 'uses: aquasecurity/trivy-action')"
 
 release_contract="$(line_number "$release" 'bash scripts/validate-runtime-smoke.sh')"
 release_auth="$(line_number "$release" 'uses: aws-actions/configure-aws-credentials')"
-release_candidate="$(line_number "$release" 'name: Build and publish unique image candidate')"
-release_smoke="$(line_number "$release" 'bash scripts/smoke-release-container.sh')"
+release_amd64_candidate="$(line_number "$release" 'name: Build and publish native amd64 image candidate')"
+release_amd64_smoke="$(line_number "$release" 'SMOKE_PLATFORM=linux/amd64 bash scripts/smoke-release-container.sh')"
+release_arm64_candidate="$(line_number "$release" 'name: Build and publish native arm64 image candidate')"
+release_arm64_smoke="$(line_number "$release" 'SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh')"
+release_compose="$(line_number "$release" 'name: Compose native multi-platform image candidate')"
 release_sign="$(line_number "$release" 'name: Sign, attest, and verify immutable candidate artifacts')"
 release_promote="$(line_number "$release" 'name: Promote verified image candidate')"
 release_handoff="$(line_number "$release" 'name: Publish signed release handoff')"
 (( release_contract < release_auth ))
-(( release_candidate < release_smoke ))
-(( release_smoke < release_sign && release_smoke < release_promote && release_smoke < release_handoff ))
+(( release_amd64_candidate < release_amd64_smoke ))
+(( release_arm64_candidate < release_arm64_smoke ))
+(( release_amd64_smoke < release_compose && release_arm64_smoke < release_compose ))
+(( release_compose < release_sign && release_compose < release_promote && release_compose < release_handoff ))

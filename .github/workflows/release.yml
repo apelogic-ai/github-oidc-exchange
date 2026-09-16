@@ -18,16 +18,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  preflight:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 20
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
       ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
       IMAGE_REPOSITORY_NAME: ${{ vars.ECR_IMAGE_REPOSITORY }}
       CHART_REPOSITORY_NAME: ${{ vars.ECR_CHART_REPOSITORY }}
-      COSIGN_EXPERIMENTAL: "1"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -58,13 +57,6 @@ jobs:
           : "${CHART_REPOSITORY_NAME:?Set ECR_CHART_REPOSITORY}"
           ghcr_owner="${GITHUB_REPOSITORY_OWNER,,}"
           [[ "$ghcr_owner" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
-          printf 'VERSION=%s\n' "$REQUESTED_VERSION" >> "$GITHUB_ENV"
-          printf 'CANDIDATE_TAG=candidate-%s-%s-%s\n' "$REQUESTED_VERSION" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
-          printf 'CHART_CANDIDATE_TAG=candidate-%s-%s-%s\n' "$REQUESTED_VERSION" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
-          printf 'IMAGE_REFERENCE=%s/%s\n' "$ECR_REGISTRY" "$IMAGE_REPOSITORY_NAME" >> "$GITHUB_ENV"
-          printf 'CHART_REFERENCE=%s/%s\n' "$ECR_REGISTRY" "$CHART_REPOSITORY_NAME" >> "$GITHUB_ENV"
-          printf 'PUBLIC_IMAGE_REFERENCE=ghcr.io/%s/github-oidc-exchange\n' "$ghcr_owner" >> "$GITHUB_ENV"
-          printf 'PUBLIC_CHART_REFERENCE=ghcr.io/%s/charts/github-oidc-exchange\n' "$ghcr_owner" >> "$GITHUB_ENV"
 
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
@@ -76,11 +68,160 @@ jobs:
         with:
           version: v3.17.1
 
+      - name: Verify source and render chart
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --locked --all-targets --all-features -- -D warnings
+          cargo test --locked --all-targets --all-features
+          bash scripts/validate-release.sh
+          helm lint charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/test-values.yaml --strict
+          helm template test charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/test-values.yaml > /tmp/rendered.yaml
+          grep -q 'readOnlyRootFilesystem: true' /tmp/rendered.yaml
+          grep -q 'kind: NetworkPolicy' /tmp/rendered.yaml
+          grep -q 'kind: PodDisruptionBudget' /tmp/rendered.yaml
+
+  build-amd64:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+      IMAGE_REFERENCE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_IMAGE_REPOSITORY }}
+      CANDIDATE_TAG: candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}-amd64
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v5.1.0
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-session-name: github-oidc-exchange-amd64-${{ github.run_id }}
+
+      - name: Authenticate to ECR
+        shell: bash
+        run: aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.6.0
+      - name: Build and publish native amd64 image candidate
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
-          platforms: arm64
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE_REFERENCE }}:${{ env.CANDIDATE_TAG }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=release-amd64
+          cache-to: type=gha,mode=max,scope=release-amd64
+
+      - name: Smoke native amd64 image candidate
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: SMOKE_PLATFORM=linux/amd64 bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@$IMAGE_DIGEST"
+
+  build-arm64:
+    needs: preflight
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+      IMAGE_REFERENCE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_IMAGE_REPOSITORY }}
+      CANDIDATE_TAG: candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}-arm64
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v5.1.0
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-session-name: github-oidc-exchange-arm64-${{ github.run_id }}
+
+      - name: Authenticate to ECR
+        shell: bash
+        run: aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build and publish native arm64 image candidate
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          push: true
+          platforms: linux/arm64
+          tags: ${{ env.IMAGE_REFERENCE }}:${{ env.CANDIDATE_TAG }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=release-arm64
+          cache-to: type=gha,mode=max,scope=release-arm64
+
+      - name: Smoke native arm64 image candidate
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@$IMAGE_DIGEST"
+
+  publish:
+    needs:
+      - preflight
+      - build-amd64
+      - build-arm64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+      IMAGE_REPOSITORY_NAME: ${{ vars.ECR_IMAGE_REPOSITORY }}
+      CHART_REPOSITORY_NAME: ${{ vars.ECR_CHART_REPOSITORY }}
+      VERSION: ${{ inputs.version }}
+      CANDIDATE_TAG: candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+      CHART_CANDIDATE_TAG: candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+      IMAGE_REFERENCE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_IMAGE_REPOSITORY }}
+      CHART_REFERENCE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_CHART_REPOSITORY }}
+      COSIGN_EXPERIMENTAL: "1"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Define public release references
+        shell: bash
+        run: |
+          set -euo pipefail
+          ghcr_owner="${GITHUB_REPOSITORY_OWNER,,}"
+          [[ "$ghcr_owner" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
+          printf 'PUBLIC_IMAGE_REFERENCE=ghcr.io/%s/github-oidc-exchange\n' "$ghcr_owner" >> "$GITHUB_ENV"
+          printf 'PUBLIC_CHART_REFERENCE=ghcr.io/%s/charts/github-oidc-exchange\n' "$ghcr_owner" >> "$GITHUB_ENV"
+
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
+        with:
+          version: v3.17.1
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - uses: sigstore/cosign-installer@874852de93c66509b01dc7cd80f7a5385182d017 # v4.1.0
         with:
@@ -101,19 +242,6 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/oras-bin" oras
           printf '%s\n' "$RUNNER_TEMP/oras-bin" >> "$GITHUB_PATH"
 
-      - name: Verify source and render chart
-        run: |
-          set -euo pipefail
-          cargo fmt --all -- --check
-          cargo clippy --locked --all-targets --all-features -- -D warnings
-          cargo test --locked --all-targets --all-features
-          bash scripts/validate-release.sh
-          helm lint charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/test-values.yaml --strict
-          helm template test charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/test-values.yaml > /tmp/rendered.yaml
-          grep -q 'readOnlyRootFilesystem: true' /tmp/rendered.yaml
-          grep -q 'kind: NetworkPolicy' /tmp/rendered.yaml
-          grep -q 'kind: PodDisruptionBudget' /tmp/rendered.yaml
-
       - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v5.1.0
         with:
           aws-region: ${{ env.AWS_REGION }}
@@ -133,25 +261,39 @@ jobs:
             [[ "$existing" == None ]]
           done
 
-      - name: Build and publish unique image candidate
+      - name: Compose native multi-platform image candidate
         id: image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ env.IMAGE_REFERENCE }}:${{ env.CANDIDATE_TAG }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ env.VERSION }}
-          provenance: mode=max
-          sbom: true
-
-      - name: Smoke exact immutable image candidate
+        shell: bash
+        env:
+          AMD64_DIGEST: ${{ needs.build-amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ needs.build-arm64.outputs.digest }}
         run: |
-          bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"
-          SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"
+          set -euo pipefail
+          [[ "$AMD64_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$ARM64_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --annotation "index:org.opencontainers.image.revision=$GITHUB_SHA" \
+            --annotation "index:org.opencontainers.image.version=$VERSION" \
+            --tag "$IMAGE_REFERENCE:$CANDIDATE_TAG" \
+            "$IMAGE_REFERENCE@$AMD64_DIGEST" \
+            "$IMAGE_REFERENCE@$ARM64_DIGEST"
+          digest="$(aws ecr batch-get-image \
+            --repository-name "$IMAGE_REPOSITORY_NAME" \
+            --image-ids imageTag="$CANDIDATE_TAG" \
+            --query 'images[0].imageId.imageDigest' \
+            --output text)"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          mkdir -p dist
+          docker buildx imagetools inspect --raw "$IMAGE_REFERENCE@$digest" > dist/image-index.json
+          jq -e \
+            --arg amd64 "$AMD64_DIGEST" \
+            --arg arm64 "$ARM64_DIGEST" \
+            '([.manifests[] | select(.platform.os == "linux")] | length) == 2
+             and ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64" and .digest == $amd64)] | length) == 1
+             and ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64" and .digest == $arm64)] | length) == 1' \
+            dist/image-index.json > /dev/null
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
 
       - name: Package and scan chart locally
         shell: bash
@@ -217,6 +359,12 @@ jobs:
                 | .digest] | unique | if length == 1 then .[0] else empty end
             ' dist/image-index.json)"
             [[ "$platform_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+            if [[ "$architecture" == amd64 ]]; then
+              expected="${{ needs.build-amd64.outputs.digest }}"
+            else
+              expected="${{ needs.build-arm64.outputs.digest }}"
+            fi
+            [[ "$platform_digest" == "$expected" ]]
             aws ecr wait image-scan-complete --repository-name "$IMAGE_REPOSITORY_NAME" --image-id imageDigest="$platform_digest"
             aws ecr describe-image-scan-findings --repository-name "$IMAGE_REPOSITORY_NAME" --image-id imageDigest="$platform_digest" --output json > "dist/image.ecr-scan-$architecture.json"
             [[ "$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' "dist/image.ecr-scan-$architecture.json")" == 0 ]]
