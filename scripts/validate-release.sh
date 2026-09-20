@@ -3,6 +3,12 @@ set -euo pipefail
 
 bash scripts/validate-ci-tools.sh
 
+# The published source, package, and chart must advertise the same license.
+[[ -f LICENSE ]]
+grep -Fq 'MIT License' LICENSE
+grep -Fq 'license = "MIT"' Cargo.toml
+grep -Fq 'artifacthub.io/license: MIT' charts/github-oidc-exchange/Chart.yaml
+
 grep -Fq -- \
   'cargo build --locked --release --bin github-oidc-exchange' Dockerfile
 if grep -Fq -- 'test-support' Dockerfile ||
