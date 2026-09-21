@@ -725,6 +725,21 @@ fn policy_is_default_deny_and_emits_only_ratified_groups() -> Result<(), Box<dyn
 }
 
 #[test]
+fn standard_github_subject_is_bound_to_separate_immutable_ids()
+-> Result<(), Box<dyn std::error::Error>> {
+    let subject = "repo:apelogic-ai/steward-run:ref:refs/heads/main";
+    let mut policy = policy();
+    policy.repositories[0].subjects = vec![subject.to_owned()];
+    policy.validate()?;
+    let mut assertion = claims();
+    assertion.sub = subject.to_owned();
+    assert!(policy.authorize(&assertion).is_ok());
+    assertion.repository_owner_id = "999".to_owned();
+    assert_eq!(policy.authorize(&assertion), Err(PolicyError::Unauthorized));
+    Ok(())
+}
+
+#[test]
 fn task_policy_rejects_workflow_path_gates() {
     let mut caller_gated_policy = policy();
     caller_gated_policy.repositories[0].workflow_refs = vec![CALLER_WORKFLOW.to_owned()];

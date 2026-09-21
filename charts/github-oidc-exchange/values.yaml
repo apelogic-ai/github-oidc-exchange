@@ -1,13 +1,12 @@
 replicaCount: 2
 
 image:
-  # This is a reserved, non-routable example reference. Select a signed,
-  # immutable image digest before installing this chart in any cluster.
-  repository: registry.example.invalid/apelogic/github-oidc-exchange
+  # Required: a fork-owned registry path and immutable pushed image digest.
+  repository: ""
   # Optional immutable release tag for registries that require a SemVer path.
   # The digest remains the authoritative image identity.
   tag: ""
-  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  digest: ""
   pullPolicy: IfNotPresent
   # References only; chart values must never contain registry credentials.
   pullSecrets: []
@@ -18,20 +17,18 @@ serviceAccount:
   annotations: {}
 
 config:
-  # Reserved examples make `helm lint` and `helm template` reproducible while
-  # keeping an unconfigured release unable to serve a real identity boundary.
-  issuerUrl: https://identity.example.invalid
-  githubExchangeAudience: replace-with-dedicated-github-oidc-audience
+  issuerUrl: ""
+  githubExchangeAudience: ""
   outputAudience: steward-task-api
   # These are Kubernetes object references, not policy or key material.
-  policyConfigMapName: replace-with-github-policy
+  policyConfigMapName: ""
   policyConfigMapKey: policy.json
-  keyringSecretName: replace-with-github-keyring
+  keyringSecretName: ""
   keyringSecretKey: keyring.json
 
 rolloutRevisions:
-  githubPolicy: initial
-  githubKeyring: initial
+  githubPolicy: ""
+  githubKeyring: ""
   workloadPolicy: ""
   workloadRsaKeyring: ""
   workloadTls: ""
@@ -49,6 +46,12 @@ workloadExchange:
     secretName: ""
     certificateKey: tls.crt
     privateKeyKey: tls.key
+    certManager:
+      enabled: false
+      issuerRef:
+        name: ""
+        kind: Issuer
+        group: cert-manager.io
   networkPolicy:
     callerNamespaceSelector: {}
     callerPodSelector: {}
@@ -69,9 +72,18 @@ service:
 
 ingress:
   enabled: false
-  className: alb
+  className: ""
   annotations: {}
   host: ""
+  tls:
+    # Existing customer-PKI Secret or a Certificate owned by this release.
+    secretName: ""
+    certManager:
+      enabled: false
+      issuerRef:
+        name: ""
+        kind: Issuer
+        group: cert-manager.io
 
 # Gateway API is the preferred public-routing integration. The platform owns
 # the Gateway and its TLS policy; this chart emits only the narrow HTTPRoute.
@@ -85,10 +97,7 @@ httpRoute:
 
 networkPolicy:
   enabled: true
-  # TEST-NET-1 is intentionally non-production. Replace with the trusted
-  # ingress/load-balancer source ranges for the target cluster.
-  ingressCidrs:
-    - 192.0.2.0/24
+  ingressCidrs: []
   dnsNamespaceSelector:
     kubernetes.io/metadata.name: kube-system
   dnsPodSelector:

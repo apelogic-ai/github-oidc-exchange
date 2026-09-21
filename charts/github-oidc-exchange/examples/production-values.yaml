@@ -3,10 +3,10 @@
 # deliberately valid for Helm rendering but cannot be a working issuer as-is.
 
 image:
-  repository: registry.example.invalid/acme/github-oidc-exchange
+  repository: registry.customer.test/acme/github-oidc-exchange
   # Optional immutable release tag; verify that it resolves to this digest.
-  tag: 0.3.8
-  digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  tag: 0.4.0
+  digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
   pullPolicy: IfNotPresent
   # For a private registry, reference a pre-created image-pull secret. Do not
   # place credentials in Helm values.
@@ -19,7 +19,7 @@ serviceAccount:
   annotations: {}
 
 config:
-  issuerUrl: https://identity.example.invalid
+  issuerUrl: https://identity.customer.test
   githubExchangeAudience: acme-github-oidc-exchange
   outputAudience: steward-task-api
   policyConfigMapName: github-oidc-exchange-policy
@@ -45,7 +45,7 @@ httpRoute:
       namespace: gateway-system
       sectionName: https
   hostnames:
-    - identity.example.invalid
+    - identity.customer.test
 
 networkPolicy:
   enabled: true

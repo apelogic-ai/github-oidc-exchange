@@ -26,6 +26,7 @@ cleanup() {
 trap cleanup EXIT
 
 kind create cluster --name "$cluster" --kubeconfig "$kubeconfig" --wait 90s >/dev/null
+bash scripts/test-install-rotation.sh "$kubeconfig" "kind-$cluster" default
 kubectl --kubeconfig "$kubeconfig" create namespace "$namespace" >/dev/null
 kubectl --kubeconfig "$kubeconfig" -n "$namespace" apply -f - >/dev/null <<'EOF'
 apiVersion: v1

@@ -1,0 +1,98 @@
+# Copy to a private deployment repository as values.yaml. Empty mandatory
+# fields deliberately fail Helm validation. Never place key, policy, TLS, or
+# registry credential contents in this file.
+replicaCount: 2
+image:
+  repository: "" # fork-owned registry path, e.g. registry.company.tld/team/github-oidc-exchange
+  tag: ""
+  digest: "" # immutable sha256:... from that registry
+  pullPolicy: IfNotPresent
+  pullSecrets: [] # names of existing kubernetes.io/dockerconfigjson Secrets, if needed
+serviceAccount:
+  create: true
+  name: github-oidc-exchange
+  annotations: {}
+config:
+  issuerUrl: "" # externally trusted HTTPS URL, exact token issuer
+  githubExchangeAudience: "" # dedicated GitHub Actions OIDC request audience
+  outputAudience: steward-task-api # protocol constant, not configurable
+  policyConfigMapName: github-oidc-exchange-policy
+  policyConfigMapKey: policy.json
+  keyringSecretName: github-oidc-exchange-keyring
+  keyringSecretKey: keyring.json
+rolloutRevisions:
+  githubPolicy: rev-1
+  githubKeyring: rev-1
+  workloadPolicy: ""
+  workloadRsaKeyring: ""
+  workloadTls: ""
+  browserHop1Jwks: ""
+workloadExchange:
+  enabled: false
+  inputAudience: "" # exact projected service-account TokenReview audience
+  outputAudience: openshell-api # protocol constant
+  policyConfigMapName: github-oidc-exchange-workload-policy
+  policyConfigMapKey: workload-policy.json
+  rsaKeyringSecretName: github-oidc-exchange-workload-rsa-keyring
+  rsaKeyringSecretKey: rsa-keyring.json
+  tls:
+    secretName: github-oidc-exchange-server-tls
+    certificateKey: tls.crt
+    privateKeyKey: tls.key
+    certManager:
+      enabled: false # requires installed cert-manager CRDs and a trusted Issuer
+      issuerRef:
+        name: ""
+        kind: Issuer # or ClusterIssuer
+        group: cert-manager.io
+  networkPolicy:
+    callerNamespaceSelector: {} # mandatory nonempty when enabled
+    callerPodSelector: {} # mandatory nonempty when enabled
+browserHop1:
+  enabled: false
+  stewardIssuer: ""
+  assertionAudience: ""
+  outputAudience: ""
+  stewardJwksConfigMapName: ""
+  stewardJwksConfigMapKey: jwks.json
+service:
+  port: 8080
+ingress:
+  enabled: false # enable exactly one of Ingress or HTTPRoute; neither = Service only
+  className: "" # selected customer controller
+  annotations: {}
+  host: ""
+  tls:
+    secretName: "" # pre-created customer PKI Secret or cert-manager target
+    certManager:
+      enabled: false
+      issuerRef:
+        name: ""
+        kind: Issuer
+        group: cert-manager.io
+httpRoute:
+  enabled: false # requires Gateway API CRDs and existing HTTPS Gateway
+  annotations: {}
+  parentRefs: []
+  hostnames: []
+networkPolicy:
+  enabled: true
+  ingressCidrs: [] # explicit trusted source CIDRs of chosen route/proxy
+  dnsNamespaceSelector:
+    kubernetes.io/metadata.name: kube-system
+  dnsPodSelector:
+    k8s-app: kube-dns
+  metricsNamespaceSelector: {}
+  metricsPodSelector: {}
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: 500m, memory: 256Mi}
+podDisruptionBudget:
+  minAvailable: 1
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

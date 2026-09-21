@@ -10,9 +10,9 @@
       "type": "object",
       "required": ["repository", "digest"],
       "properties": {
-        "repository": {"type": "string", "minLength": 1},
+        "repository": {"type": "string", "minLength": 1, "not": {"pattern": "(^|\\.)example\\.invalid(/|$)"}},
         "tag": {"type": "string", "maxLength": 128, "pattern": "^$|^[A-Za-z0-9_][A-Za-z0-9_.-]*$"},
-        "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$", "not": {"enum": ["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]}},
         "pullPolicy": {"enum": ["IfNotPresent", "Always", "Never"]},
         "pullSecrets": {
           "type": "array",
@@ -43,13 +43,13 @@
       "type": "object",
       "required": ["issuerUrl", "githubExchangeAudience", "outputAudience", "policyConfigMapName", "keyringSecretName"],
       "properties": {
-        "issuerUrl": {"type": "string", "pattern": "^https://[^/?#]+(?:/[^?#]*)?$"},
-        "githubExchangeAudience": {"type": "string", "minLength": 1},
+        "issuerUrl": {"type": "string", "pattern": "^https://[^/?#]+(?:/[^?#]*)?$", "not": {"pattern": "example\\.invalid"}},
+        "githubExchangeAudience": {"type": "string", "minLength": 1, "not": {"pattern": "^(replace-|example-)"}},
         "outputAudience": {"const": "steward-task-api"},
         "policyConfigMapName": {"type": "string", "minLength": 1},
-        "policyConfigMapKey": {"type": "string", "minLength": 1},
+        "policyConfigMapKey": {"const": "policy.json"},
         "keyringSecretName": {"type": "string", "minLength": 1},
-        "keyringSecretKey": {"type": "string", "minLength": 1}
+        "keyringSecretKey": {"const": "keyring.json"}
       }
     },
     "rolloutRevisions": {
@@ -72,16 +72,32 @@
         "inputAudience": {"type": "string"},
         "outputAudience": {"const": "openshell-api"},
         "policyConfigMapName": {"type": "string"},
-        "policyConfigMapKey": {"type": "string", "minLength": 1},
+        "policyConfigMapKey": {"const": "workload-policy.json"},
         "rsaKeyringSecretName": {"type": "string"},
-        "rsaKeyringSecretKey": {"type": "string", "minLength": 1},
+        "rsaKeyringSecretKey": {"const": "rsa-keyring.json"},
         "tls": {
           "type": "object",
-          "required": ["secretName", "certificateKey", "privateKeyKey"],
+          "required": ["secretName", "certificateKey", "privateKeyKey", "certManager"],
           "properties": {
             "secretName": {"type": "string"},
-            "certificateKey": {"type": "string", "minLength": 1},
-            "privateKeyKey": {"type": "string", "minLength": 1}
+            "certificateKey": {"const": "tls.crt"},
+            "privateKeyKey": {"const": "tls.key"},
+            "certManager": {
+              "type": "object",
+              "required": ["enabled", "issuerRef"],
+              "properties": {
+                "enabled": {"type": "boolean"},
+                "issuerRef": {
+                  "type": "object",
+                  "required": ["name", "kind", "group"],
+                  "properties": {
+                    "name": {"type": "string"},
+                    "kind": {"enum": ["Issuer", "ClusterIssuer"]},
+                    "group": {"const": "cert-manager.io"}
+                  }
+                }
+              }
+            }
           }
         },
         "networkPolicy": {
@@ -148,15 +164,38 @@
       "type": "object",
       "properties": {
         "enabled": {"type": "boolean"},
-        "className": {"type": "string", "minLength": 1},
+        "className": {"type": "string"},
         "annotations": {
           "type": "object",
           "additionalProperties": {"type": "string"}
         },
-        "host": {"type": "string"}
+        "host": {"type": "string"},
+        "tls": {
+          "type": "object",
+          "required": ["secretName", "certManager"],
+          "properties": {
+            "secretName": {"type": "string"},
+            "certManager": {
+              "type": "object",
+              "required": ["enabled", "issuerRef"],
+              "properties": {
+                "enabled": {"type": "boolean"},
+                "issuerRef": {
+                  "type": "object",
+                  "required": ["name", "kind", "group"],
+                  "properties": {
+                    "name": {"type": "string"},
+                    "kind": {"enum": ["Issuer", "ClusterIssuer"]},
+                    "group": {"const": "cert-manager.io"}
+                  }
+                }
+              }
+            }
+          }
+        }
       },
       "if": {"properties": {"enabled": {"const": true}}},
-      "then": {"properties": {"host": {"type": "string", "minLength": 1}}}
+      "then": {"properties": {"host": {"type": "string", "minLength": 1}, "className": {"type": "string", "minLength": 1}, "tls": {"properties": {"secretName": {"type": "string", "minLength": 1}}}}}
     },
     "httpRoute": {
       "type": "object",

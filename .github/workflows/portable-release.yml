@@ -1,0 +1,260 @@
+name: portable release (fork GHCR)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version matching Cargo.toml and Chart.yaml
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+concurrency:
+  group: portable-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    outputs:
+      image: ${{ steps.refs.outputs.image }}
+      chart: ${{ steps.refs.outputs.chart }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Validate version and fork-owned coordinates
+        id: refs
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)" == "$VERSION" ]]
+          [[ "$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)" == "$VERSION" ]]
+          [[ "$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc-exchange/Chart.yaml | head -1)" == "$VERSION" ]]
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            printf 'release v%s already exists\n' "$VERSION" >&2
+            exit 1
+          fi
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          printf 'image=ghcr.io/%s/github-oidc-exchange\n' "$owner" >> "$GITHUB_OUTPUT"
+          printf 'chart=ghcr.io/%s/charts/github-oidc-exchange\n' "$owner" >> "$GITHUB_OUTPUT"
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
+        with:
+          version: v3.17.1
+      - name: Verify source and chart contracts
+        run: |
+          set -euo pipefail
+          bash scripts/test-customer-chart.sh
+          bash scripts/test-portable-release.sh
+          helm package charts/github-oidc-exchange --destination "$RUNNER_TEMP"
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+        with:
+          scan-type: fs
+          scan-ref: charts/github-oidc-exchange
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
+
+  build-amd64:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Authenticate to fork registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Build and publish native amd64 candidate
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ needs.preflight.outputs.image }}:candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}-amd64
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: false
+          sbom: false
+      - name: Smoke candidate
+        env:
+          IMAGE: ${{ needs.preflight.outputs.image }}@${{ steps.build.outputs.digest }}
+        run: SMOKE_PLATFORM=linux/amd64 bash scripts/smoke-release-container.sh "$IMAGE"
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+        with:
+          image-ref: ${{ needs.preflight.outputs.image }}@${{ steps.build.outputs.digest }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
+
+  build-arm64:
+    needs: preflight
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Authenticate to fork registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Build and publish native arm64 candidate
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          push: true
+          platforms: linux/arm64
+          tags: ${{ needs.preflight.outputs.image }}:candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}-arm64
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: false
+          sbom: false
+      - name: Smoke candidate
+        env:
+          IMAGE: ${{ needs.preflight.outputs.image }}@${{ steps.build.outputs.digest }}
+        run: SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh "$IMAGE"
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+        with:
+          image-ref: ${{ needs.preflight.outputs.image }}@${{ steps.build.outputs.digest }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
+
+  publish:
+    needs: [preflight, build-amd64, build-arm64]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ inputs.version }}
+      IMAGE: ${{ needs.preflight.outputs.image }}
+      CHART: ${{ needs.preflight.outputs.chart }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
+        with:
+          version: v3.17.1
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: sigstore/cosign-installer@874852de93c66509b01dc7cd80f7a5385182d017 # v4.1.0
+        with:
+          cosign-release: v3.1.2
+      - name: Install pinned ORAS
+        env:
+          ORAS_VERSION: 1.3.3
+          ORAS_LINUX_AMD64_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59
+        run: |
+          set -euo pipefail
+          archive="oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          curl -sSLo "$RUNNER_TEMP/$archive" "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/$archive"
+          printf '%s  %s\n' "$ORAS_LINUX_AMD64_SHA256" "$RUNNER_TEMP/$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/oras-bin"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/oras-bin" oras
+          printf '%s\n' "$RUNNER_TEMP/oras-bin" >> "$GITHUB_PATH"
+      - name: Authenticate to fork registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Reject existing version tags
+        run: |
+          set -euo pipefail
+          if oras manifest fetch --descriptor "$IMAGE:$VERSION" >/dev/null 2>&1 ||
+             oras manifest fetch --descriptor "$CHART:$VERSION" >/dev/null 2>&1; then
+            printf 'version tag already exists; never overwrite published artifacts\n' >&2
+            exit 1
+          fi
+      - name: Publish verified multi-platform image and chart
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create --tag "$IMAGE:$VERSION" \
+            "$IMAGE@${{ needs.build-amd64.outputs.digest }}" \
+            "$IMAGE@${{ needs.build-arm64.outputs.digest }}"
+          helm package charts/github-oidc-exchange --destination "$RUNNER_TEMP"
+          helm push "$RUNNER_TEMP/github-oidc-exchange-$VERSION.tgz" \
+            "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts"
+          image_digest="$(oras manifest fetch --descriptor "$IMAGE:$VERSION" | jq -r '.digest')"
+          chart_digest="$(oras manifest fetch --descriptor "$CHART:$VERSION" | jq -r '.digest')"
+          [[ "$image_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$chart_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          printf 'IMAGE_DIGEST=%s\nCHART_DIGEST=%s\n' "$image_digest" "$chart_digest" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/chart-scan"
+          tar -xzf "$RUNNER_TEMP/github-oidc-exchange-$VERSION.tgz" -C "$RUNNER_TEMP/chart-scan"
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.22.2
+        with:
+          image: ${{ env.IMAGE }}@${{ env.IMAGE_DIGEST }}
+          format: spdx-json
+          output-file: image.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.22.2
+        with:
+          path: ${{ runner.temp }}/chart-scan
+          format: spdx-json
+          output-file: chart.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Generate source provenance predicate
+        run: |
+          set -euo pipefail
+          jq -n --arg source "https://github.com/$GITHUB_REPOSITORY" \
+            --arg commit "$GITHUB_SHA" --arg version "$VERSION" \
+            --arg workflow "https://github.com/$GITHUB_REPOSITORY/.github/workflows/portable-release.yml@$GITHUB_REF" \
+            --arg invocation "$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT" \
+            '{buildDefinition:{buildType:"https://github.com/opencontainers/image-spec",externalParameters:{source:$source,commit:$commit,version:$version}},runDetails:{builder:{id:$workflow},metadata:{invocationId:$invocation}}}' \
+            > provenance.slsa.json
+      - name: Sign and verify exact artifacts
+        run: |
+          set -euo pipefail
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/portable-release.yml@$GITHUB_REF"
+          issuer=https://token.actions.githubusercontent.com
+          for kind in image chart; do
+            if [[ "$kind" == image ]]; then
+              artifact="$IMAGE@$IMAGE_DIGEST"
+            else
+              artifact="$CHART@$CHART_DIGEST"
+            fi
+            cosign sign --yes --new-bundle-format=true --registry-referrers-mode=oci-1-1 "$artifact"
+            cosign attest --yes --new-bundle-format=true --type spdxjson --predicate "$kind.spdx.json" "$artifact"
+            cosign attest --yes --new-bundle-format=true --type slsaprovenance1 --predicate provenance.slsa.json "$artifact"
+            cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+              --experimental-oci11=true --new-bundle-format=true "$artifact" >/dev/null
+            cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+              --experimental-oci11=true --new-bundle-format=true --type spdxjson "$artifact" >/dev/null
+            cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+              --experimental-oci11=true --new-bundle-format=true --type slsaprovenance1 "$artifact" >/dev/null
+          done
+      - name: Publish immutable fork handoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          jq -n --arg version "$VERSION" --arg commit "$GITHUB_SHA" \
+            --arg image "$IMAGE@$IMAGE_DIGEST" --arg chart "$CHART@$CHART_DIGEST" \
+            '{version:$version,commit:$commit,image:$image,chart:$chart,platforms:["linux/amd64","linux/arm64"]}' \
+            > "$RUNNER_TEMP/release-manifest.json"
+          gh release create "v$VERSION" --target "$GITHUB_SHA" \
+            --title "github-oidc-exchange v$VERSION" \
+            --notes 'Fork-owned signed image/chart. Use immutable digest references from release-manifest.json; see docs/installation.md.' \
+            "$RUNNER_TEMP/release-manifest.json"

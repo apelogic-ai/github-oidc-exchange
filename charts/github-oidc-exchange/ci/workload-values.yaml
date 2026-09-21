@@ -1,12 +1,12 @@
 image:
-  repository: registry.example.invalid/platform/github-oidc-exchange
-  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  repository: registry.test.invalid/platform/github-oidc-exchange
+  digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 
 config:
-  issuerUrl: https://identity.example.invalid
-  githubExchangeAudience: example-identity-exchange
-  policyConfigMapName: example-policy
-  keyringSecretName: example-keyring
+  issuerUrl: https://identity.test.invalid
+  githubExchangeAudience: ci-identity-exchange
+  policyConfigMapName: github-oidc-exchange-policy
+  keyringSecretName: github-oidc-exchange-keyring
 
 rolloutRevisions:
   githubPolicy: rev-1
@@ -19,10 +19,10 @@ workloadExchange:
   enabled: true
   inputAudience: example-workload-exchange
   outputAudience: openshell-api
-  policyConfigMapName: example-workload-policy
-  rsaKeyringSecretName: example-workload-rsa-keyring
+  policyConfigMapName: github-oidc-exchange-workload-policy
+  rsaKeyringSecretName: github-oidc-exchange-workload-rsa-keyring
   tls:
-    secretName: example-server-tls
+    secretName: github-oidc-exchange-server-tls
   networkPolicy:
     callerNamespaceSelector:
       kubernetes.io/metadata.name: example-caller
@@ -34,7 +34,10 @@ service:
 
 ingress:
   enabled: true
-  host: identity.example.invalid
+  className: test-ingress
+  host: identity.test.invalid
+  tls:
+    secretName: identity-public-tls
 
 serviceMonitor:
   enabled: true

@@ -2,6 +2,14 @@
 set -euo pipefail
 
 bash scripts/validate-ci-tools.sh
+bash scripts/test-portable-release.sh
+bash scripts/test-docs-drift.sh
+
+# The published source, package, and chart must advertise the same license.
+[[ -f LICENSE ]]
+grep -Fq 'MIT License' LICENSE
+grep -Fq 'license = "MIT"' Cargo.toml
+grep -Fq 'artifacthub.io/license: MIT' charts/github-oidc-exchange/Chart.yaml
 
 grep -Fq -- \
   'cargo build --locked --release --bin github-oidc-exchange' Dockerfile
@@ -174,7 +182,7 @@ helm template tagged "$render_dir/chart" \
   -f charts/github-oidc-exchange/examples/production-values.yaml \
   >"$render_dir/tagged.yaml"
 grep -Fq -- \
-  'image: registry.example.invalid/acme/github-oidc-exchange:0.3.8@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  'image: registry.customer.test/acme/github-oidc-exchange:0.4.0@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' \
   "$render_dir/tagged.yaml"
 if helm template malformed-tag "$render_dir/chart" \
   -f charts/github-oidc-exchange/examples/production-values.yaml \

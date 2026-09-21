@@ -121,7 +121,17 @@ impl Policy {
         }
         let mut repository_rules = HashSet::new();
         for repository in &self.repositories {
-            if repository.owner_id.is_empty() || repository.repository_id.is_empty() {
+            if repository.owner_id.is_empty()
+                || repository.repository_id.is_empty()
+                || !repository
+                    .owner_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit())
+                || !repository
+                    .repository_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit())
+            {
                 return Err(invalid("repository numeric IDs are required"));
             }
             require_values("subjects", &repository.subjects)?;
@@ -153,16 +163,15 @@ impl Policy {
             )) {
                 return Err(invalid("duplicate repository authorization rule"));
             }
-            let owner_marker = format!("@{}/", repository.owner_id);
-            let repository_marker = format!("@{}:", repository.repository_id);
+            // GitHub's ordinary `sub` does not embed numeric IDs. Authorize it
+            // only alongside the independently signed owner/repository ID
+            // claims, compared exactly in `authorize` below.
             if repository.subjects.iter().any(|subject| {
                 !subject.starts_with("repo:")
-                    || !subject.contains(&owner_marker)
-                    || !subject.contains(&repository_marker)
+                    || subject.len() > 2_048
+                    || !subject.bytes().all(|byte| byte.is_ascii_graphic())
             }) {
-                return Err(invalid(
-                    "subjects must contain immutable owner and repository IDs",
-                ));
+                return Err(invalid("subjects must be exact GitHub repo subjects"));
             }
         }
         let mut canonical_user_ids = HashSet::new();
