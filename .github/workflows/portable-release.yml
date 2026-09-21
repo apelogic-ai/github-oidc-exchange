@@ -55,6 +55,13 @@ jobs:
           bash scripts/test-customer-chart.sh
           bash scripts/test-portable-release.sh
           helm package charts/github-oidc-exchange --destination "$RUNNER_TEMP"
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+        with:
+          scan-type: fs
+          scan-ref: charts/github-oidc-exchange
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
 
   build-amd64:
     needs: preflight
@@ -87,6 +94,12 @@ jobs:
         env:
           IMAGE: ${{ needs.preflight.outputs.image }}@${{ steps.build.outputs.digest }}
         run: SMOKE_PLATFORM=linux/amd64 bash scripts/smoke-release-container.sh "$IMAGE"
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+        with:
+          image-ref: ${{ needs.preflight.outputs.image }}@${{ steps.build.outputs.digest }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
 
   build-arm64:
     needs: preflight
@@ -119,6 +132,12 @@ jobs:
         env:
           IMAGE: ${{ needs.preflight.outputs.image }}@${{ steps.build.outputs.digest }}
         run: SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh "$IMAGE"
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+        with:
+          image-ref: ${{ needs.preflight.outputs.image }}@${{ steps.build.outputs.digest }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
 
   publish:
     needs: [preflight, build-amd64, build-arm64]
@@ -180,15 +199,51 @@ jobs:
           [[ "$image_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           [[ "$chart_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           printf 'IMAGE_DIGEST=%s\nCHART_DIGEST=%s\n' "$image_digest" "$chart_digest" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/chart-scan"
+          tar -xzf "$RUNNER_TEMP/github-oidc-exchange-$VERSION.tgz" -C "$RUNNER_TEMP/chart-scan"
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.22.2
+        with:
+          image: ${{ env.IMAGE }}@${{ env.IMAGE_DIGEST }}
+          format: spdx-json
+          output-file: image.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.22.2
+        with:
+          path: ${{ runner.temp }}/chart-scan
+          format: spdx-json
+          output-file: chart.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Generate source provenance predicate
+        run: |
+          set -euo pipefail
+          jq -n --arg source "https://github.com/$GITHUB_REPOSITORY" \
+            --arg commit "$GITHUB_SHA" --arg version "$VERSION" \
+            --arg workflow "https://github.com/$GITHUB_REPOSITORY/.github/workflows/portable-release.yml@$GITHUB_REF" \
+            --arg invocation "$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT" \
+            '{buildDefinition:{buildType:"https://github.com/opencontainers/image-spec",externalParameters:{source:$source,commit:$commit,version:$version}},runDetails:{builder:{id:$workflow},metadata:{invocationId:$invocation}}}' \
+            > provenance.slsa.json
       - name: Sign and verify exact artifacts
         run: |
           set -euo pipefail
           identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/portable-release.yml@$GITHUB_REF"
           issuer=https://token.actions.githubusercontent.com
-          for artifact in "$IMAGE@$IMAGE_DIGEST" "$CHART@$CHART_DIGEST"; do
+          for kind in image chart; do
+            if [[ "$kind" == image ]]; then
+              artifact="$IMAGE@$IMAGE_DIGEST"
+            else
+              artifact="$CHART@$CHART_DIGEST"
+            fi
             cosign sign --yes --new-bundle-format=true --registry-referrers-mode=oci-1-1 "$artifact"
+            cosign attest --yes --new-bundle-format=true --type spdxjson --predicate "$kind.spdx.json" "$artifact"
+            cosign attest --yes --new-bundle-format=true --type slsaprovenance1 --predicate provenance.slsa.json "$artifact"
             cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
               --experimental-oci11=true --new-bundle-format=true "$artifact" >/dev/null
+            cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+              --experimental-oci11=true --new-bundle-format=true --type spdxjson "$artifact" >/dev/null
+            cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+              --experimental-oci11=true --new-bundle-format=true --type slsaprovenance1 "$artifact" >/dev/null
           done
       - name: Publish immutable fork handoff
         env:
