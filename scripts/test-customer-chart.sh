@@ -77,3 +77,15 @@ for missing in image.repository image.digest config.issuerUrl \
     exit 1
   fi
 done
+for pair in 'config.policyConfigMapKey=wrong.json' \
+  'config.keyringSecretKey=wrong.json' \
+  'workloadExchange.policyConfigMapKey=wrong.json' \
+  'workloadExchange.rsaKeyringSecretKey=wrong.json' \
+  'workloadExchange.tls.certificateKey=wrong.crt' \
+  'workloadExchange.tls.privateKeyKey=wrong.key'; do
+  if helm template wrong-key "$chart" -f "$chart/ci/workload-values.yaml" \
+    --set "$pair" >/dev/null 2>&1; then
+    printf 'chart must reject non-contract key %s\n' "$pair" >&2
+    exit 1
+  fi
+done

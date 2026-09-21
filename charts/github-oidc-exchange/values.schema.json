@@ -47,9 +47,9 @@
         "githubExchangeAudience": {"type": "string", "minLength": 1, "not": {"pattern": "^(replace-|example-)"}},
         "outputAudience": {"const": "steward-task-api"},
         "policyConfigMapName": {"type": "string", "minLength": 1},
-        "policyConfigMapKey": {"type": "string", "minLength": 1},
+        "policyConfigMapKey": {"const": "policy.json"},
         "keyringSecretName": {"type": "string", "minLength": 1},
-        "keyringSecretKey": {"type": "string", "minLength": 1}
+        "keyringSecretKey": {"const": "keyring.json"}
       }
     },
     "rolloutRevisions": {
@@ -72,16 +72,16 @@
         "inputAudience": {"type": "string"},
         "outputAudience": {"const": "openshell-api"},
         "policyConfigMapName": {"type": "string"},
-        "policyConfigMapKey": {"type": "string", "minLength": 1},
+        "policyConfigMapKey": {"const": "workload-policy.json"},
         "rsaKeyringSecretName": {"type": "string"},
-        "rsaKeyringSecretKey": {"type": "string", "minLength": 1},
+        "rsaKeyringSecretKey": {"const": "rsa-keyring.json"},
         "tls": {
           "type": "object",
           "required": ["secretName", "certificateKey", "privateKeyKey", "certManager"],
           "properties": {
             "secretName": {"type": "string"},
-            "certificateKey": {"type": "string", "minLength": 1},
-            "privateKeyKey": {"type": "string", "minLength": 1},
+            "certificateKey": {"const": "tls.crt"},
+            "privateKeyKey": {"const": "tls.key"},
             "certManager": {
               "type": "object",
               "required": ["enabled", "issuerRef"],
