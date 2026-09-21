@@ -429,12 +429,15 @@ downstream integration owner tests Steward and steward-run against the
 [consumer contract](consumer-contract-v1.md); this installation guide does not
 claim that three-product acceptance.
 
-The current steward-run integration still binds its GitHub input audience to
-`apelogic-github-identity-exchange` and accepts a caller-supplied exchange URL.
-For a customer-owned issuer, do not count a standalone Identity exchange as a
-governed hand-off: pin both the expected audience and trusted endpoint in the
-consumer workflow, then exercise them in the target environment. That change
-and its negative tests remain [steward-run #43](https://github.com/apelogic-ai/steward-run/issues/43).
+The steward-run customer reusable workflow requires both exchange inputs,
+`identity-exchange-url` and `identity-exchange-audience` and passes both values
+to the action. Only the direct-action fallback uses
+`apelogic-github-identity-exchange` when `identity-exchange-audience` is omitted;
+that fallback is not the customer handoff. For a customer-owned issuer, pin both
+the expected audience and trusted endpoint in the consumer workflow, then
+exercise them and the negative cases in the target environment before counting
+the handoff as governed acceptance. The resolved boundary is recorded in
+[steward-run #43](https://github.com/apelogic-ai/steward-run/issues/43).
 
 ## Release-document drift gate
 
