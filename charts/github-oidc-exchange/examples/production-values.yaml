@@ -5,7 +5,7 @@
 image:
   repository: registry.customer.test/acme/github-oidc-exchange
   # Optional immutable release tag; verify that it resolves to this digest.
-  tag: 0.3.8
+  tag: 0.4.0
   digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
   pullPolicy: IfNotPresent
   # For a private registry, reference a pre-created image-pull secret. Do not
