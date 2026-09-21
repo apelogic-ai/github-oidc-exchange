@@ -10,7 +10,7 @@
       "owner_id": "123456",
       "repository_id": "789012",
       "subjects": [
-        "repo:example-org@123456/example-repo@789012:ref:refs/heads/main"
+        "repo:example-org/example-repo:ref:refs/heads/main"
       ],
       "events": ["workflow_dispatch"],
       "refs": ["refs/heads/main"]
@@ -20,7 +20,7 @@
       "owner_id": "123456",
       "repository_id": "789012",
       "subjects": [
-        "repo:example-org@123456/example-repo@789012:ref:refs/heads/main"
+        "repo:example-org/example-repo:ref:refs/heads/main"
       ],
       "workflow_refs": [
         "example-org/example-repo/.github/workflows/bootstrap.yml@refs/heads/main"
