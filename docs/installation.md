@@ -275,9 +275,16 @@ the installed chart, change the forked chart and image together, publish new
 immutable tags/digests, review protocol compatibility, update those references,
 then `helm upgrade --version NEW_VERSION --values ./private/values.yaml --wait`.
 Keep the prior image/chart digest and keyring overlap for rollback. To roll
-back, inspect `helm history identity` using the same explicit kubeconfig/context
-and run `helm rollback identity REVISION --namespace "$IDENTITY_NAMESPACE"
---wait`; validate discovery/JWKS and a fresh exchange again. Do not roll back
+back, inspect history and select the previously accepted revision:
+
+```sh
+helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
+  history identity --namespace "$IDENTITY_NAMESPACE"
+helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
+  rollback identity PREVIOUS_REVISION --namespace "$IDENTITY_NAMESPACE" --wait --timeout 10m
+```
+
+Validate discovery/JWKS and a fresh exchange again. Do not roll back
 to a binary that cannot read the current policy/keyring schema. There is no
 database migration; keep the same namespace to preserve replay Leases.
 
@@ -329,19 +336,36 @@ verifiable. Wait at least five minutes after the last old signing event and
 confirm all consumers have refreshed JWKS before retiring the old key.
 
 ```sh
+set +x
+set -o pipefail
 cargo run --locked --bin keyring-tool -- add-es256 ./private/issuer-keyring.json issuer-next
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
+identity_keyring_rv="$(kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
+  -n "$IDENTITY_NAMESPACE" get secret github-oidc-exchange-keyring \
+  -o jsonpath='{.metadata.resourceVersion}')"
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
   create secret generic github-oidc-exchange-keyring --type=Opaque \
-  --from-file=keyring.json=./private/issuer-keyring.json --dry-run=client -o yaml | \
-  kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
-    apply --server-side --field-manager=identity-install -f -
+  --from-file=keyring.json=./private/issuer-keyring.json --dry-run=client -o json | \
+  jq --arg rv "$identity_keyring_rv" '.metadata.resourceVersion=$rv' | \
+  kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" replace -f -
 # Edit rolloutRevisions.githubKeyring to rev-2; helm upgrade, wait, check both JWKS kids.
 cargo run --locked --bin keyring-tool -- activate-es256 ./private/issuer-keyring.json issuer-next
 # Reproject, bump revision to rev-3, upgrade/wait; rollback activation by selecting OLD_KID if needed.
 # After the overlap/grace window only:
 cargo run --locked --bin keyring-tool -- retire-es256 ./private/issuer-keyring.json issuer-2026-09-a
 ```
+
+Repeat the **version-checked** file replacement after activate/retire (and for
+the RSA keyring or a policy ConfigMap), fetching a fresh metadata-only
+`resourceVersion` each time. `kubectl replace` can otherwise perform an
+unconditional update, so the inserted version is essential: a concurrent
+change yields `409 Conflict`; stop, re-read ownership/current revision, and
+retry only after review. Do not use `--force`, client-side `kubectl apply`
+(which can persist Secret bytes in a last-applied annotation), or terminal
+output of the generated JSON. The pipeline carries bytes only between local
+processes; `set +x` and `pipefail` keep it non-logged and fail closed. The
+disposable [rotation regression](../scripts/test-install-rotation.sh) tests
+create, version-checked replace, stale-write denial, and annotation absence.
 
 For RSA repeat with `add-rsa`, `activate-rsa`, `retire-rsa` and the workload
 RSA Secret/revision. For policy updates, project reviewed file-based ConfigMaps,
@@ -354,8 +378,8 @@ reloaded/renewed and external clients trust the new chain. Keep encrypted
 recovery copies through rollback and token-verification windows; never publish
 old private keys to diagnose a problem.
 
-`helm uninstall identity --namespace "$IDENTITY_NAMESPACE"` (with explicit
-`--kubeconfig/--kube-context`) removes chart-owned workloads/routes/RBAC and
+`helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT"
+uninstall identity --namespace "$IDENTITY_NAMESPACE"` removes chart-owned workloads/routes/RBAC and
 Certificate objects. It does **not** delete operator-created policy/key/TLS
 objects or the namespaced replay Leases; cert-manager TLS Secret retention
 depends on its policy, so inspect it explicitly. Do not delete the namespace
@@ -405,11 +429,19 @@ downstream integration owner tests Steward and steward-run against the
 [consumer contract](consumer-contract-v1.md); this installation guide does not
 claim that three-product acceptance.
 
+The current steward-run integration still binds its GitHub input audience to
+`apelogic-github-identity-exchange` and accepts a caller-supplied exchange URL.
+For a customer-owned issuer, do not count a standalone Identity exchange as a
+governed hand-off: pin both the expected audience and trusted endpoint in the
+consumer workflow, then exercise them in the target environment. That change
+and its negative tests remain [steward-run #41](https://github.com/apelogic-ai/steward-run/issues/41).
+
 ## Release-document drift gate
 
 Before tagging any release, run `bash scripts/validate-release.sh`,
 `bash scripts/test-customer-chart.sh`, `bash scripts/test-install-inputs.sh`,
 `bash scripts/test-kubectl-files.sh`,
+the disposable-cluster `bash scripts/test-install-rotation.sh KUBECONFIG CONTEXT NAMESPACE`,
 `cargo test --locked --all-targets --all-features`, and the target-cluster
 delivery checklist. Review current `README.md` and this guide against
 `Chart.yaml`, `values.yaml`, `values.schema.json`, the rendered Secret/ConfigMap

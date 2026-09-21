@@ -24,8 +24,11 @@ done
 for route in /.well-known/openid-configuration /jwks.json /v1/exchange /v1/workload/exchange; do
   grep -Fq "$route" docs/consumer-contract-v1.md
 done
-for expected in 'id-token: write' 'delivery test checklist' 'helm rollback' \
+for expected in 'id-token: write' 'delivery test checklist' 'rollback identity PREVIOUS_REVISION' \
   'check-install-inputs.sh' 'generate-es256' 'generate-rsa' \
   'cert-manager' 'customer-PKI' 'TokenReview' 'GitHub OAuth App'; do
   grep -Fqi "$expected" docs/installation.md
 done
+grep -Fq 'resourceVersion' docs/installation.md
+grep -Fq 'test-install-rotation.sh' docs/installation.md
+grep -Fq 'steward-run/issues/41' docs/installation.md

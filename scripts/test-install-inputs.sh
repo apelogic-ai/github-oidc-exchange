@@ -7,9 +7,9 @@ kubectl() {
   [[ "$1" == get ]]
   local kind=$2 name=$3
   case "$kind/$name" in
-    ConfigMap/github-oidc-exchange-policy) printf 'ConfigMap identity %s <no-value> policy.json,\n' "$name" ;;
+    ConfigMap/github-oidc-exchange-policy) printf 'ConfigMap identity %s - policy.json,\n' "$name" ;;
     Secret/github-oidc-exchange-keyring) printf 'Secret identity %s Opaque keyring.json,\n' "$name" ;;
-    ConfigMap/github-oidc-exchange-workload-policy) printf 'ConfigMap identity %s <no-value> workload-policy.json,\n' "$name" ;;
+    ConfigMap/github-oidc-exchange-workload-policy) printf 'ConfigMap identity %s - workload-policy.json,\n' "$name" ;;
     Secret/github-oidc-exchange-workload-rsa-keyring) printf 'Secret identity %s Opaque rsa-keyring.json,\n' "$name" ;;
     Secret/github-oidc-exchange-server-tls|Secret/identity-public-tls)
       printf 'Secret identity %s kubernetes.io/tls tls.crt,tls.key,\n' "$name" ;;

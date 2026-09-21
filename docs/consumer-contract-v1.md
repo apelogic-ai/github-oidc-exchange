@@ -34,6 +34,13 @@ source access, a browser Google OAuth client, and a downstream MCP-GW OAuth
 client are **different integrations** and are not prerequisites for GitHub
 Actions OIDC exchange.
 
+As of this contract, steward-run binds its GitHub input audience to
+`apelogic-github-identity-exchange` and its workflow accepts a caller-supplied
+exchange URL. A customer deployment must not treat Identity-only exchange
+success as governed end-to-end acceptance until the consumer pins the expected
+audience and trusted endpoint and passes target-context negative tests. That
+consumer change is tracked in [steward-run #41](https://github.com/apelogic-ai/steward-run/issues/41).
+
 When rotating keys, consumers must accept all published overlapping JWKS `kid`s
 until every old 120-second token plus clock-skew allowance has expired. Pin
 issuer, audience, algorithm, contract version, and required claims; refresh

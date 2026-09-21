@@ -35,7 +35,7 @@ check_object() {
   # shell variables. Do not replace this with -o json or a .data JSONPath.
   read -r actual_kind actual_namespace actual_name actual_type keys <<<"$(
     kubectl "${kubectl_args[@]}" get "$kind" "$name" \
-      -o go-template='{{.kind}} {{.metadata.namespace}} {{.metadata.name}} {{.type}} {{range $key, $_ := .data}}{{$key}},{{end}}'
+      -o go-template='{{.kind}} {{.metadata.namespace}} {{.metadata.name}} {{if .type}}{{.type}}{{else}}-{{end}} {{range $key, $_ := .data}}{{$key}},{{end}}'
   )"
   if [[ "$actual_kind" != "$kind" || "$actual_namespace" != "$namespace" || "$actual_name" != "$name" ]]; then
     printf 'object identity mismatch for %s/%s\n' "$kind" "$name" >&2
