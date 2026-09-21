@@ -37,6 +37,8 @@ jobs:
           bash scripts/test-customer-chart.sh
           bash scripts/test-portable-release.sh
           bash scripts/test-install-inputs.sh
+          bash scripts/test-kubectl-files.sh
+          bash scripts/test-docs-drift.sh
           helm lint charts/github-oidc-exchange \
             -f charts/github-oidc-exchange/ci/test-values.yaml
           helm lint charts/github-oidc-exchange \

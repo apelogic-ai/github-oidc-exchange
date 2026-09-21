@@ -3,6 +3,7 @@ set -euo pipefail
 
 bash scripts/validate-ci-tools.sh
 bash scripts/test-portable-release.sh
+bash scripts/test-docs-drift.sh
 
 # The published source, package, and chart must advertise the same license.
 [[ -f LICENSE ]]

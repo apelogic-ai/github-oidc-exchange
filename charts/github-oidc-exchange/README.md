@@ -1,131 +1,43 @@
-# github-oidc-exchange
+# github-oidc-exchange Helm chart 0.4.0
 
-`github-oidc-exchange` validates a tightly scoped GitHub Actions OIDC token
-and issues a short-lived task identity. It can also, when explicitly enabled,
-exchange an exact Kubernetes service-account identity over a separate internal
-TLS listener. It is an identity boundary, not a general OAuth provider.
+Read the repository's [canonical installation guide](../../docs/installation.md)
+before deploying. It contains the exact prerequisites, Secret/ConfigMap bill
+of materials, TLS modes, fork-owned artifact publication, upgrade/rollback,
+rotation, post-install procedures, and live delivery checklist. The
+[consumer contract v1](../../docs/consumer-contract-v1.md) lists routes,
+audiences, token claims, and supported application/chart versions.
 
-The chart is an OCI Helm chart. Every deployment must select a signed,
-immutable image digest and must own its policy, signing keys, and ingress
-configuration outside this chart.
+This chart deliberately fails Helm validation until a customer supplies a
+fork-owned immutable image digest, HTTPS issuer, dedicated GitHub OIDC input
+audience, policy ConfigMap, ES256 keyring Secret, rollout revisions, and
+trusted ingress/proxy CIDRs. Copy [`values.example.yaml`](values.example.yaml)
+to private deployment storage, fill its empty mandatory fields, and select
+one route: Service-only behind a customer HTTPS proxy, Ingress with an explicit
+class and TLS Secret, or HTTPRoute attached to an existing HTTPS Gateway.
+No ALB, ECR, Secrets Manager, or ingress controller is assumed. Public TLS
+may be an existing customer-PKI Secret or a chart-created cert-manager
+Certificate; the Gateway owns TLS in HTTPRoute mode.
 
-## Quick start and validation
+`workloadExchange.enabled=false` is baseline. Enabling it additionally
+requires a dedicated RSA-3072 keyring Secret, workload policy ConfigMap,
+server-authenticated TLS Secret, TokenReview ClusterRole/Binding, an exact
+TokenReview audience, and nonempty caller namespace/pod selectors. Its
+internal HTTPS path is never added to the public route. Internal TLS may be
+an existing customer-PKI Secret or a chart-created cert-manager Certificate;
+the caller must receive the public CA bundle and verify the Service DNS SAN.
+The optional `browserHop1` feature requires workload exchange and a public
+Steward JWKS ConfigMap.
 
-The chart defaults are intentionally renderable but non-operational: they use
-`example.invalid`, a reserved TEST-NET CIDR, object references which do not
-exist, and a placeholder image digest. They exist so package consumers can
-inspect a deterministic manifest; they are never a deployment profile.
-
-Copy [`examples/production-values.yaml`](examples/production-values.yaml) into
-your deployment repository, replace all example values, and keep key material
-in an external Secret controller or an existing Kubernetes Secret. Never put
-private keys, GitHub policy data, registry credentials, or cloud credentials in
-values files.
-
-```console
-helm lint charts/github-oidc-exchange
-helm template identity charts/github-oidc-exchange > /tmp/identity-default.yaml
-helm lint charts/github-oidc-exchange \
-  -f charts/github-oidc-exchange/examples/production-values.yaml
-helm template identity charts/github-oidc-exchange \
-  --namespace github-oidc-exchange \
-  -f charts/github-oidc-exchange/examples/production-values.yaml \
-  > /tmp/identity-production-example.yaml
+```sh
+# Default values fail intentionally; the CI fixtures are not install profiles.
+helm lint charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/test-values.yaml --strict
+helm lint charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/workload-values.yaml --strict
+bash scripts/test-customer-chart.sh
 ```
 
-Before applying a real release, verify the selected image digest and chart
-digest/signature according to the repository release evidence. Helm values
-contain references only; create and verify the referenced ConfigMap and Secret
-objects before Helm reconciles the Deployment.
-
-## Bring-your-own Kubernetes deployment
-
-The chart does not assume a particular GitOps controller, cloud, registry, IAM
-mechanism, secret controller, ingress implementation, or monitoring stack.
-Supply an immutable image reference, pre-projected object references,
-service-account annotations when your platform needs them, ingress controller
-annotations or Gateway API parent references, source CIDRs, and optional
-Prometheus discovery labels through a deployment-owned values file. The chart
-neither creates cloud identities nor contains their credentials.
-
-There is one deliberate product compatibility boundary: this is not a general
-purpose OIDC issuer. The GitHub exchange contract has the fixed output audience
-`steward-task-api` and emits `identity_contract=steward-task-v2`; the optional
-workload profile has the fixed output audience `openshell-api`. Deploying it for
-an arbitrary relying-party audience or identity contract requires a separately
-reviewed product protocol change, not a Helm override. The optional
-`browserHop1` feature is similarly product-specific and remains disabled by
-default; it is not required for the ordinary GitHub or workload profiles.
-
-## Required production inputs
-
-| Value | Requirement |
-| --- | --- |
-| `image.repository`, `image.digest` | Registry path and exact `sha256` digest for a signed release image. |
-| `image.tag` | Optional immutable release tag (for example, SemVer `0.3.8`) when the platform requires a tag path; the rendered `repository:tag@sha256:digest` still selects the digest. Verify that the tag resolves to that digest before deployment. |
-| `config.issuerUrl` | Public HTTPS issuer URL; it must match the URL advertised to GitHub and token consumers. |
-| `config.githubExchangeAudience` | Dedicated inbound GitHub OIDC audience, not a generic cloud audience. |
-| `config.policyConfigMapName` | Deployment-owned ConfigMap containing the reviewed GitHub authorization/mapping policy. |
-| `config.keyringSecretName` | Pre-projected Secret containing the signing keyring. The chart never creates it. |
-| `rolloutRevisions.githubPolicy`, `rolloutRevisions.githubKeyring` | Non-secret opaque revision values used to roll the pods after a verified projection. |
-| `networkPolicy.ingressCidrs` | Trusted CIDRs of the ingress/load-balancer path. Do not use `0.0.0.0/0`. |
-
-`image.pullSecrets` is optional and contains only names of pre-existing
-Kubernetes Secrets. On cloud platforms that grant registry access to nodes or
-workload identity, leave it empty.
-
-## Security and identity boundaries
-
-- The Deployment always runs as non-root, drops all Linux capabilities, uses
-  RuntimeDefault seccomp, and has a read-only root filesystem.
-- The service account receives only namespaced Lease access required by the
-  replay ledger. Set `serviceAccount.create: false` to use an externally
-  managed account with the specified `serviceAccount.name`; the namespaced Role
-  binding still targets that exact account.
-- The GitHub listener is HTTP inside the cluster on `8080`. Gateway API
-  `HTTPRoute` is the preferred public-routing integration: it accepts explicit
-  platform-owned Gateway parent references and exposes only discovery, JWKS,
-  and `/v1/exchange`. It never exposes health, metrics, or workload exchange.
-  The Gateway owns public TLS and listener policy. Enable `httpRoute` only when
-  the Gateway API CRDs are installed; otherwise leave it disabled and create an
-  equivalent platform-owned route separately. The legacy `ingress` option is
-  retained for compatible installations but cannot be enabled with
-  `httpRoute`.
-- NetworkPolicy permits configured public source CIDRs only to port `8080`.
-  DNS and outbound TCP `443` are explicit because the service needs GitHub
-  JWKS and external replay/cluster services; network policy alone is not an
-  authorization boundary for those destinations.
-- `workloadExchange.enabled: true` adds a dedicated HTTPS `8443` Service port,
-  a narrow TokenReview ClusterRole (`create` only), and an ingress rule limited
-  to the exact configured namespace and pod selectors. Helm rejects an enabled
-  workload profile if either caller selector is empty. Its TLS Secret,
-  workload policy ConfigMap, and RSA keyring Secret must be separately
-  projected and reviewed. The workload endpoint is never added to Ingress.
-
-## Availability and observability
-
-The default has two replicas, rolling updates with `maxUnavailable: 0`, a
-PodDisruptionBudget of one available pod, readiness and liveness probes, and
-resource requests/limits. Adjust scheduling only with `nodeSelector`,
-`tolerations`, and `affinity`; the container security posture is deliberately
-not configurable through values.
-
-Set `serviceMonitor.enabled: true` only when the Prometheus Operator CRD is
-installed. `serviceMonitor.labels` supports the release-selector labels that a
-Prometheus installation may require. Metrics remain cluster-local on the HTTP
-Service port and the NetworkPolicy adds the explicitly configured metrics
-selector only when that monitor is enabled.
-
-## Rotation
-
-The chart hashes object references plus each non-secret rollout revision into
-the pod template. It never reads Secret content. For signing keys and TLS:
-
-1. Project and verify overlapping material in the existing object.
-2. Bump only the matching `rolloutRevisions` value in a reviewed deployment
-   change.
-3. Verify the rolling restart and overlap period before removing old material.
-
-See the repository-level [keyring contract](../../docs/keyring-contract.example.json)
-and [workload RSA contract](../../docs/rsa-keyring-contract.example.json) for
-the exact two-phase sequence.
+Chart values contain object references only, never private key/policy/TLS
+contents. The Deployment hashes each reference plus an opaque
+`rolloutRevisions` value into its Pod template. After projecting a changed
+input, bump **only** its matching revision and wait for rollout; the process
+does not hot-reload signing keys or internal TLS. Maintain overlapping
+signing keys/trust through the token TTL plus skew and rollback window.
