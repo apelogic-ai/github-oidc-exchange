@@ -36,6 +36,7 @@ jobs:
         run: |
           bash scripts/test-customer-chart.sh
           bash scripts/test-portable-release.sh
+          bash scripts/test-install-inputs.sh
           helm lint charts/github-oidc-exchange \
             -f charts/github-oidc-exchange/ci/test-values.yaml
           helm lint charts/github-oidc-exchange \

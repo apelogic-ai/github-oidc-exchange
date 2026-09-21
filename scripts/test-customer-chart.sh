@@ -20,6 +20,9 @@ grep -Fq 'secretName: github-oidc-exchange-keyring' "$scratch/baseline.yaml"
 grep -Fq 'name: github-oidc-exchange-policy' "$scratch/baseline.yaml"
 grep -Fq 'key: policy.json' "$scratch/baseline.yaml"
 grep -Fq 'key: keyring.json' "$scratch/baseline.yaml"
+grep -Fq 'value: "identity"' "$scratch/baseline.yaml"
+grep -Fq 'value: /etc/github-oidc-exchange/policy/policy.json' "$scratch/baseline.yaml"
+grep -Fq 'value: /etc/github-oidc-exchange/keyring/keyring.json' "$scratch/baseline.yaml"
 if grep -Fq 'name: WORKLOAD_EXCHANGE_ENABLED' "$scratch/baseline.yaml" ||
   grep -Fq 'resources: ["tokenreviews"]' "$scratch/baseline.yaml" ||
   grep -Fq 'secretName: github-oidc-exchange-workload-rsa-keyring' "$scratch/baseline.yaml"; then
@@ -33,6 +36,10 @@ grep -Fq 'key: workload-policy.json' "$scratch/workload.yaml"
 grep -Fq 'key: rsa-keyring.json' "$scratch/workload.yaml"
 grep -Fq 'key: tls.crt' "$scratch/workload.yaml"
 grep -Fq 'key: tls.key' "$scratch/workload.yaml"
+grep -Fq 'value: /etc/github-oidc-exchange/workload-policy/workload-policy.json' "$scratch/workload.yaml"
+grep -Fq 'value: /etc/github-oidc-exchange/rsa-keyring/rsa-keyring.json' "$scratch/workload.yaml"
+grep -Fq 'value: /etc/github-oidc-exchange/tls/tls.crt' "$scratch/workload.yaml"
+grep -Fq 'value: /etc/github-oidc-exchange/tls/tls.key' "$scratch/workload.yaml"
 grep -Fq 'resources: ["tokenreviews"]' "$scratch/workload.yaml"
 
 helm template ingress "$chart" --namespace identity \
