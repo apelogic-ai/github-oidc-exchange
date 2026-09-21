@@ -34,8 +34,7 @@ jobs:
           bash scripts/validate-release.sh
       - name: Helm contract
         run: |
-          helm lint charts/github-oidc-exchange --strict
-          helm template default charts/github-oidc-exchange > /tmp/default.yaml
+          bash scripts/test-customer-chart.sh
           helm lint charts/github-oidc-exchange \
             -f charts/github-oidc-exchange/ci/test-values.yaml
           helm lint charts/github-oidc-exchange \
@@ -64,8 +63,6 @@ jobs:
           grep -q 'resources: \["tokenreviews"\]' /tmp/workload.yaml
           grep -q 'verbs: \["create"\]' /tmp/workload.yaml
           ! grep -q 'path: /v1/workload/exchange' /tmp/workload.yaml
-          grep -q 'registry.example.invalid/apelogic/github-oidc-exchange@sha256:aaaaaaaa' /tmp/default.yaml
-          grep -q 'cidr: 192.0.2.0/24' /tmp/default.yaml
           grep -q 'name: acme-registry-pull' /tmp/production-example.yaml
           grep -q 'kind: HTTPRoute' /tmp/production-example.yaml
           ! grep -q 'kind: Ingress' /tmp/production-example.yaml

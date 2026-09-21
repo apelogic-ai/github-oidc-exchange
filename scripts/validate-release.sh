@@ -180,7 +180,7 @@ helm template tagged "$render_dir/chart" \
   -f charts/github-oidc-exchange/examples/production-values.yaml \
   >"$render_dir/tagged.yaml"
 grep -Fq -- \
-  'image: registry.example.invalid/acme/github-oidc-exchange:0.3.8@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  'image: registry.customer.test/acme/github-oidc-exchange:0.3.8@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' \
   "$render_dir/tagged.yaml"
 if helm template malformed-tag "$render_dir/chart" \
   -f charts/github-oidc-exchange/examples/production-values.yaml \
