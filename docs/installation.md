@@ -434,7 +434,7 @@ The current steward-run integration still binds its GitHub input audience to
 For a customer-owned issuer, do not count a standalone Identity exchange as a
 governed hand-off: pin both the expected audience and trusted endpoint in the
 consumer workflow, then exercise them in the target environment. That change
-and its negative tests remain [steward-run #41](https://github.com/apelogic-ai/steward-run/issues/41).
+and its negative tests remain [steward-run #43](https://github.com/apelogic-ai/steward-run/issues/43).
 
 ## Release-document drift gate
 

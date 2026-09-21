@@ -39,7 +39,7 @@ As of this contract, steward-run binds its GitHub input audience to
 exchange URL. A customer deployment must not treat Identity-only exchange
 success as governed end-to-end acceptance until the consumer pins the expected
 audience and trusted endpoint and passes target-context negative tests. That
-consumer change is tracked in [steward-run #41](https://github.com/apelogic-ai/steward-run/issues/41).
+consumer change is tracked in [steward-run #43](https://github.com/apelogic-ai/steward-run/issues/43).
 
 When rotating keys, consumers must accept all published overlapping JWKS `kid`s
 until every old 120-second token plus clock-skew allowance has expired. Pin

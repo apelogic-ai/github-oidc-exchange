@@ -32,4 +32,4 @@ for expected in 'id-token: write' 'delivery test checklist' 'rollback identity P
 done
 grep -Fq 'resourceVersion' docs/installation.md
 grep -Fq 'test-install-rotation.sh' docs/installation.md
-grep -Fq 'steward-run/issues/41' docs/installation.md
+grep -Fq 'steward-run/issues/43' docs/installation.md
