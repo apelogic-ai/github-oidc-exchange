@@ -9,6 +9,7 @@ for document in README.md docs/installation.md docs/consumer-contract-v1.md char
   grep -Fq "$version" "$document"
 done
 grep -Fq '](docs/installation.md)' README.md
+grep -Fq '](THIRD_PARTY_NOTICES.md)' README.md
 grep -Fq '](../../docs/installation.md)' charts/github-oidc-exchange/README.md
 
 for name in github-oidc-exchange-keyring github-oidc-exchange-policy \

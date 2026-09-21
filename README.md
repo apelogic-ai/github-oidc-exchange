@@ -60,6 +60,10 @@ Release identity is the exact source commit plus image/chart digests, not a
 mutable tag. A fresh installation is accepted only after the guide's live
 delivery tests; Helm rendering alone is insufficient.
 
+The project license is [MIT](LICENSE); redistributed dependency and base-image
+materials retain their own terms. Review the [third-party notice inventory](THIRD_PARTY_NOTICES.md)
+and the release image SBOM for the exact digest.
+
 ## Development and release checks
 
 ```sh
