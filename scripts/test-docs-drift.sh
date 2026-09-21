@@ -33,3 +33,11 @@ done
 grep -Fq 'resourceVersion' docs/installation.md
 grep -Fq 'test-install-rotation.sh' docs/installation.md
 grep -Fq 'steward-run/issues/43' docs/installation.md
+
+for document in docs/installation.md docs/consumer-contract-v1.md; do
+  grep -Fq 'customer reusable workflow requires both exchange inputs' "$document"
+  grep -Fq '`identity-exchange-url` and `identity-exchange-audience`' "$document"
+  grep -Fq 'direct-action fallback' "$document"
+  grep -Fq 'not the customer handoff' "$document"
+done
+! grep -Fq 'binds its GitHub input audience to' docs/installation.md docs/consumer-contract-v1.md
