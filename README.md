@@ -8,11 +8,14 @@ a separate two-minute RS256 token for OpenShell-compatible consumers. The
 optional Steward browser HOP-1 attestation bridge remains disabled by default.
 It is not a general OAuth provider or a GitHub OAuth App.
 
-**Start with the [canonical installation guide](docs/installation.md).** It
-covers prerequisites, fork-owned image/chart publication, file-based Secrets,
-TLS modes, install/upgrade/rollback, key rotation, post-install configuration,
-and a delivery test checklist. The [v1 consumer contract](docs/consumer-contract-v1.md)
-defines the routes, audiences, TTL, trust, and compatible versions used by
+For the shortest baseline path, start with the
+**[customer quickstart](docs/quickstart.md)**. The
+[canonical installation guide](docs/installation.md) covers every exposure
+and TLS mode, fork-owned publication, workload exchange, upgrade/rollback,
+key rotation, and uninstall. The [customer integration guide](docs/integration.md)
+adds copy-ready GitHub Actions and steward-run examples. The
+[v1 consumer contract](docs/consumer-contract-v1.md) defines the normative
+routes, audiences, TTL, trust, and compatible versions used by
 [Steward #103](https://github.com/apelogic-ai/steward/issues/103) and
 [steward-run #41](https://github.com/apelogic-ai/steward-run/issues/41).
 

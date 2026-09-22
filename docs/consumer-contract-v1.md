@@ -1,9 +1,11 @@
 # Identity consumer contract v1
 
-Status: release candidate for application/chart **0.4.0**. This document describes
+Status: released with application/chart **0.4.0**. This document describes
 the exact product protocol; it does not deploy any consumer. Consumer handoffs:
 [Steward #103](https://github.com/apelogic-ai/steward/issues/103) and
 [steward-run #41](https://github.com/apelogic-ai/steward-run/issues/41).
+Copy-ready enrollment, exchange-smoke, and steward-run caller examples are in
+the [customer integration guide](integration.md).
 
 | Item | Contract |
 | --- | --- |
