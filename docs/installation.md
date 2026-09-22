@@ -11,6 +11,12 @@ in this repository. A real customer registry, issuer DNS, GitHub Actions token,
 and Kubernetes TokenReview must be tested in the target environment using the
 delivery checklist below; a successful `helm template` alone is not acceptance.
 
+For an opinionated baseline installation using an existing HTTPS Gateway,
+start with the [customer quickstart](quickstart.md), then return here for
+operations and optional features. Use the
+[customer integration guide](integration.md) for copy-ready claim enrollment,
+exchange smoke, and steward-run examples.
+
 ## Prerequisites and decisions
 
 | Input | Baseline GitHub issuer | Additional workload profile |
@@ -112,6 +118,26 @@ chart/image digests, platform manifests, and signature verification in a
 non-secret release handoff. A Helm chart OCI digest identifies the package;
 Helm installs it by version from the registry, so verify the tag still resolves
 to the recorded digest before install/upgrade. Never overwrite version tags.
+
+To run the portable path from a fork whose package and release permissions are
+enabled, use the exact source version and watch the resulting run:
+
+```sh
+export IDENTITY_FORK=customer-org/github-oidc-exchange
+gh workflow run portable-release.yml --repo "$IDENTITY_FORK" --ref main \
+  -f version="$IDENTITY_VERSION"
+gh run list --repo "$IDENTITY_FORK" --workflow portable-release.yml \
+  --event workflow_dispatch --limit 1
+gh run watch RUN_ID --repo "$IDENTITY_FORK" --exit-status
+gh release download "v$IDENTITY_VERSION" --repo "$IDENTITY_FORK" \
+  --pattern release-manifest.json --dir ./dist
+jq -e '.image|contains("@sha256:")' ./dist/release-manifest.json >/dev/null
+jq -e '.chart|contains("@sha256:")' ./dist/release-manifest.json >/dev/null
+```
+
+`release-manifest.json` is the fork-owned immutable handoff. Make the fork's
+GHCR image and chart packages public for anonymous cluster pulls, or create a
+registry pull Secret and reference only its name in values.
 
 ## 2. Prepare policy and signing files privately
 
@@ -244,7 +270,11 @@ to a private deployment file, fill every mandatory empty field, and set
 `config.githubExchangeAudience`, the two baseline object references, and
 `networkPolicy.ingressCidrs` to the actual proxy/Gateway source CIDRs. The
 chart's default values intentionally **fail**. It never substitutes dummy
-credentials. Use only one exposure option:
+credentials. The renderable
+[`examples/production-values.yaml`](../charts/github-oidc-exchange/examples/production-values.yaml)
+demonstrates a complete values shape but is not an install profile: every
+domain, digest, CIDR, object, and Gateway reference in it is fake. Use only
+one exposure option:
 
 1. Service-only: leave `ingress.enabled=false`, `httpRoute.enabled=false`; an
    operator-owned HTTPS proxy must expose exactly discovery, JWKS, and exchange.
@@ -428,6 +458,11 @@ with `401` and discard the response without logging its body. A separate
 downstream integration owner tests Steward and steward-run against the
 [consumer contract](consumer-contract-v1.md); this installation guide does not
 claim that three-product acceptance.
+
+The [customer integration guide](integration.md) supplies copy-ready reusable
+workflows for observing allowlisted claims without printing a token, exercising
+the exchange, and calling the customer steward-run workflow with both required
+Identity inputs.
 
 The steward-run customer reusable workflow requires both exchange inputs,
 `identity-exchange-url` and `identity-exchange-audience` and passes both values

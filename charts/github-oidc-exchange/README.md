@@ -6,6 +6,10 @@ of materials, TLS modes, fork-owned artifact publication, upgrade/rollback,
 rotation, post-install procedures, and live delivery checklist. The
 [consumer contract v1](../../docs/consumer-contract-v1.md) lists routes,
 audiences, token claims, and supported application/chart versions.
+For the shortest baseline Gateway API path, use the
+[customer quickstart](../../docs/quickstart.md); use the
+[integration guide](../../docs/integration.md) for GitHub Actions and
+steward-run examples.
 
 This chart deliberately fails Helm validation until a customer supplies a
 fork-owned immutable image digest, HTTPS issuer, dedicated GitHub OIDC input

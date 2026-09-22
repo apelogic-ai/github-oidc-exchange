@@ -1,0 +1,56 @@
+# Copy this file to .github/workflows/identity-exchange-smoke.yml in a
+# customer-controlled reusable workflow repository and pin callers to a
+# reviewed 40-character commit.
+name: Verify GitHub OIDC exchange
+
+on:
+  workflow_call:
+    inputs:
+      identity-exchange-url:
+        description: Exact HTTPS Identity /v1/exchange endpoint
+        required: true
+        type: string
+      identity-exchange-audience:
+        description: Exact GitHub OIDC audience configured in Identity
+        required: true
+        type: string
+      expected-http-status:
+        description: Expected status, normally 200 or 401
+        required: false
+        default: "200"
+        type: string
+
+permissions: {}
+
+jobs:
+  exchange:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Exchange without logging either token
+        shell: bash
+        env:
+          IDENTITY_EXCHANGE_URL: ${{ inputs.identity-exchange-url }}
+          IDENTITY_AUDIENCE: ${{ inputs.identity-exchange-audience }}
+          EXPECTED_STATUS: ${{ inputs.expected-http-status }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          response="$RUNNER_TEMP/identity-exchange.json"
+          trap 'rm -f "$response"' EXIT
+          source_jwt="$(curl -fsS \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$IDENTITY_AUDIENCE" | jq -er .value)"
+          status="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $source_jwt" --data-binary '' \
+            "$IDENTITY_EXCHANGE_URL")"
+          unset source_jwt
+          test "$status" = "$EXPECTED_STATUS"
+          if [[ "$EXPECTED_STATUS" == 200 ]]; then
+            jq -e '.token_type=="Bearer" and .expires_in==120 and (.access_token|type)=="string"' \
+              "$response" >/dev/null
+          fi
+          printf 'Identity exchange returned expected HTTP %s\n' "$status"
