@@ -65,7 +65,8 @@ delivery tests; Helm rendering alone is insufficient.
 
 The project license is [MIT](LICENSE); redistributed dependency and base-image
 materials retain their own terms. Review the [third-party notice inventory](THIRD_PARTY_NOTICES.md)
-and the release image SBOM for the exact digest.
+and the release image SBOM for the exact digest. Release highlights and
+upgrade-relevant history are maintained in the [changelog](CHANGELOG.md).
 
 ## Development and release checks
 
