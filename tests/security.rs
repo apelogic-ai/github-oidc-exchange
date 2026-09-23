@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     io::Write,
+    path::Path,
     sync::{Arc, Mutex, OnceLock, atomic::Ordering},
     time::Duration,
 };
@@ -18,7 +19,7 @@ use github_oidc_exchange::{
     github::{Audience, GitHubClaims, GitHubVerifier},
     http::separated_routers_with_workload,
     keys::{KeyRing, RsaKeyRing},
-    policy::{Actor, IdentityProfile, Policy, PolicyError, RepositoryPolicy},
+    policy::{Actor, Policy, PolicyError, RepositoryPolicy},
     replay::{ReplayError, ReplayLedger},
     service::{ExchangeError, ExchangeService, Metrics},
     workload::{
@@ -67,9 +68,9 @@ const CALLER_WORKFLOW_SHA: &str = "123456789abcdef0123456789abcdef012345678";
 const REUSABLE_WORKFLOW_SHA: &str = "23456789abcdef0123456789abcdef0123456789";
 const REPOSITORY: &str = "apelogic-ai/steward-run";
 const ACTOR: &str = "alice";
-const BOOTSTRAP_CALLER_WORKFLOW: &str =
+const FORMER_BOOTSTRAP_CALLER_WORKFLOW: &str =
     "apelogic-ai/steward-run/.github/workflows/bootstrap.yml@refs/heads/main";
-const BOOTSTRAP_WORKFLOW: &str =
+const FORMER_BOOTSTRAP_WORKFLOW: &str =
     "apelogic-ai/steward-run/.github/workflows/bootstrap-executor.yml@refs/heads/main";
 const WORKLOAD_INPUT_AUDIENCE: &str = "apelogic-workload-exchange";
 const WORKLOAD_OUTPUT_AUDIENCE: &str = "openshell-api";
@@ -95,15 +96,11 @@ fn policy() -> Policy {
         version: POLICY_VERSION.to_owned(),
         service_group: "agents.apelogic.ai/service-principal:steward-run".to_owned(),
         acting_group_prefix: "agents.apelogic.ai/acting-user:".to_owned(),
-        bootstrap_group: "agents.apelogic.ai/service-envelope-bootstrap:steward-run".to_owned(),
         allowed_email_domains: vec!["example.invalid".to_owned()],
         repositories: vec![RepositoryPolicy {
-            profile: IdentityProfile::Task,
             owner_id: "227278099".to_owned(),
             repository_id: "1320906141".to_owned(),
             subjects: vec![SUBJECT.to_owned()],
-            workflow_refs: vec![],
-            job_workflow_refs: vec![],
             events: vec!["workflow_dispatch".to_owned()],
             refs: vec!["refs/heads/main".to_owned()],
         }],
@@ -118,16 +115,26 @@ fn policy() -> Policy {
     }
 }
 
-#[test]
-fn workflow_selected_profiles_are_mutually_exclusive() -> Result<(), Box<dyn std::error::Error>> {
-    let mut policy = policy();
-    let mut bootstrap_rule = policy.repositories[0].clone();
-    bootstrap_rule.profile = IdentityProfile::Bootstrap;
-    bootstrap_rule.workflow_refs = vec![BOOTSTRAP_CALLER_WORKFLOW.to_owned()];
-    bootstrap_rule.job_workflow_refs = vec![BOOTSTRAP_WORKFLOW.to_owned()];
-    policy.repositories.push(bootstrap_rule);
-    policy.validate()?;
+fn policy_file_error(value: &serde_json::Value) -> Result<PolicyError, Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    fs::write(file.path(), serde_json::to_vec(value)?)?;
+    match Policy::load(file.path()) {
+        Ok(_) => Err("policy fixture unexpectedly loaded".into()),
+        Err(error) => Ok(error),
+    }
+}
 
+fn policy_schema_accepts(value: &serde_json::Value) -> Result<bool, Box<dyn std::error::Error>> {
+    let schema: serde_json::Value =
+        serde_json::from_slice(&fs::read("docs/policy-contract.schema.json")?)?;
+    let validator = jsonschema::validator_for(&schema)?;
+    Ok(validator.is_valid(value))
+}
+
+#[test]
+fn task_only_policy_ignores_workflow_paths_and_never_grants_former_bootstrap_authority()
+-> Result<(), Box<dyn std::error::Error>> {
+    let policy = policy();
     let task_identity = policy.authorize(&claims())?;
     assert_eq!(
         task_identity.groups,
@@ -148,33 +155,27 @@ fn workflow_selected_profiles_are_mutually_exclusive() -> Result<(), Box<dyn std
         task_identity.groups
     );
 
-    let mut bootstrap_claims = claims();
-    bootstrap_claims.workflow_ref = BOOTSTRAP_CALLER_WORKFLOW.to_owned();
-    bootstrap_claims.job_workflow_ref = BOOTSTRAP_WORKFLOW.to_owned();
-    let bootstrap_identity = policy.authorize(&bootstrap_claims)?;
-    assert!(bootstrap_identity.email_verified);
+    let mut former_bootstrap_claims = claims();
+    former_bootstrap_claims.workflow_ref = FORMER_BOOTSTRAP_CALLER_WORKFLOW.to_owned();
+    former_bootstrap_claims.job_workflow_ref = FORMER_BOOTSTRAP_WORKFLOW.to_owned();
     assert_eq!(
-        bootstrap_identity.groups,
-        vec!["agents.apelogic.ai/service-envelope-bootstrap:steward-run"]
-    );
-
-    let mut wrong_bootstrap_workflow = bootstrap_claims.clone();
-    wrong_bootstrap_workflow.workflow_ref = CALLER_WORKFLOW.to_owned();
-    assert_eq!(
-        policy.authorize(&wrong_bootstrap_workflow)?.groups,
+        policy.authorize(&former_bootstrap_claims)?.groups,
         task_identity.groups
     );
 
-    let mut ambiguous = policy.clone();
-    let mut overlapping_rule = ambiguous.repositories[0].clone();
-    overlapping_rule.profile = IdentityProfile::Bootstrap;
-    ambiguous.repositories.push(overlapping_rule);
-    assert!(ambiguous.validate().is_err());
+    let mut unratified_former_bootstrap = former_bootstrap_claims;
+    unratified_former_bootstrap.repository_id = "999".to_owned();
+    assert_eq!(
+        policy.authorize(&unratified_former_bootstrap),
+        Err(PolicyError::Unauthorized)
+    );
 
-    let mut invalid_bootstrap_group = policy;
-    invalid_bootstrap_group.bootstrap_group =
-        "agents.apelogic.ai/service-principal:steward-run".to_owned();
-    assert!(invalid_bootstrap_group.validate().is_err());
+    assert!(
+        task_identity
+            .groups
+            .iter()
+            .all(|group| !group.starts_with("agents.apelogic.ai/service-envelope-bootstrap:"))
+    );
     Ok(())
 }
 
@@ -700,6 +701,12 @@ fn policy_is_default_deny_and_emits_only_ratified_groups() -> Result<(), Box<dyn
         policy.authorize(&wrong_repository),
         Err(PolicyError::Unauthorized)
     );
+    let mut wrong_owner = claims();
+    wrong_owner.repository_owner_id = "999".to_owned();
+    assert_eq!(
+        policy.authorize(&wrong_owner),
+        Err(PolicyError::Unauthorized)
+    );
     let mut wrong_subject = claims();
     wrong_subject.sub = "repo:apelogic-ai@227278099/other@999:ref:refs/heads/main".to_owned();
     assert_eq!(
@@ -725,6 +732,29 @@ fn policy_is_default_deny_and_emits_only_ratified_groups() -> Result<(), Box<dyn
 }
 
 #[test]
+fn duplicate_rules_fail_validation_and_overlapping_rules_fail_authorization()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut duplicate = policy();
+    duplicate
+        .repositories
+        .push(duplicate.repositories[0].clone());
+    assert!(duplicate.validate().is_err());
+
+    let mut ambiguous = policy();
+    let mut overlapping = ambiguous.repositories[0].clone();
+    overlapping
+        .subjects
+        .push("repo:unused/example:ref:refs/heads/main".to_owned());
+    ambiguous.repositories.push(overlapping);
+    ambiguous.validate()?;
+    assert_eq!(
+        ambiguous.authorize(&claims()),
+        Err(PolicyError::Unauthorized)
+    );
+    Ok(())
+}
+
+#[test]
 fn standard_github_subject_is_bound_to_separate_immutable_ids()
 -> Result<(), Box<dyn std::error::Error>> {
     let subject = "repo:apelogic-ai/steward-run:ref:refs/heads/main";
@@ -740,14 +770,60 @@ fn standard_github_subject_is_bound_to_separate_immutable_ids()
 }
 
 #[test]
-fn task_policy_rejects_workflow_path_gates() {
-    let mut caller_gated_policy = policy();
-    caller_gated_policy.repositories[0].workflow_refs = vec![CALLER_WORKFLOW.to_owned()];
-    assert!(caller_gated_policy.validate().is_err());
+fn policy_schema_and_runtime_agree_on_v5_shape_and_removed_fields()
+-> Result<(), Box<dyn std::error::Error>> {
+    let example_path = Path::new("docs/policy-contract.example.json");
+    let example: serde_json::Value = serde_json::from_slice(&fs::read(example_path)?)?;
+    assert!(policy_schema_accepts(&example)?);
+    Policy::load(example_path)?;
 
-    let mut job_gated_policy = policy();
-    job_gated_policy.repositories[0].job_workflow_refs = vec![WORKFLOW.to_owned()];
-    assert!(job_gated_policy.validate().is_err());
+    let mut v4 = serde_json::to_value(policy())?;
+    v4["version"] = serde_json::json!("github-oidc-exchange.apelogic.io/v4");
+    v4.as_object_mut()
+        .ok_or("policy fixture must be an object")?
+        .insert(
+            "bootstrap_group".to_owned(),
+            serde_json::json!("agents.apelogic.ai/service-envelope-bootstrap:steward-run"),
+        );
+    assert!(!policy_schema_accepts(&v4)?);
+    assert_eq!(
+        policy_file_error(&v4)?,
+        PolicyError::Invalid("unsupported policy version".to_owned())
+    );
+
+    for (field, value) in [
+        ("profile", serde_json::json!("task")),
+        ("workflow_refs", serde_json::json!([CALLER_WORKFLOW])),
+        ("job_workflow_refs", serde_json::json!([WORKFLOW])),
+    ] {
+        let mut removed = serde_json::to_value(policy())?;
+        removed["repositories"][0]
+            .as_object_mut()
+            .ok_or("repository fixture must be an object")?
+            .insert(field.to_owned(), value);
+        assert!(!policy_schema_accepts(&removed)?);
+        assert!(
+            policy_file_error(&removed)?
+                .to_string()
+                .contains("unknown field")
+        );
+    }
+
+    let mut removed = serde_json::to_value(policy())?;
+    removed
+        .as_object_mut()
+        .ok_or("policy fixture must be an object")?
+        .insert(
+            "bootstrap_group".to_owned(),
+            serde_json::json!("agents.apelogic.ai/service-envelope-bootstrap:steward-run"),
+        );
+    assert!(!policy_schema_accepts(&removed)?);
+    assert!(
+        policy_file_error(&removed)?
+            .to_string()
+            .contains("unknown field")
+    );
+    Ok(())
 }
 
 #[test]
@@ -933,19 +1009,16 @@ fn keyring_requires_exact_seed_length_and_rejects_unknown_fields()
 
 #[test]
 fn policy_file_rejects_unknown_fields() -> Result<(), Box<dyn std::error::Error>> {
-    let file = NamedTempFile::new()?;
-    let content = serde_json::json!({
-        "version": POLICY_VERSION,
-        "service_group": "agents.apelogic.ai/service-principal:steward-run",
-        "acting_group_prefix": "agents.apelogic.ai/acting-user:",
-        "bootstrap_group": "agents.apelogic.ai/service-envelope-bootstrap:steward-run",
-        "allowed_email_domains": ["example.invalid"],
-        "repositories": [],
-        "actors": {},
-        "unexpected": true
-    });
-    fs::write(file.path(), serde_json::to_vec(&content)?)?;
-    assert!(Policy::load(file.path()).is_err());
+    let mut content = serde_json::to_value(policy())?;
+    content
+        .as_object_mut()
+        .ok_or("policy fixture must be an object")?
+        .insert("unexpected".to_owned(), serde_json::json!(true));
+    assert!(
+        policy_file_error(&content)?
+            .to_string()
+            .contains("unknown field")
+    );
     Ok(())
 }
 

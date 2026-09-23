@@ -39,6 +39,7 @@ jobs:
           [[ "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)" == "$VERSION" ]]
           [[ "$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)" == "$VERSION" ]]
           [[ "$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc-exchange/Chart.yaml | head -1)" == "$VERSION" ]]
+          [[ -s "docs/releases/v$VERSION.md" ]]
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             printf 'release v%s already exists\n' "$VERSION" >&2
             exit 1
@@ -250,11 +251,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          policy_contract="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
+          identity_contract="$(sed -n 's/^pub const IDENTITY_CONTRACT: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
+          [[ -n "$policy_contract" && -n "$identity_contract" ]]
           jq -n --arg version "$VERSION" --arg commit "$GITHUB_SHA" \
+            --arg release_url "https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" \
+            --arg workflow_run_url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --arg image "$IMAGE@$IMAGE_DIGEST" --arg chart "$CHART@$CHART_DIGEST" \
-            '{version:$version,commit:$commit,image:$image,chart:$chart,platforms:["linux/amd64","linux/arm64"]}' \
+            --arg image_digest "$IMAGE_DIGEST" --arg chart_digest "$CHART_DIGEST" \
+            --arg amd64 "${{ needs.build-amd64.outputs.digest }}" \
+            --arg arm64 "${{ needs.build-arm64.outputs.digest }}" \
+            --arg policy_contract "$policy_contract" --arg identity_contract "$identity_contract" \
+            '{version:$version,commit:$commit,release_url:$release_url,workflow_run_url:$workflow_run_url,image:$image,chart:$chart,public_image_digest:$image_digest,public_chart_digest:$chart_digest,image_platforms:{linux:{amd64:$amd64,arm64:$arm64}},public_distribution:{registry:"ghcr.io"},policy_contract:$policy_contract,identity_contract:$identity_contract}' \
             > "$RUNNER_TEMP/release-manifest.json"
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/portable-release.yml@$GITHUB_REF"
+          cosign sign-blob --yes --bundle "$RUNNER_TEMP/release-manifest.sigstore.json" "$RUNNER_TEMP/release-manifest.json"
+          cosign verify-blob --bundle "$RUNNER_TEMP/release-manifest.sigstore.json" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$RUNNER_TEMP/release-manifest.json"
           gh release create "v$VERSION" --target "$GITHUB_SHA" \
             --title "github-oidc-exchange v$VERSION" \
-            --notes 'Fork-owned signed image/chart. Use immutable digest references from release-manifest.json; see docs/installation.md.' \
-            "$RUNNER_TEMP/release-manifest.json"
+            --notes-file "docs/releases/v$VERSION.md" \
+            "$RUNNER_TEMP/release-manifest.json" \
+            "$RUNNER_TEMP/release-manifest.sigstore.json"

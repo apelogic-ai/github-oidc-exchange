@@ -1,6 +1,6 @@
 # github-oidc-exchange
 
-`github-oidc-exchange` 0.4.0 is an MIT-licensed, fork-installable Kubernetes
+`github-oidc-exchange` 0.5.0 is an MIT-licensed, fork-installable Kubernetes
 identity service. Its baseline exchanges a short-lived GitHub Actions OIDC
 assertion for a two-minute ES256 token after exact, default-deny policy checks.
 An optional internal workload profile uses Kubernetes TokenReview and issues
@@ -18,11 +18,15 @@ adds copy-ready GitHub Actions and steward-run examples. The
 routes, audiences, TTL, trust, and compatible versions used by
 [Steward #103](https://github.com/apelogic-ai/steward/issues/103) and
 [steward-run #41](https://github.com/apelogic-ai/steward-run/issues/41).
+Release 0.5.0 uses the task-only GitHub policy contract v5. It removes the
+obsolete Service Envelope bootstrap profile and its privileged group without
+changing normal governed-task tokens. Existing operators must follow the
+atomic [v4-to-v5 upgrade guide](docs/upgrade-v0.5.0.md).
 
 | Release surface | Current status |
 | --- | --- |
-| Rust application and OCI Helm chart | `0.4.0` together; Kubernetes >=1.30, `linux/amd64`/`linux/arm64`. |
-| GitHub Actions exchange | Baseline enabled. Input: GitHub RS256 assertion for configured audience; output: ES256, `aud=steward-task-api`, `identity_contract=steward-task-v2`. A reusable workflow supplies the required `job_workflow_ref` and `job_workflow_sha` claims. |
+| Rust application and OCI Helm chart | `0.5.0` together; Kubernetes >=1.30, `linux/amd64`/`linux/arm64`. |
+| GitHub Actions exchange | Baseline enabled with task-only policy `github-oidc-exchange.apelogic.io/v5`. Input: GitHub RS256 assertion for configured audience; output: ES256, `aud=steward-task-api`, `identity_contract=steward-task-v2`. Workflow claims remain signed provenance, not authorization selectors. |
 | Workload exchange | Off by default. Internal HTTPS Service port 8443 with customer PKI or cert-manager TLS, exact TokenReview audience and service-account policy; output: RS256, `aud=openshell-api`, `identity_contract=openshell-workload-v1`. |
 | Browser HOP-1 | Off by default; requires workload listener and public Steward JWKS, per [its v1 contract](docs/browser-hop1-contract-v1.md). |
 | Public routes | `/.well-known/openid-configuration`, `/jwks.json`, `/v1/exchange` only, via operator-owned HTTPS proxy, selected Ingress controller, or Gateway API HTTPRoute. Workload route is never public. |

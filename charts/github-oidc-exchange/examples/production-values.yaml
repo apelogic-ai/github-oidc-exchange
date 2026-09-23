@@ -7,7 +7,7 @@
 image:
   repository: registry.customer.test/acme/github-oidc-exchange
   # Optional immutable release tag; verify that it resolves to this digest.
-  tag: 0.4.0
+  tag: 0.5.0
   digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
   pullPolicy: IfNotPresent
   # For a private registry, reference a pre-created image-pull secret. Do not
@@ -24,7 +24,8 @@ config:
   issuerUrl: https://identity.customer.test
   githubExchangeAudience: acme-github-oidc-exchange
   outputAudience: steward-task-api
-  policyConfigMapName: github-oidc-exchange-policy
+  # Application 0.5.0 requires a task-only github-oidc-exchange.apelogic.io/v5 policy.
+  policyConfigMapName: github-oidc-exchange-policy-v5
   policyConfigMapKey: policy.json
   keyringSecretName: github-oidc-exchange-keyring
   keyringSecretKey: keyring.json

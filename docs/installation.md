@@ -1,7 +1,7 @@
-# Installation guide — github-oidc-exchange 0.4.0
+# Installation guide — github-oidc-exchange 0.5.0
 
-This is the canonical operator guide for application **0.4.0**, Helm chart
-**0.4.0**, and [consumer contract v1](consumer-contract-v1.md). It installs
+This is the canonical operator guide for application **0.5.0**, Helm chart
+**0.5.0**, and [consumer contract v1](consumer-contract-v1.md). It installs
 Identity alone in a customer-owned Kubernetes cluster from fork-owned artifacts.
 No ApeLogic account, AWS credential, Secrets Manager, ECR, ALB, External Secrets
 Operator, GitHub OAuth App, or database is required. The baseline exchanges
@@ -16,6 +16,10 @@ start with the [customer quickstart](quickstart.md), then return here for
 operations and optional features. Use the
 [customer integration guide](integration.md) for copy-ready claim enrollment,
 exchange smoke, and steward-run examples.
+
+New installations use GitHub policy v5. Existing 0.4.0 installations must use
+the atomic [v4-to-v5 upgrade procedure](upgrade-v0.5.0.md); application 0.5.0
+does not accept policy v4.
 
 ## Prerequisites and decisions
 
@@ -91,7 +95,7 @@ pulls are intended; verify visibility separately. For another customer-owned
 OCI registry, authenticate with that registry's own account and run:
 
 ```sh
-export IDENTITY_VERSION=0.4.0
+export IDENTITY_VERSION=0.5.0
 export IDENTITY_IMAGE_REPO=registry.customer.tld/team/github-oidc-exchange
 export IDENTITY_CHART_REPO=registry.customer.tld/team/charts/github-oidc-exchange
 cargo fmt --all -- --check
@@ -142,7 +146,8 @@ registry pull Secret and reference only its name in values.
 ## 2. Prepare policy and signing files privately
 
 Create a private directory (`umask` also protects temporary editor files).
-The example JSON files are **schemas/examples only** and contain no usable
+The GitHub example is a task-only policy v5. The example JSON files are
+**schemas/examples only** and contain no usable
 credentials or approved identities. Copy the policy example locally and edit
 real mappings only in private storage; do not commit it or include it in CI
 artifacts. The chart's fixed output audiences are `steward-task-api` and,
@@ -173,7 +178,8 @@ Admit the **observed exact** `sub` in `policy.json`, bind it to the separately
 signed numeric IDs and reviewed actor mapping, then remove the probe. The
 policy validator accepts a normal GitHub `repo:` subject; its numeric ID
 checks are on separate signed claims. Task rules do not gate workflow path;
-bootstrap rules additionally select exact caller/reusable workflow refs.
+the signed workflow claims remain source provenance rather than authorization
+selectors. Policy v5 has no workflow-selected privileged profile.
 GitHub OAuth Apps do not participate in this flow.
 
 If enabling workload exchange, prepare its separate policy and keyring:
@@ -317,6 +323,11 @@ helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
 Validate discovery/JWKS and a fresh exchange again. Do not roll back
 to a binary that cannot read the current policy/keyring schema. There is no
 database migration; keep the same namespace to preserve replay Leases.
+For the 0.5.0 boundary specifically, upgrade and rollback the application and
+GitHub policy atomically: `0.5.0` with v5, or `0.4.0` with v4. An image-only
+rollback that leaves policy v5 mounted is unsupported. Keep the old v4
+ConfigMap and let Helm restore its reference as described in the
+[upgrade guide](upgrade-v0.5.0.md).
 
 ## 5. Enable optional workload exchange
 
