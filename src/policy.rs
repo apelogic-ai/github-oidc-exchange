@@ -8,7 +8,6 @@ use crate::POLICY_VERSION;
 const SERVICE_PREFIX: &str = "agents.apelogic.ai/service-principal:";
 const ACTING_PREFIX: &str = "agents.apelogic.ai/acting-user:";
 const CANONICAL_USER_PREFIX: &str = "agents.apelogic.ai/canonical-user:";
-const BOOTSTRAP_PREFIX: &str = "agents.apelogic.ai/service-envelope-bootstrap:";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -16,7 +15,6 @@ pub struct Policy {
     pub version: String,
     pub service_group: String,
     pub acting_group_prefix: String,
-    pub bootstrap_group: String,
     pub allowed_email_domains: Vec<String>,
     pub repositories: Vec<RepositoryPolicy>,
     pub actors: std::collections::HashMap<String, Actor>,
@@ -25,23 +23,11 @@ pub struct Policy {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepositoryPolicy {
-    pub profile: IdentityProfile,
     pub owner_id: String,
     pub repository_id: String,
     pub subjects: Vec<String>,
-    #[serde(default)]
-    pub workflow_refs: Vec<String>,
-    #[serde(default)]
-    pub job_workflow_refs: Vec<String>,
     pub events: Vec<String>,
     pub refs: Vec<String>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IdentityProfile {
-    Task,
-    Bootstrap,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -75,7 +61,12 @@ pub enum PolicyError {
 impl Policy {
     pub fn load(path: &Path) -> Result<Self, PolicyError> {
         let file = File::open(path).map_err(|error| PolicyError::Invalid(error.to_string()))?;
-        let policy: Self = serde_json::from_reader(file)
+        let value: serde_json::Value = serde_json::from_reader(file)
+            .map_err(|error| PolicyError::Invalid(error.to_string()))?;
+        if value.get("version").and_then(serde_json::Value::as_str) != Some(POLICY_VERSION) {
+            return Err(invalid("unsupported policy version"));
+        }
+        let policy: Self = serde_json::from_value(value)
             .map_err(|error| PolicyError::Invalid(error.to_string()))?;
         policy.validate()?;
         Ok(policy)
@@ -94,16 +85,6 @@ impl Policy {
             return Err(invalid(
                 "acting_group_prefix does not match the Steward contract",
             ));
-        }
-        if !self.bootstrap_group.starts_with(BOOTSTRAP_PREFIX)
-            || self.bootstrap_group == BOOTSTRAP_PREFIX
-        {
-            return Err(invalid(
-                "bootstrap_group must use the Steward service-envelope-bootstrap prefix",
-            ));
-        }
-        if self.bootstrap_group == self.service_group {
-            return Err(invalid("task and bootstrap groups must be distinct"));
         }
         if self.repositories.is_empty() || self.actors.is_empty() {
             return Err(invalid("repositories and actors must be non-empty"));
@@ -135,29 +116,12 @@ impl Policy {
                 return Err(invalid("repository numeric IDs are required"));
             }
             require_values("subjects", &repository.subjects)?;
-            match repository.profile {
-                IdentityProfile::Task => {
-                    if !repository.workflow_refs.is_empty()
-                        || !repository.job_workflow_refs.is_empty()
-                    {
-                        return Err(invalid(
-                            "task rules derive authority from repository identity and must not select workflow paths",
-                        ));
-                    }
-                }
-                IdentityProfile::Bootstrap => {
-                    require_values("workflow_refs", &repository.workflow_refs)?;
-                    require_values("job_workflow_refs", &repository.job_workflow_refs)?;
-                }
-            }
             require_values("events", &repository.events)?;
             require_values("refs", &repository.refs)?;
             if !repository_rules.insert((
                 &repository.owner_id,
                 &repository.repository_id,
                 &repository.subjects,
-                &repository.workflow_refs,
-                &repository.job_workflow_refs,
                 &repository.events,
                 &repository.refs,
             )) {
@@ -205,22 +169,10 @@ impl Policy {
             .get(&claims.actor_id)
             .filter(|actor| actor.verified)
             .ok_or(PolicyError::Unauthorized)?;
-        let bootstrap_workflow = self.repositories.iter().any(|repository| {
-            repository.profile == IdentityProfile::Bootstrap
-                && contains(&repository.workflow_refs, &claims.workflow_ref)
-                && contains(&repository.job_workflow_refs, &claims.job_workflow_ref)
-        });
         let mut matching_rules = self.repositories.iter().filter(|repository| {
             repository.owner_id == claims.repository_owner_id
                 && repository.repository_id == claims.repository_id
                 && contains(&repository.subjects, &claims.sub)
-                && match repository.profile {
-                    IdentityProfile::Task => !bootstrap_workflow,
-                    IdentityProfile::Bootstrap => {
-                        contains(&repository.workflow_refs, &claims.workflow_ref)
-                            && contains(&repository.job_workflow_refs, &claims.job_workflow_ref)
-                    }
-                }
                 && contains(&repository.events, &claims.event_name)
                 && contains(&repository.refs, &claims.git_ref)
         });
@@ -228,14 +180,11 @@ impl Policy {
         if matching_rules.next().is_some() {
             return Err(PolicyError::Unauthorized);
         }
-        let mut groups = match repository.profile {
-            IdentityProfile::Task => vec![
-                self.service_group.clone(),
-                format!("{}{}", self.acting_group_prefix, actor.email),
-                format!("{CANONICAL_USER_PREFIX}{}", actor.canonical_user_id),
-            ],
-            IdentityProfile::Bootstrap => vec![self.bootstrap_group.clone()],
-        };
+        let mut groups = vec![
+            self.service_group.clone(),
+            format!("{}{}", self.acting_group_prefix, actor.email),
+            format!("{CANONICAL_USER_PREFIX}{}", actor.canonical_user_id),
+        ];
         groups.sort();
         Ok(Identity {
             actor_id: claims.actor_id.clone(),

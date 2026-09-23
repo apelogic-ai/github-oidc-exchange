@@ -1,4 +1,4 @@
-# Baseline customer quickstart — github-oidc-exchange 0.4.0
+# Baseline customer quickstart — github-oidc-exchange 0.5.0
 
 This is the shortest supported path to a baseline GitHub Actions OIDC
 exchange. It deliberately excludes workload exchange and browser HOP-1. It
@@ -7,6 +7,10 @@ customer fork, and public fork-owned GHCR packages. Use the
 [full installation guide](installation.md) for Ingress, a separate HTTPS
 proxy, private registries, customer CA distribution, workload exchange,
 rotation, upgrade, rollback, and uninstall.
+
+This quickstart creates a task-only GitHub policy v5. If upgrading an existing
+0.4.0 deployment, use the [v4-to-v5 migration guide](upgrade-v0.5.0.md)
+instead of replacing the policy in place.
 
 The result is an Identity deployment with three public routes:
 
@@ -21,7 +25,7 @@ used.
 
 You need:
 
-- a clean checkout of the customer fork at the reviewed `0.4.0` source;
+- a clean checkout of the customer fork at the reviewed `0.5.0` source;
 - GitHub CLI authentication allowed to run Actions, create a release, and
   publish packages in that fork;
 - Rust 1.95, Helm 3.17+, `kubectl`, `jq`, `oras`, and an explicit
@@ -36,7 +40,7 @@ Set the non-secret coordinates used below. Keep the GHCR owner lowercase.
 
 ```sh
 export IDENTITY_FORK=customer-org/github-oidc-exchange
-export IDENTITY_VERSION=0.4.0
+export IDENTITY_VERSION=0.5.0
 export IDENTITY_KUBECONFIG=/absolute/path/to/customer-kubeconfig
 export IDENTITY_CONTEXT=customer-context
 export IDENTITY_NAMESPACE=identity
@@ -48,7 +52,7 @@ export IDENTITY_AUDIENCE=customer-github-identity-exchange
 
 Run the AWS-free workflow from the fork's `main` branch. It builds native
 amd64/arm64 images, scans and smokes them, publishes the image and chart to the
-fork owner's GHCR, signs them, and creates `v0.4.0` with an immutable handoff.
+fork owner's GHCR, signs them, and creates `v0.5.0` with an immutable handoff.
 The version must match `Cargo.toml` and `Chart.yaml`, and the release/tag must
 not already exist in the fork.
 
@@ -99,11 +103,11 @@ umask 077
 install -d -m 0700 ./private
 install -m 0600 docs/policy-contract.example.json ./private/policy.json
 cargo run --locked --bin keyring-tool -- generate-es256 \
-  ./private/issuer-keyring.json issuer-0.4.0-a
+  ./private/issuer-keyring.json issuer-0.5.0-a
 cargo run --locked --bin keyring-tool -- validate-es256 \
   ./private/issuer-keyring.json
 
-# Privately edit policy.json with observed claims and reviewed actor mappings.
+# Privately edit task-only policy v5 with observed claims and reviewed actor mappings.
 jq empty ./private/policy.json
 
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \

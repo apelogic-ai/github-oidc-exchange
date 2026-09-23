@@ -1,32 +1,14 @@
 {
-  "version": "github-oidc-exchange.apelogic.io/v4",
-  "service_group": "agents.apelogic.ai/service-principal:example-service",
+  "version": "github-oidc-exchange.apelogic.io/v5",
+  "service_group": "agents.apelogic.ai/service-principal:steward-run",
   "acting_group_prefix": "agents.apelogic.ai/acting-user:",
-  "bootstrap_group": "agents.apelogic.ai/service-envelope-bootstrap:example-service",
-  "allowed_email_domains": ["example.com"],
+  "allowed_email_domains": ["hypershell.ai"],
   "repositories": [
     {
-      "profile": "task",
       "owner_id": "123456",
       "repository_id": "789012",
       "subjects": [
         "repo:example-org/example-repo:ref:refs/heads/main"
-      ],
-      "events": ["workflow_dispatch"],
-      "refs": ["refs/heads/main"]
-    },
-    {
-      "profile": "bootstrap",
-      "owner_id": "123456",
-      "repository_id": "789012",
-      "subjects": [
-        "repo:example-org/example-repo:ref:refs/heads/main"
-      ],
-      "workflow_refs": [
-        "example-org/example-repo/.github/workflows/bootstrap.yml@refs/heads/main"
-      ],
-      "job_workflow_refs": [
-        "example-org/example-repo/.github/workflows/bootstrap-executor.yml@refs/heads/main"
       ],
       "events": ["workflow_dispatch"],
       "refs": ["refs/heads/main"]
@@ -34,7 +16,7 @@
   ],
   "actors": {
     "345678": {
-      "email": "verified-user@example.com",
+      "email": "verified-user@hypershell.ai",
       "canonical_user_id": "usr_0123456789abcdef0123456789abcdef",
       "verified": true
     }

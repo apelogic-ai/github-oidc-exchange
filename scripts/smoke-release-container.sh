@@ -134,13 +134,11 @@ token_review_port="$(sed -n 's/^tokenreview=//p' "$tmp/mock-ports")"
 [[ "$token_review_port" =~ ^[0-9]+$ ]]
 
 jq -n '{
-  version: "github-oidc-exchange.apelogic.io/v4",
+  version: "github-oidc-exchange.apelogic.io/v5",
   service_group: "agents.apelogic.ai/service-principal:steward-run",
   acting_group_prefix: "agents.apelogic.ai/acting-user:",
-  bootstrap_group: "agents.apelogic.ai/service-envelope-bootstrap:steward-run",
   allowed_email_domains: ["apelogic.ai"],
   repositories: [{
-    profile: "task",
     owner_id: "227278099",
     repository_id: "1320906141",
     subjects: ["repo:apelogic-ai@227278099/steward-run@1320906141:ref:refs/heads/main"],
@@ -149,6 +147,12 @@ jq -n '{
   }],
   actors: {"16106037": {email: "leo@apelogic.ai", canonical_user_id: "usr_0123456789abcdef0123456789abcdef", verified: true}}
 }' > "$app_dir/policy.json"
+
+jq '
+  .version = "github-oidc-exchange.apelogic.io/v4"
+  | .bootstrap_group = "agents.apelogic.ai/service-envelope-bootstrap:steward-run"
+  | .repositories[0].profile = "task"
+' "$app_dir/policy.json" > "$app_dir/policy-v4.json"
 
 jq -n '{
   version: "github-oidc-exchange.apelogic.io/keyring-v1",
@@ -219,6 +223,22 @@ case "$(uname -s)" in
     exit 1
     ;;
 esac
+
+if docker run --rm \
+  --platform "${smoke_platform}" \
+  --volume "$app_dir:/smoke:ro" \
+  --env ISSUER_URL=https://identity.example.invalid \
+  --env GITHUB_EXCHANGE_AUDIENCE=apelogic-github-exchange \
+  --env OUTPUT_AUDIENCE=steward-task-api \
+  --env POLICY_FILE=/smoke/policy-v4.json \
+  --env KEYRING_FILE=/smoke/keyring.json \
+  --env REPLAY_LEASE_NAMESPACE=smoke \
+  --env WORKLOAD_EXCHANGE_ENABLED=false \
+  "$image" >"$tmp/v4-startup.log" 2>&1; then
+  printf '%s\n' 'release image unexpectedly accepted policy v4' >&2
+  exit 1
+fi
+grep -Fq 'unsupported policy version' "$tmp/v4-startup.log"
 
 docker run --detach --name "$container" \
   --platform "${smoke_platform}" \

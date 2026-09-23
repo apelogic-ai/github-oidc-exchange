@@ -1,4 +1,4 @@
-# Customer integration guide — github-oidc-exchange 0.4.0
+# Customer integration guide — github-oidc-exchange 0.5.0
 
 This guide connects a customer GitHub Actions workflow to a deployed Identity
 issuer and then to Steward through steward-run. It complements the
@@ -60,10 +60,15 @@ workflow.
 
 Copy `docs/policy-contract.example.json` to a mode-0600 private file. Replace
 every example value. A normal task rule binds the exact repository owner ID,
-repository ID, subject, event, ref, and a reviewed numeric actor mapping. A
-bootstrap rule additionally binds exact caller and reusable workflow refs.
+repository ID, subject, event, ref, and a reviewed numeric actor mapping.
+Policy v5 is task-only: workflow refs remain signed provenance but are not
+policy selectors.
 Never add wildcards or derive email/canonical identity from GitHub display
 data.
+
+Application 0.5.0 rejects policy v4. For an existing installation, create a
+separate v5 ConfigMap and follow the [atomic migration procedure](upgrade-v0.5.0.md)
+so old pods retain v4 while new pods receive v5.
 
 ```sh
 umask 077

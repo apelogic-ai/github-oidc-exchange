@@ -1,4 +1,4 @@
-# github-oidc-exchange Helm chart 0.4.0
+# github-oidc-exchange Helm chart 0.5.0
 
 Read the repository's [canonical installation guide](../../docs/installation.md)
 before deploying. It contains the exact prerequisites, Secret/ConfigMap bill
@@ -10,6 +10,12 @@ For the shortest baseline Gateway API path, use the
 [customer quickstart](../../docs/quickstart.md); use the
 [integration guide](../../docs/integration.md) for GitHub Actions and
 steward-run examples.
+
+Chart/application 0.5.0 requires the task-only GitHub policy v5. Operators
+upgrading from 0.4.0 must switch the image/chart and policy ConfigMap reference
+in one Helm revision; see the
+[v4-to-v5 upgrade guide](../../docs/upgrade-v0.5.0.md). Rollback restores the
+0.4.0/v4 pair, never only the image.
 
 This chart deliberately fails Helm validation until a customer supplies a
 fork-owned immutable image digest, HTTPS issuer, dedicated GitHub OIDC input

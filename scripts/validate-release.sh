@@ -72,9 +72,18 @@ required=(
   'oras logout ghcr.io || true'
   'ecr_image:$ecr_image'
   'ecr_chart:$ecr_chart'
+  'public_image_digest:$public_image_digest'
+  'public_chart_digest:$public_chart_digest'
+  'ecr_image_digest:$ecr_image_digest'
+  'ecr_chart_digest:$ecr_chart_digest'
   'anonymous_pull_verified:true'
+  'byte_identical_to_ecr:true'
   'image_platforms:$platforms[0]'
+  'release_url:$release_url'
+  'workflow_run_url:$workflow_run_url'
+  '[[ -s "docs/releases/v$REQUESTED_VERSION.md" ]]'
   'gh release create "v$VERSION"'
+  '--notes-file "docs/releases/v$VERSION.md"'
   '--arg policy_contract "$policy_contract"'
   '--arg identity_contract "$identity_contract"'
   'policy_contract:$policy_contract'
@@ -182,7 +191,7 @@ helm template tagged "$render_dir/chart" \
   -f charts/github-oidc-exchange/examples/production-values.yaml \
   >"$render_dir/tagged.yaml"
 grep -Fq -- \
-  'image: registry.customer.test/acme/github-oidc-exchange:0.4.0@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' \
+  "image: registry.customer.test/acme/github-oidc-exchange:${package_version}@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" \
   "$render_dir/tagged.yaml"
 if helm template malformed-tag "$render_dir/chart" \
   -f charts/github-oidc-exchange/examples/production-values.yaml \

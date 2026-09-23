@@ -9,6 +9,8 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-22
+
 ### Added
 
 - Added an opinionated baseline customer quickstart, a GitHub Actions and
@@ -16,12 +18,31 @@ signatures, attestations, SBOMs, and vulnerability evidence.
   workflow examples.
 - Documented the exact AWS-free fork release invocation and the downstream
   steward-run handoff.
+- Added a v4-to-v5 migration guide with atomic application/policy rollout and
+  rollback instructions, plus checked-in release notes and stronger
+  documentation/version drift checks.
+
+### Removed
+
+- Removed the Steward Service Envelope bootstrap identity profile.
+- Removed `bootstrap_group` from the GitHub policy contract.
+- Removed bootstrap-specific workflow selectors and the
+  `agents.apelogic.ai/service-envelope-bootstrap:*` emitted group.
 
 ### Changed
 
-- Marked consumer contract v1 as released with application/chart 0.4.0 and
+- Changed the GitHub policy contract from v4 to task-only v5. Application and
+  policy must be upgraded and rolled back atomically as the 0.5.0/v5 or
+  0.4.0/v4 pair.
+- Marked consumer contract v1 as released with application/chart 0.5.0 and
   clarified that the renderable production values file is not an install
   profile.
+
+### Preserved
+
+- Preserved the existing governed-task groups, fixed audience, token claims,
+  two-minute lifetime, signing, source provenance, and replay protection.
+- Preserved the workload exchange and browser HOP-1 contracts.
 
 ## [0.4.0] - 2026-09-21
 
@@ -135,7 +156,8 @@ signatures, attestations, SBOMs, and vulnerability evidence.
   short-lived EKS-compatible ES256 token issuance.
 - Added signed image/chart release validation with immutable artifact digests.
 
-[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.3.8...v0.4.0
 [0.3.8]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.3.6...v0.3.8
 [0.3.6]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.3.5...v0.3.6

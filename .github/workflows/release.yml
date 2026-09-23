@@ -45,6 +45,7 @@ jobs:
           [[ "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)" == "$REQUESTED_VERSION" ]]
           [[ "$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)" == "$REQUESTED_VERSION" ]]
           [[ "$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc-exchange/Chart.yaml | head -1)" == "$REQUESTED_VERSION" ]]
+          [[ -s "docs/releases/v$REQUESTED_VERSION.md" ]]
           [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v$REQUESTED_VERSION" --jq length)" == 0 ]]
           if gh release view "v$REQUESTED_VERSION" >/dev/null 2>&1; then
             printf 'release v%s already exists\n' "$REQUESTED_VERSION" >&2
@@ -565,19 +566,25 @@ jobs:
           jq -n \
             --arg version "$VERSION" \
             --arg commit "$GITHUB_SHA" \
+            --arg release_url "https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" \
+            --arg workflow_run_url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --arg image "$PUBLIC_IMAGE_REFERENCE@${{ steps.public.outputs.image_digest }}" \
             --arg chart "$PUBLIC_CHART_REFERENCE@${{ steps.public.outputs.chart_digest }}" \
             --arg ecr_image "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}" \
             --arg ecr_chart "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" \
+            --arg public_image_digest "${{ steps.public.outputs.image_digest }}" \
+            --arg public_chart_digest "${{ steps.public.outputs.chart_digest }}" \
+            --arg ecr_image_digest "${{ steps.image.outputs.digest }}" \
+            --arg ecr_chart_digest "${{ steps.chart.outputs.digest }}" \
             --arg policy_contract "$policy_contract" \
             --arg identity_contract "$identity_contract" \
             --slurpfile platforms dist/image-platforms.json \
-            '{version:$version,commit:$commit,image:$image,chart:$chart,ecr_image:$ecr_image,ecr_chart:$ecr_chart,image_platforms:$platforms[0],public_distribution:{registry:"ghcr.io",anonymous_pull_verified:true},policy_contract:$policy_contract,identity_contract:$identity_contract}' \
+            '{version:$version,commit:$commit,release_url:$release_url,workflow_run_url:$workflow_run_url,image:$image,chart:$chart,ecr_image:$ecr_image,ecr_chart:$ecr_chart,public_image_digest:$public_image_digest,public_chart_digest:$public_chart_digest,ecr_image_digest:$ecr_image_digest,ecr_chart_digest:$ecr_chart_digest,image_platforms:$platforms[0],public_distribution:{registry:"ghcr.io",anonymous_pull_verified:true,byte_identical_to_ecr:true},policy_contract:$policy_contract,identity_contract:$identity_contract}' \
             > dist/release-manifest.json
           identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
           cosign sign-blob --yes --bundle dist/release-manifest.sigstore.json dist/release-manifest.json
           cosign verify-blob --bundle dist/release-manifest.sigstore.json --certificate-identity "$identity" --certificate-oidc-issuer https://token.actions.githubusercontent.com dist/release-manifest.json
-          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "github-oidc-exchange v$VERSION" --notes "Signed platform identity exchange image and chart. ECR immutable artifacts are mirrored byte-for-byte to public GHCR, then signed and attested under this release workflow; anonymous exact-digest pulls and verification are required before this handoff is published." dist/*
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "github-oidc-exchange v$VERSION" --notes-file "docs/releases/v$VERSION.md" dist/*
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ always() && hashFiles('dist/*') != '' }}
