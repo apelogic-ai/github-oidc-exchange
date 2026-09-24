@@ -12,7 +12,31 @@
       "properties": {
         "repository": {"type": "string", "minLength": 1, "not": {"pattern": "(^|\\.)example\\.invalid(/|$)"}},
         "tag": {"type": "string", "maxLength": 128, "pattern": "^$|^[A-Za-z0-9_][A-Za-z0-9_.-]*$"},
-        "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$", "not": {"enum": ["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]}},
+        "digest": {
+          "type": "string",
+          "description": "Required immutable image digest from a published release handoff or verified manifest-preserving mirror. Placeholder and sentinel values are rejected.",
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "not": {
+            "enum": [
+              "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+              "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+              "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+              "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+              "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+              "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+              "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+              "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+              "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            ]
+          }
+        },
         "pullPolicy": {"enum": ["IfNotPresent", "Always", "Never"]},
         "pullSecrets": {
           "type": "array",

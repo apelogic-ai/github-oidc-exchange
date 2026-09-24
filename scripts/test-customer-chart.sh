@@ -10,11 +10,80 @@ if helm template unconfigured "$chart" >"$scratch/default.yaml" 2>"$scratch/defa
   exit 1
 fi
 
+released_digest=sha256:ef41cf1cf5d7f8b182e985f609884f6409d9d49ebc8a5164f7b76faf8f806dc1
+zero_digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+for digit in 0 1 2 3 4 5 6 7 8 9 a b c d e f; do
+  printf -v repeated '%*s' 64 ''
+  repeated=${repeated// /$digit}
+  sentinel="sha256:$repeated"
+  if helm lint "$chart" -f "$chart/ci/test-values.yaml" --strict \
+    --set-string "image.digest=$sentinel" >"$scratch/sentinel-schema.err" 2>&1; then
+    printf 'chart schema must reject homogeneous sentinel digest %s\n' "$sentinel" >&2
+    exit 1
+  fi
+  grep -Fq 'image.digest' "$scratch/sentinel-schema.err"
+  if helm template sentinel "$chart" -f "$chart/ci/test-values.yaml" \
+    --skip-schema-validation --set-string "image.digest=$sentinel" \
+    >"$scratch/sentinel.yaml" 2>"$scratch/sentinel-preflight.err"; then
+    printf 'chart preflight must reject homogeneous sentinel digest %s\n' "$sentinel" >&2
+    exit 1
+  fi
+  grep -Fq 'image.digest: placeholder/sentinel value' "$scratch/sentinel-preflight.err"
+  grep -Fq 'published release handoff or a verified manifest-preserving mirror' \
+    "$scratch/sentinel-preflight.err"
+done
+
+sed "s#digest: .*#digest: $zero_digest#" \
+  "$chart/ci/test-values.yaml" >"$scratch/sentinel-values.yaml"
+if bash scripts/validate-chart-values.sh "$scratch/sentinel-values.yaml" \
+  >"$scratch/validator.out" 2>"$scratch/validator.err"; then
+  printf 'values validator must reject the all-zero image.digest\n' >&2
+  exit 1
+fi
+grep -Fq 'image.digest: placeholder/sentinel value' "$scratch/validator.err"
+
+# Cover both checked-in examples. values.example.yaml intentionally needs the
+# complete CI overlay because its mandatory customer inputs are empty.
+for example_args in \
+  "$chart/examples/production-values.yaml" \
+  "$chart/values.example.yaml $chart/ci/test-values.yaml"; do
+  read -r -a example_files <<<"$example_args"
+  helm_args=()
+  for example_file in "${example_files[@]}"; do
+    helm_args+=( -f "$example_file" )
+  done
+  if helm lint "$chart" "${helm_args[@]}" --strict \
+    --set-string "image.digest=$zero_digest" \
+    >"$scratch/example-schema.err" 2>&1; then
+    printf 'chart schema must reject all-zero image.digest in %s\n' "$example_args" >&2
+    exit 1
+  fi
+  grep -Fq 'image.digest' "$scratch/example-schema.err"
+done
+
 helm lint "$chart" -f "$chart/ci/test-values.yaml" --strict >/dev/null
 helm template baseline "$chart" --namespace identity \
   -f "$chart/ci/test-values.yaml" >"$scratch/baseline.yaml"
 helm template workload "$chart" --namespace identity \
   -f "$chart/ci/workload-values.yaml" >"$scratch/workload.yaml"
+
+helm template released "$chart" -f "$chart/ci/test-values.yaml" \
+  --set-string image.repository=ghcr.io/apelogic-ai/github-oidc-exchange \
+  --set-string image.tag=0.5.0 \
+  --set-string "image.digest=$released_digest" >"$scratch/released.yaml"
+grep -Fq "image: ghcr.io/apelogic-ai/github-oidc-exchange:0.5.0@$released_digest" \
+  "$scratch/released.yaml"
+
+helm template mirrored "$chart" -f "$chart/ci/test-values.yaml" \
+  --set-string image.repository=registry.customer.test/mirror/github-oidc-exchange \
+  --set-string image.tag=0.5.0 \
+  --set-string "image.digest=$released_digest" >"$scratch/mirrored.yaml"
+grep -Fq "image: registry.customer.test/mirror/github-oidc-exchange:0.5.0@$released_digest" \
+  "$scratch/mirrored.yaml"
+
+bash scripts/validate-chart-values.sh \
+  "$chart/examples/production-values.yaml" >"$scratch/validator-valid.out"
 
 grep -Fq 'secretName: github-oidc-exchange-keyring' "$scratch/baseline.yaml"
 grep -Fq 'name: github-oidc-exchange-policy' "$scratch/baseline.yaml"

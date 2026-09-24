@@ -39,6 +39,15 @@ operator-owned Secrets/ConfigMaps; it never stores private keys, policy
 identity mappings, or TLS material in Helm values. The workload-only RSA,
 policy, TLS, and TokenReview permissions are absent from baseline mode.
 
+`image.digest` must be the exact immutable digest from a published release
+handoff or from a manifest-preserving mirror whose destination descriptor was
+verified. The chart rejects all-zero and homogeneous hexadecimal sentinel
+digests before rendering any Kubernetes object; tag-only deployment is not a
+fallback. Static validation does not contact the registry: the operator owns
+mirror authentication, registry reachability, and recording the verified
+destination digest. Run `bash scripts/validate-chart-values.sh VALUES_FILE`
+before install or reconciliation for an actionable values preflight.
+
 GitHub's ordinary `sub` can be admitted by exact observed value while signed
 numeric `repository_owner_id` and `repository_id` are checked independently.
 The verified numeric actor mapping, event, ref, audience, and assertion
@@ -80,6 +89,7 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
 bash scripts/validate-release.sh
 bash scripts/test-customer-chart.sh
+bash scripts/validate-chart-values.sh charts/github-oidc-exchange/examples/production-values.yaml
 bash scripts/test-install-inputs.sh
 bash scripts/test-kubectl-files.sh
 helm lint charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/test-values.yaml --strict

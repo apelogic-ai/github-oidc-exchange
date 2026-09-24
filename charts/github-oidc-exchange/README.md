@@ -28,6 +28,17 @@ No ALB, ECR, Secrets Manager, or ingress controller is assumed. Public TLS
 may be an existing customer-PKI Secret or a chart-created cert-manager
 Certificate; the Gateway owns TLS in HTTPRoute mode.
 
+`image.digest` must come from the selected release's signed handoff or from a
+verified manifest-preserving mirror. All-zero and other homogeneous
+hexadecimal sentinel digests are rejected by the published values schema.
+The chart does not test registry reachability during static validation; verify
+the destination descriptor after copying, then record that exact digest.
+For the clearest field-specific error before Helm or GitOps mutation, run:
+
+```sh
+bash scripts/validate-chart-values.sh /path/to/customer-values.yaml
+```
+
 `workloadExchange.enabled=false` is baseline. Enabling it additionally
 requires a dedicated RSA-3072 keyring Secret, workload policy ConfigMap,
 server-authenticated TLS Secret, TokenReview ClusterRole/Binding, an exact
