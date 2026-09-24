@@ -20,22 +20,25 @@ grep -Fq "## [$version]" CHANGELOG.md
 grep -Fq '](docs/installation.md)' README.md
 grep -Fq '](THIRD_PARTY_NOTICES.md)' README.md
 grep -Fq '](docs/upgrade-v0.5.0.md)' README.md
+grep -Fq '](docs/upgrade-v0.5.1.md)' README.md
 grep -Fq '](../../docs/installation.md)' charts/github-oidc-exchange/README.md
 
 policy_version="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
 [[ "$policy_version" == 'github-oidc-exchange.apelogic.io/v5' ]]
 for policy_surface in docs/policy-contract.schema.json docs/policy-contract.example.json \
-  scripts/smoke-release-container.sh docs/upgrade-v0.5.0.md "docs/releases/v$version.md"; do
+  scripts/smoke-release-container.sh docs/upgrade-v0.5.0.md docs/upgrade-v0.5.1.md \
+  "docs/releases/v$version.md"; do
   grep -Fq "$policy_version" "$policy_surface"
 done
 release_notes="docs/releases/v$version.md"
-for expected in 'Service Envelope bootstrap identity' 'Normal governed-task behavior is unchanged' \
-  'unsupported policy version' '0.4.0 application/chart plus v4 policy pair' \
+for expected in 'ID-CUST-001' 'image.digest' 'all-zero' \
+  'manifest-preserving mirror' 'Tag-only production deployment remains' \
+  '0.5.0 application/chart plus policy v5 pair' \
   'release-manifest.json' 'native amd64 and arm64 container' 'SPDX SBOM' \
   'SLSA provenance' 'cosign verify-blob' 'cosign verify-attestation' \
   'ecr_image' 'ecr_chart' '/README.md)' '/CHANGELOG.md)' \
-  '/docs/policy-contract.schema.json)' '/docs/policy-contract.example.json)' \
-  '/docs/upgrade-v0.5.0.md)'; do
+  '/charts/github-oidc-exchange/values.schema.json)' \
+  '/docs/upgrade-v0.5.1.md)'; do
   grep -Fq "$expected" "$release_notes"
 done
 jq -e --arg version "$policy_version" '.properties.version.const == $version' \
