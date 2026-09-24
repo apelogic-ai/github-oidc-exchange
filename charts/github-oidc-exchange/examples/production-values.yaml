@@ -1,5 +1,6 @@
 # This is a renderable shape example, not an install profile. For a real
 # deployment, start with values.example.yaml and the customer quickstart.
+# It is validated against chart/application 0.5.1.
 # If you copy this file into a deployment-owned repository, replace every
 # example.invalid value, object reference, digest, CIDR, revision, pull Secret,
 # and Gateway reference. It cannot be a working issuer as-is.
@@ -26,7 +27,7 @@ config:
   issuerUrl: https://identity.customer.test
   githubExchangeAudience: acme-github-oidc-exchange
   outputAudience: steward-task-api
-  # Application 0.5.0 requires a task-only github-oidc-exchange.apelogic.io/v5 policy.
+  # Application 0.5.1 requires a task-only github-oidc-exchange.apelogic.io/v5 policy.
   policyConfigMapName: github-oidc-exchange-policy-v5
   policyConfigMapKey: policy.json
   keyringSecretName: github-oidc-exchange-keyring

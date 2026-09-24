@@ -1,7 +1,7 @@
-# Installation guide — github-oidc-exchange 0.5.0
+# Installation guide — github-oidc-exchange 0.5.1
 
-This is the canonical operator guide for application **0.5.0**, Helm chart
-**0.5.0**, and [consumer contract v1](consumer-contract-v1.md). It installs
+This is the canonical operator guide for application **0.5.1**, Helm chart
+**0.5.1**, and [consumer contract v1](consumer-contract-v1.md). It installs
 Identity alone in a customer-owned Kubernetes cluster from fork-owned artifacts.
 No ApeLogic account, AWS credential, Secrets Manager, ECR, ALB, External Secrets
 Operator, GitHub OAuth App, or database is required. The baseline exchanges
@@ -19,14 +19,15 @@ exchange smoke, and steward-run examples.
 
 New installations use GitHub policy v5. Existing 0.4.0 installations must use
 the atomic [v4-to-v5 upgrade procedure](upgrade-v0.5.0.md); application 0.5.0
-does not accept policy v4.
+and newer do not accept policy v4. Existing 0.5.0 installations should use the
+[0.5.1 digest-validation upgrade procedure](upgrade-v0.5.1.md).
 
 ## Prerequisites and decisions
 
 | Input | Baseline GitHub issuer | Additional workload profile |
 | --- | --- | --- |
 | Cluster/architecture | Kubernetes >=1.30, `linux/amd64` or `linux/arm64`, working DNS, outbound HTTPS to GitHub JWKS and Kubernetes API; ability to create namespaced Lease Role/Binding and NetworkPolicy. Two schedulable replicas by default. | Cluster-admin or delegated right to create the chart's narrow TokenReview ClusterRole/Binding; caller namespace and pod labels for an exact NetworkPolicy selector. |
-| Tools | Rust 1.95, Helm 3.17+, Docker/buildx, `kubectl`, `jq`, and `oras` for digest lookup; explicit kubeconfig/context. | Same, plus a projected, bound service-account token for each caller. |
+| Tools | Rust 1.95, Helm 3.17+, Docker/buildx, `kubectl`, `jq`, and `oras` for digest lookup; `crane` when mirroring; explicit kubeconfig/context. | Same, plus a projected, bound service-account token for each caller. |
 | Registry | Fork-owned OCI image/chart repositories accessible from cluster nodes; immutable digest for image and chart. Private registry requires a pre-created `kubernetes.io/dockerconfigjson` pull Secret named only in `image.pullSecrets`. | Same image/chart. |
 | Issuer/public network | Unique HTTPS issuer URL and DNS A/CNAME; publicly trusted certificate whose SAN covers its DNS name; select external HTTPS proxy + internal Service, chart Ingress with chosen controller, or chart HTTPRoute attached to an existing HTTPS Gateway. Allow its actual source CIDRs to port 8080. Hosted GitHub runners need a reachable public issuer/exchange; self-hosted runners may use a private route if DNS and trust agree. | Workload listener is internal Service port 8443 only. Server certificate SAN must include `github-oidc-exchange.<namespace>.svc.cluster.local`; distribute its public issuer CA bundle to callers and plan renewal/overlap. |
 | GitHub policy | Dedicated inbound audience, observed exact GitHub `sub`, immutable numeric `repository_owner_id` and `repository_id`, allowed event/ref and reviewed numeric `actor_id` to corporate identity mapping. GitHub jobs need `permissions: id-token: write` and must expose `job_workflow_ref`/`job_workflow_sha` via a reusable workflow. | Independent exact service-account username-to-subject/roles policy and TokenReview input audience. |
@@ -95,7 +96,7 @@ pulls are intended; verify visibility separately. For another customer-owned
 OCI registry, authenticate with that registry's own account and run:
 
 ```sh
-export IDENTITY_VERSION=0.5.0
+export IDENTITY_VERSION=0.5.1
 export IDENTITY_IMAGE_REPO=registry.customer.tld/team/github-oidc-exchange
 export IDENTITY_CHART_REPO=registry.customer.tld/team/charts/github-oidc-exchange
 cargo fmt --all -- --check

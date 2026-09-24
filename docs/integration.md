@@ -1,4 +1,4 @@
-# Customer integration guide — github-oidc-exchange 0.5.0
+# Integration guide — github-oidc-exchange 0.5.1
 
 This guide connects a customer GitHub Actions workflow to a deployed Identity
 issuer and then to Steward through steward-run. It complements the
@@ -66,7 +66,8 @@ policy selectors.
 Never add wildcards or derive email/canonical identity from GitHub display
 data.
 
-Application 0.5.0 rejects policy v4. For an existing installation, create a
+Application 0.5.0 and newer reject policy v4. For an existing 0.4.0
+installation, create a
 separate v5 ConfigMap and follow the [atomic migration procedure](upgrade-v0.5.0.md)
 so old pods retain v4 while new pods receive v5.
 
