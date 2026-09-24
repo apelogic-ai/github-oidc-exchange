@@ -1,6 +1,6 @@
 image:
   repository: registry.test.invalid/platform/github-oidc-exchange
-  digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  digest: sha256:ef41cf1cf5d7f8b182e985f609884f6409d9d49ebc8a5164f7b76faf8f806dc1
 
 config:
   issuerUrl: https://identity.test.invalid

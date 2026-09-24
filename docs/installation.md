@@ -123,6 +123,25 @@ non-secret release handoff. A Helm chart OCI digest identifies the package;
 Helm installs it by version from the registry, so verify the tag still resolves
 to the recorded digest before install/upgrade. Never overwrite version tags.
 
+When a private mirror is required, copy by immutable source digest with a tool
+that preserves the OCI manifest, then query the destination registry and use
+the returned destination digest. For example:
+
+```sh
+export SOURCE_IMAGE="$(jq -er .image ./dist/release-manifest.json)"
+export DESTINATION_IMAGE=registry.example.test/team/github-oidc-exchange
+crane copy "$SOURCE_IMAGE" "$DESTINATION_IMAGE:$IDENTITY_VERSION"
+export IDENTITY_IMAGE_DIGEST="$(crane digest "$DESTINATION_IMAGE:$IDENTITY_VERSION")"
+```
+
+Do not use `docker pull`, `docker tag`, and `docker push` as a digest-preserving
+mirror workflow, and do not substitute a tag when the destination digest
+differs. The product boundary is static reference validation plus signed
+source handoff: the operator owns destination credentials, connectivity,
+retention, and descriptor verification. Copy and verify signatures,
+attestations, and SBOMs according to the destination registry's OCI-referrer
+support.
+
 To run the portable path from a fork whose package and release permissions are
 enabled, use the exact source version and watch the resulting run:
 
@@ -295,6 +314,7 @@ one exposure option:
 umask 077
 cp charts/github-oidc-exchange/values.example.yaml ./private/values.yaml
 # Edit private/values.yaml: use the exact published image digest and selected route.
+bash scripts/validate-chart-values.sh ./private/values.yaml
 helm lint charts/github-oidc-exchange -f ./private/values.yaml --strict
 helm template identity charts/github-oidc-exchange --namespace "$IDENTITY_NAMESPACE" \
   -f ./private/values.yaml >/dev/null

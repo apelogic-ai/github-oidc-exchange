@@ -5,7 +5,9 @@ replicaCount: 2
 image:
   repository: "" # fork-owned registry path, e.g. registry.company.tld/team/github-oidc-exchange
   tag: ""
-  digest: "" # immutable sha256:... from that registry
+  # Exact immutable sha256:... from a release handoff or verified mirror;
+  # all-zero and homogeneous placeholder/sentinel digests are rejected.
+  digest: ""
   pullPolicy: IfNotPresent
   pullSecrets: [] # names of existing kubernetes.io/dockerconfigjson Secrets, if needed
 serviceAccount:

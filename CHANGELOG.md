@@ -9,6 +9,20 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ## [Unreleased]
 
+### Fixed
+
+- Reject all-zero and homogeneous hexadecimal `image.digest` sentinel values
+  in the Helm schema and chart-owned values preflight before Kubernetes
+  rendering. Validation now identifies `image.digest` and requires an
+  immutable digest from a published release handoff or verified
+  manifest-preserving mirror.
+
+### Changed
+
+- Replaced placeholder digest fixtures with a known published digest and
+  documented the supported private-registry mirroring and verification
+  boundary. Tag-only deployments remain unsupported.
+
 ## [0.5.0] - 2026-09-22
 
 ### Added

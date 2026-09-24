@@ -1,7 +1,8 @@
 replicaCount: 2
 
 image:
-  # Required: a fork-owned registry path and immutable pushed image digest.
+  # Required: a registry path and immutable digest from a published release
+  # handoff or a verified manifest-preserving mirror. Sentinels are rejected.
   repository: ""
   # Optional immutable release tag for registries that require a SemVer path.
   # The digest remains the authoritative image identity.

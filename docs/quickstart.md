@@ -87,6 +87,11 @@ test "$(oras manifest fetch --descriptor \
 Both references must contain `@sha256:`. Make the two fork GHCR packages
 public if cluster nodes will pull anonymously. Keep the manifest with the
 deployment handoff; do not replace its digests with mutable tags.
+All-zero and homogeneous hexadecimal sentinel digests are invalid even though
+they match the general SHA-256 shape. For a private registry, use a
+manifest-preserving copy, query the destination descriptor, and put that exact
+digest in values; static chart validation intentionally does not test registry
+reachability.
 
 ## 2. Create the namespace, signing key, and policy
 
@@ -151,6 +156,7 @@ Do not place policy data, keys, TLS material, or registry credentials in the
 values file. Then render and review:
 
 ```sh
+bash scripts/validate-chart-values.sh ./private/values.yaml
 helm lint charts/github-oidc-exchange -f ./private/values.yaml --strict
 helm template identity charts/github-oidc-exchange \
   --namespace "$IDENTITY_NAMESPACE" -f ./private/values.yaml \
