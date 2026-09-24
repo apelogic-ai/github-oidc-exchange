@@ -9,6 +9,22 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-24
+
+### Fixed
+
+- Reject all-zero and homogeneous hexadecimal `image.digest` sentinel values
+  in the Helm schema and chart-owned values preflight before Kubernetes
+  rendering. Validation now identifies `image.digest` and requires an
+  immutable digest from a published release handoff or verified
+  manifest-preserving mirror.
+
+### Changed
+
+- Replaced placeholder digest fixtures with a known published digest and
+  documented the supported private-registry mirroring and verification
+  boundary. Tag-only deployments remain unsupported.
+
 ## [0.5.0] - 2026-09-22
 
 ### Added
@@ -156,7 +172,8 @@ signatures, attestations, SBOMs, and vulnerability evidence.
   short-lived EKS-compatible ES256 token issuance.
 - Added signed image/chart release validation with immutable artifact digests.
 
-[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.3.8...v0.4.0
 [0.3.8]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.3.6...v0.3.8

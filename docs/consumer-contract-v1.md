@@ -1,13 +1,13 @@
 # Identity consumer contract v1
 
-Status: released with application/chart **0.5.0**. This document describes
+Status: released with application/chart **0.5.1**. This document describes
 the exact product protocol; it does not deploy any consumer. Consumer handoffs:
 [Steward #103](https://github.com/apelogic-ai/steward/issues/103) and
 [steward-run #41](https://github.com/apelogic-ai/steward-run/issues/41).
 Copy-ready enrollment, exchange-smoke, and steward-run caller examples are in
 the [customer integration guide](integration.md).
 
-Application 0.5.0 preserves this task-token consumer contract but requires the
+Application 0.5.1 preserves this task-token consumer contract and requires the
 task-only GitHub policy contract `github-oidc-exchange.apelogic.io/v5`.
 The removed Service Envelope bootstrap profile was not part of the task-token
 consumer contract. Upgrade existing installations with the
@@ -15,7 +15,7 @@ consumer contract. Upgrade existing installations with the
 
 | Item | Contract |
 | --- | --- |
-| Compatible application/chart | `github-oidc-exchange` `0.5.0` / Helm chart `0.5.0` together; test newer versions before adopting them. |
+| Compatible application/chart | `github-oidc-exchange` `0.5.1` / Helm chart `0.5.1` together; 0.5.0 has the same token protocol but lacks the stricter chart digest validation. Test newer versions before adopting them. |
 | Issuer | Exact HTTPS `config.issuerUrl`, with no trailing slash. Each consumer pins it exactly. |
 | Discovery | `GET {issuer}/.well-known/openid-configuration`; `issuer`, `jwks_uri`, and `token_endpoint` must match the configured issuer. |
 | Public keys | `GET {issuer}/jwks.json`; ES256 P-256 keys always, RS256 RSA keys only with workload exchange enabled. Pin accepted algorithms per token type; do not infer authorization from a key alone. |

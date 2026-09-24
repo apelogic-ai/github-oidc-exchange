@@ -1,4 +1,4 @@
-# Baseline customer quickstart — github-oidc-exchange 0.5.0
+# Baseline deployment quickstart — github-oidc-exchange 0.5.1
 
 This is the shortest supported path to a baseline GitHub Actions OIDC
 exchange. It deliberately excludes workload exchange and browser HOP-1. It
@@ -25,7 +25,7 @@ used.
 
 You need:
 
-- a clean checkout of the customer fork at the reviewed `0.5.0` source;
+- a clean checkout of the deployment fork at the reviewed `0.5.1` source;
 - GitHub CLI authentication allowed to run Actions, create a release, and
   publish packages in that fork;
 - Rust 1.95, Helm 3.17+, `kubectl`, `jq`, `oras`, and an explicit
@@ -40,7 +40,7 @@ Set the non-secret coordinates used below. Keep the GHCR owner lowercase.
 
 ```sh
 export IDENTITY_FORK=customer-org/github-oidc-exchange
-export IDENTITY_VERSION=0.5.0
+export IDENTITY_VERSION=0.5.1
 export IDENTITY_KUBECONFIG=/absolute/path/to/customer-kubeconfig
 export IDENTITY_CONTEXT=customer-context
 export IDENTITY_NAMESPACE=identity
@@ -52,7 +52,7 @@ export IDENTITY_AUDIENCE=customer-github-identity-exchange
 
 Run the AWS-free workflow from the fork's `main` branch. It builds native
 amd64/arm64 images, scans and smokes them, publishes the image and chart to the
-fork owner's GHCR, signs them, and creates `v0.5.0` with an immutable handoff.
+fork owner's GHCR, signs them, and creates `v0.5.1` with an immutable handoff.
 The version must match `Cargo.toml` and `Chart.yaml`, and the release/tag must
 not already exist in the fork.
 
@@ -87,6 +87,11 @@ test "$(oras manifest fetch --descriptor \
 Both references must contain `@sha256:`. Make the two fork GHCR packages
 public if cluster nodes will pull anonymously. Keep the manifest with the
 deployment handoff; do not replace its digests with mutable tags.
+All-zero and homogeneous hexadecimal sentinel digests are invalid even though
+they match the general SHA-256 shape. For a private registry, use a
+manifest-preserving copy, query the destination descriptor, and put that exact
+digest in values; static chart validation intentionally does not test registry
+reachability.
 
 ## 2. Create the namespace, signing key, and policy
 
@@ -103,7 +108,7 @@ umask 077
 install -d -m 0700 ./private
 install -m 0600 docs/policy-contract.example.json ./private/policy.json
 cargo run --locked --bin keyring-tool -- generate-es256 \
-  ./private/issuer-keyring.json issuer-0.5.0-a
+  ./private/issuer-keyring.json issuer-0.5.1-a
 cargo run --locked --bin keyring-tool -- validate-es256 \
   ./private/issuer-keyring.json
 
@@ -151,6 +156,7 @@ Do not place policy data, keys, TLS material, or registry credentials in the
 values file. Then render and review:
 
 ```sh
+bash scripts/validate-chart-values.sh ./private/values.yaml
 helm lint charts/github-oidc-exchange -f ./private/values.yaml --strict
 helm template identity charts/github-oidc-exchange \
   --namespace "$IDENTITY_NAMESPACE" -f ./private/values.yaml \

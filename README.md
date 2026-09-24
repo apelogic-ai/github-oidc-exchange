@@ -1,6 +1,6 @@
 # github-oidc-exchange
 
-`github-oidc-exchange` 0.5.0 is an MIT-licensed, fork-installable Kubernetes
+`github-oidc-exchange` 0.5.1 is an MIT-licensed, fork-installable Kubernetes
 identity service. Its baseline exchanges a short-lived GitHub Actions OIDC
 assertion for a two-minute ES256 token after exact, default-deny policy checks.
 An optional internal workload profile uses Kubernetes TokenReview and issues
@@ -18,14 +18,17 @@ adds copy-ready GitHub Actions and steward-run examples. The
 routes, audiences, TTL, trust, and compatible versions used by
 [Steward #103](https://github.com/apelogic-ai/steward/issues/103) and
 [steward-run #41](https://github.com/apelogic-ai/steward-run/issues/41).
-Release 0.5.0 uses the task-only GitHub policy contract v5. It removes the
+Release 0.5.1 retains the task-only GitHub policy contract v5 introduced in
+0.5.0. The 0.5.0 release removed the
 obsolete Service Envelope bootstrap profile and its privileged group without
 changing normal governed-task tokens. Existing operators must follow the
-atomic [v4-to-v5 upgrade guide](docs/upgrade-v0.5.0.md).
+atomic [v4-to-v5 upgrade guide](docs/upgrade-v0.5.0.md) when coming from
+0.4.0. Operators already on 0.5.0 should follow the
+[0.5.1 digest-validation upgrade guide](docs/upgrade-v0.5.1.md).
 
 | Release surface | Current status |
 | --- | --- |
-| Rust application and OCI Helm chart | `0.5.0` together; Kubernetes >=1.30, `linux/amd64`/`linux/arm64`. |
+| Rust application and OCI Helm chart | `0.5.1` together; Kubernetes >=1.30, `linux/amd64`/`linux/arm64`. |
 | GitHub Actions exchange | Baseline enabled with task-only policy `github-oidc-exchange.apelogic.io/v5`. Input: GitHub RS256 assertion for configured audience; output: ES256, `aud=steward-task-api`, `identity_contract=steward-task-v2`. Workflow claims remain signed provenance, not authorization selectors. |
 | Workload exchange | Off by default. Internal HTTPS Service port 8443 with customer PKI or cert-manager TLS, exact TokenReview audience and service-account policy; output: RS256, `aud=openshell-api`, `identity_contract=openshell-workload-v1`. |
 | Browser HOP-1 | Off by default; requires workload listener and public Steward JWKS, per [its v1 contract](docs/browser-hop1-contract-v1.md). |
@@ -38,6 +41,15 @@ private deployment storage and fill it deliberately. The chart references
 operator-owned Secrets/ConfigMaps; it never stores private keys, policy
 identity mappings, or TLS material in Helm values. The workload-only RSA,
 policy, TLS, and TokenReview permissions are absent from baseline mode.
+
+`image.digest` must be the exact immutable digest from a published release
+handoff or from a manifest-preserving mirror whose destination descriptor was
+verified. The chart rejects all-zero and homogeneous hexadecimal sentinel
+digests before rendering any Kubernetes object; tag-only deployment is not a
+fallback. Static validation does not contact the registry: the operator owns
+mirror authentication, registry reachability, and recording the verified
+destination digest. Run `bash scripts/validate-chart-values.sh VALUES_FILE`
+before install or reconciliation for an actionable values preflight.
 
 GitHub's ordinary `sub` can be admitted by exact observed value while signed
 numeric `repository_owner_id` and `repository_id` are checked independently.
@@ -80,6 +92,7 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
 bash scripts/validate-release.sh
 bash scripts/test-customer-chart.sh
+bash scripts/validate-chart-values.sh charts/github-oidc-exchange/examples/production-values.yaml
 bash scripts/test-install-inputs.sh
 bash scripts/test-kubectl-files.sh
 helm lint charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/test-values.yaml --strict

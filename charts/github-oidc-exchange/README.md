@@ -1,4 +1,4 @@
-# github-oidc-exchange Helm chart 0.5.0
+# github-oidc-exchange Helm chart 0.5.1
 
 Read the repository's [canonical installation guide](../../docs/installation.md)
 before deploying. It contains the exact prerequisites, Secret/ConfigMap bill
@@ -11,11 +11,12 @@ For the shortest baseline Gateway API path, use the
 [integration guide](../../docs/integration.md) for GitHub Actions and
 steward-run examples.
 
-Chart/application 0.5.0 requires the task-only GitHub policy v5. Operators
-upgrading from 0.4.0 must switch the image/chart and policy ConfigMap reference
-in one Helm revision; see the
-[v4-to-v5 upgrade guide](../../docs/upgrade-v0.5.0.md). Rollback restores the
-0.4.0/v4 pair, never only the image.
+Chart/application 0.5.1 requires the task-only GitHub policy v5. Operators
+upgrading from 0.5.0 retain policy v5 but must replace any sentinel image
+digest before upgrading; see the
+[0.5.1 upgrade guide](../../docs/upgrade-v0.5.1.md). Operators coming from
+0.4.0 must also follow the
+[v4-to-v5 upgrade guide](../../docs/upgrade-v0.5.0.md).
 
 This chart deliberately fails Helm validation until a customer supplies a
 fork-owned immutable image digest, HTTPS issuer, dedicated GitHub OIDC input
@@ -27,6 +28,17 @@ class and TLS Secret, or HTTPRoute attached to an existing HTTPS Gateway.
 No ALB, ECR, Secrets Manager, or ingress controller is assumed. Public TLS
 may be an existing customer-PKI Secret or a chart-created cert-manager
 Certificate; the Gateway owns TLS in HTTPRoute mode.
+
+`image.digest` must come from the selected release's signed handoff or from a
+verified manifest-preserving mirror. All-zero and other homogeneous
+hexadecimal sentinel digests are rejected by the published values schema.
+The chart does not test registry reachability during static validation; verify
+the destination descriptor after copying, then record that exact digest.
+For the clearest field-specific error before Helm or GitOps mutation, run:
+
+```sh
+bash scripts/validate-chart-values.sh /path/to/deployment-values.yaml
+```
 
 `workloadExchange.enabled=false` is baseline. Enabling it additionally
 requires a dedicated RSA-3072 keyring Secret, workload policy ConfigMap,
