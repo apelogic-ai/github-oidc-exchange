@@ -1361,6 +1361,20 @@ async fn github_source_provenance_accepts_valid_ref_kinds_and_rejects_inconsiste
         );
     }
 
+    let mut commit_pinned = claims();
+    commit_pinned.jti = "commit-pinned-workflows".to_owned();
+    commit_pinned.workflow_ref =
+        format!("apelogic-ai/steward-run/.github/workflows/roundtrip.yml@{CALLER_WORKFLOW_SHA}");
+    commit_pinned.job_workflow_ref = format!(
+        "apelogic-ai/identity-workflows/.github/workflows/steward-task.yml@{REUSABLE_WORKFLOW_SHA}"
+    );
+    assert!(
+        verifier
+            .verify(&signed_github_assertion(&commit_pinned, &encoding)?)
+            .await
+            .is_ok()
+    );
+
     let mut missing_login = claims();
     missing_login.actor = None;
     missing_login.jti = "missing-login".to_owned();
