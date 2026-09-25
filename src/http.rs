@@ -80,15 +80,16 @@ fn build_router<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 's
 ) -> Router {
     let application = Router::new()
         .route("/.well-known/openid-configuration", get(discovery::<L, R>))
-        .route(
-            "/.well-known/oauth-authorization-server",
-            get(discovery::<L, R>),
-        )
         .route("/jwks.json", get(jwks::<L, R>))
         .route("/v1/exchange", post(exchange::<L, R>))
         .route("/healthz", get(no_content))
         .route("/readyz", get(no_content))
-        .route("/metrics", get(metrics::<L, R>))
+        .route("/metrics", get(metrics::<L, R>));
+    let application = match authorization_server_metadata_path(&state.service.issuer) {
+        Some(path) => application.route(&path, get(discovery::<L, R>)),
+        None => application,
+    };
+    let application = application
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
             header::HeaderValue::from_static("nosniff"),
@@ -104,6 +105,14 @@ fn build_router<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 's
     application
         .layer(DefaultBodyLimit::max(1024))
         .with_state(state)
+}
+
+fn authorization_server_metadata_path(issuer: &str) -> Option<String> {
+    let issuer = reqwest::Url::parse(issuer).ok()?;
+    let issuer_path = issuer.path().trim_end_matches('/');
+    Some(format!(
+        "/.well-known/oauth-authorization-server{issuer_path}"
+    ))
 }
 
 fn build_workload_router<R: TokenReviewer + Clone + 'static, B: ReplayLedger + Clone + 'static>(

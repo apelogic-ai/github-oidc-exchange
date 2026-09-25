@@ -11,10 +11,9 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ### Fixed
 
-- Exposed RFC 8414 authorization-server metadata at
-  `/.well-known/oauth-authorization-server` while retaining the equivalent
-  OpenID discovery endpoint, including Helm routes and a steward-run request
-  regression fixture.
+- Exposed RFC 8414 authorization-server metadata at the path derived from the
+  configured issuer, while retaining the equivalent OpenID discovery endpoint,
+  including Helm routes and root/path issuer steward-run request fixtures.
 
 ## [0.6.0] - 2026-09-25
 

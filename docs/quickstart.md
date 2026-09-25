@@ -121,10 +121,17 @@ Validate both equivalent metadata endpoints without hard-coding the input
 audience:
 
 ```sh
-for metadata_path in \
-  /.well-known/oauth-authorization-server \
-  /.well-known/openid-configuration; do
-  curl -fsS "$IDENTITY_ISSUER$metadata_path" | \
+issuer_location="${IDENTITY_ISSUER#https://}"
+issuer_authority="${issuer_location%%/*}"
+issuer_path=""
+if [ "$issuer_location" != "$issuer_authority" ]; then
+  issuer_path="/${issuer_location#*/}"
+fi
+identity_origin="https://$issuer_authority"
+for metadata_url in \
+  "$identity_origin/.well-known/oauth-authorization-server$issuer_path" \
+  "$identity_origin/.well-known/openid-configuration"; do
+  curl -fsS "$metadata_url" | \
     jq -e --arg issuer "$IDENTITY_ISSUER" '
       .issuer == $issuer and
       .jwks_uri == ($issuer + "/jwks.json") and

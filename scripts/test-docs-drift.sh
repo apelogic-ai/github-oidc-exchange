@@ -84,6 +84,12 @@ jq -e '
   .headers.accept == "application/json" and
   .redirect == "manual"
 ' tests/fixtures/steward-run-authorization-server-request.json >/dev/null
+jq -e '
+  .method == "GET" and
+  .url == "https://identity.example.invalid/.well-known/oauth-authorization-server/tenant" and
+  .headers.accept == "application/json" and
+  .redirect == "manual"
+' tests/fixtures/steward-run-path-issuer-authorization-server-request.json >/dev/null
 
 for document in README.md docs/installation.md docs/integration.md \
   docs/consumer-contract-v1.md docs/upgrade-v0.6.0.md \
@@ -107,8 +113,13 @@ for route in /.well-known/oauth-authorization-server \
   /.well-known/openid-configuration; do
   grep -Fq "$route" src/http.rs
   grep -Fq "$route" docs/consumer-contract-v1.md
-  grep -Fq "$route" charts/github-oidc-exchange/templates/ingress.yaml
-  grep -Fq "$route" charts/github-oidc-exchange/templates/httproute.yaml
+done
+grep -Fq '/.well-known/oauth-authorization-server%s' \
+  charts/github-oidc-exchange/templates/_helpers.tpl
+for template in charts/github-oidc-exchange/templates/ingress.yaml \
+  charts/github-oidc-exchange/templates/httproute.yaml; do
+  grep -Fq 'github-oidc-exchange.authorizationServerMetadataPath' "$template"
+  grep -Fq '/.well-known/openid-configuration' "$template"
 done
 
 for phrase in \

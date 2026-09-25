@@ -15,6 +15,13 @@ app.kubernetes.io/name: {{ include "github-oidc-exchange.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
+{{- define "github-oidc-exchange.authorizationServerMetadataPath" -}}
+{{- $issuer := required "config.issuerUrl is required" .Values.config.issuerUrl -}}
+{{- $issuerPath := regexReplaceAll "^https://[^/]+" $issuer "" -}}
+{{- $issuerPath = regexReplaceAll "/+$" $issuerPath "" -}}
+{{- printf "/.well-known/oauth-authorization-server%s" $issuerPath -}}
+{{- end }}
+
 {{- define "github-oidc-exchange.validateImageDigest" -}}
 {{- $digest := default "" .Values.image.digest -}}
 {{- $sentinels := list

@@ -63,12 +63,14 @@ provenance.
 | GitHub output | ES256; `aud=["steward-task-api"]`; 120-second TTL; `steward-task-v2` for v5 or `steward-task-v3` for v6. |
 | Workload exchange | Off by default; internal HTTPS port 8443; exact TokenReview audience and service-account policy; RS256 `openshell-workload-v1`. |
 | Browser HOP-1 | Off by default; requires workload exchange and a public Steward JWKS; see its [v1 contract](docs/browser-hop1-contract-v1.md). |
-| Public routes | `/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`, `/jwks.json`, and `/v1/exchange` only. The workload route is never public. |
+| Public routes | RFC 8414 metadata at `{origin}/.well-known/oauth-authorization-server{issuer-path}`, retained OpenID metadata at `/.well-known/openid-configuration`, `/jwks.json`, and `/v1/exchange` only. The workload route is never public. |
 
 The RFC 8414 and OpenID metadata endpoints return the same discovery contract:
 the exact issuer, JWKS URI, GitHub exchange endpoint, exact GitHub OIDC input
 audience, supported policy versions, and supported output identity contracts.
 They expose no policy contents, signing material, or identity mappings.
+For example, issuer `https://identity.example.org/tenant` uses RFC 8414 path
+`/.well-known/oauth-authorization-server/tenant`.
 
 The chart has no operational defaults for image digest, issuer URL, inbound
 audience, policy/keyring references, or ingress source CIDRs. Copy

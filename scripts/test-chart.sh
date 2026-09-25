@@ -138,17 +138,41 @@ helm template ingress "$chart" --namespace identity \
   -f "$chart/ci/test-values.yaml" \
   --set ingress.tls.secretName=identity-public-tls >"$scratch/ingress.yaml"
 grep -Fq 'secretName: identity-public-tls' "$scratch/ingress.yaml"
-grep -Fq 'path: /.well-known/openid-configuration' "$scratch/ingress.yaml"
-grep -Fq 'path: /.well-known/oauth-authorization-server' "$scratch/ingress.yaml"
+grep -Fxq '          - path: /.well-known/openid-configuration' "$scratch/ingress.yaml"
+grep -Fxq '          - path: /.well-known/oauth-authorization-server' \
+  "$scratch/ingress.yaml"
 if grep -Fq 'alb.ingress.kubernetes.io' "$scratch/ingress.yaml"; then
   printf 'Ingress must not assume ALB\n' >&2
   exit 1
 fi
 
+helm template ingress-path-issuer "$chart" --namespace identity \
+  -f "$chart/ci/test-values.yaml" \
+  --set-string config.issuerUrl=https://identity.test.invalid/tenant \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.host=identity.test.invalid \
+  --set ingress.tls.secretName=identity-public-tls \
+  >"$scratch/ingress-path-issuer.yaml"
+grep -Fxq '          - path: /.well-known/oauth-authorization-server/tenant' \
+  "$scratch/ingress-path-issuer.yaml"
+! grep -Fxq '          - path: /.well-known/oauth-authorization-server' \
+  "$scratch/ingress-path-issuer.yaml"
+
 helm template gateway "$chart" --namespace identity \
   -f "$chart/examples/production-values.yaml" >"$scratch/gateway.yaml"
-grep -Fq 'value: /.well-known/openid-configuration' "$scratch/gateway.yaml"
-grep -Fq 'value: /.well-known/oauth-authorization-server' "$scratch/gateway.yaml"
+grep -Fxq '            value: /.well-known/openid-configuration' "$scratch/gateway.yaml"
+grep -Fxq '            value: /.well-known/oauth-authorization-server' \
+  "$scratch/gateway.yaml"
+
+helm template gateway-path-issuer "$chart" --namespace identity \
+  -f "$chart/examples/production-values.yaml" \
+  --set-string config.issuerUrl=https://identity.example.org/tenant \
+  >"$scratch/gateway-path-issuer.yaml"
+grep -Fxq '            value: /.well-known/oauth-authorization-server/tenant' \
+  "$scratch/gateway-path-issuer.yaml"
+! grep -Fxq '            value: /.well-known/oauth-authorization-server' \
+  "$scratch/gateway-path-issuer.yaml"
 
 helm template certificate "$chart" --namespace identity \
   -f "$chart/ci/test-values.yaml" \

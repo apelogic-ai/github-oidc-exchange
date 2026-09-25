@@ -1,0 +1,8 @@
+{
+  "method": "GET",
+  "url": "https://identity.example.invalid/.well-known/oauth-authorization-server/tenant",
+  "headers": {
+    "accept": "application/json"
+  },
+  "redirect": "manual"
+}
