@@ -31,6 +31,10 @@ deployment storage and select one route: Service-only behind an HTTPS proxy,
 Ingress with explicit class/TLS, or HTTPRoute attached to an existing HTTPS
 Gateway. No cloud provider or ingress implementation is assumed.
 
+Each exposure mode must publish `/.well-known/oauth-authorization-server`,
+the retained `/.well-known/openid-configuration`, `/jwks.json`, and
+`/v1/exchange`. Both metadata paths return the same discovery contract.
+
 `image.digest` must come from the release handoff or a verified
 manifest-preserving mirror. Placeholder and homogeneous digests are rejected;
 tag-only deployment is unsupported. Validate before mutation:

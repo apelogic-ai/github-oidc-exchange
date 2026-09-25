@@ -22,7 +22,7 @@ and v6 ConfigMaps. See the [0.6.0 upgrade guide](upgrade-v0.6.0.md).
 | Item | Contract |
 | --- | --- |
 | Issuer | Exact HTTPS `config.issuerUrl`, without a trailing slash. Consumers pin it exactly. |
-| Discovery | `GET {issuer}/.well-known/openid-configuration`. `issuer`, `jwks_uri`, `token_endpoint`, `github_oidc_exchange_endpoint`, `github_oidc_audience`, `identity_contracts_supported`, and `policy_versions_supported` are authoritative. |
+| Discovery | `GET {issuer}/.well-known/oauth-authorization-server` (RFC 8414). The retained `GET {issuer}/.well-known/openid-configuration` endpoint returns the same document. `issuer`, `jwks_uri`, `token_endpoint`, `github_oidc_exchange_endpoint`, `github_oidc_audience`, `identity_contracts_supported`, and `policy_versions_supported` are authoritative. |
 | Public keys | `GET {issuer}/jwks.json`. ES256 P-256 keys are always present; RS256 keys appear only with workload exchange. Consumers pin the accepted algorithm per token type. |
 | GitHub exchange | `POST {issuer}/v1/exchange` with `Authorization: Bearer <GitHub OIDC JWT>` and an empty body. Success returns `access_token`, `token_type=Bearer`, and `expires_in=120` with `Cache-Control: no-store`. Rejected assertions return 401; unavailable dependencies return 503. |
 | GitHub input trust | Exact GitHub issuer `https://token.actions.githubusercontent.com`, configured `github_oidc_audience`, RS256 signature/key, bounded time claims, single-use `jti`, numeric actor/owner/repository IDs, and consistent signed provenance. The job needs `permissions: id-token: write`. |

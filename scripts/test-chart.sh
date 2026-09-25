@@ -138,10 +138,17 @@ helm template ingress "$chart" --namespace identity \
   -f "$chart/ci/test-values.yaml" \
   --set ingress.tls.secretName=identity-public-tls >"$scratch/ingress.yaml"
 grep -Fq 'secretName: identity-public-tls' "$scratch/ingress.yaml"
+grep -Fq 'path: /.well-known/openid-configuration' "$scratch/ingress.yaml"
+grep -Fq 'path: /.well-known/oauth-authorization-server' "$scratch/ingress.yaml"
 if grep -Fq 'alb.ingress.kubernetes.io' "$scratch/ingress.yaml"; then
   printf 'Ingress must not assume ALB\n' >&2
   exit 1
 fi
+
+helm template gateway "$chart" --namespace identity \
+  -f "$chart/examples/production-values.yaml" >"$scratch/gateway.yaml"
+grep -Fq 'value: /.well-known/openid-configuration' "$scratch/gateway.yaml"
+grep -Fq 'value: /.well-known/oauth-authorization-server' "$scratch/gateway.yaml"
 
 helm template certificate "$chart" --namespace identity \
   -f "$chart/ci/test-values.yaml" \
