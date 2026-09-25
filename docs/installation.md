@@ -313,7 +313,7 @@ the existing `github-oidc-exchange-policy` v5 object.
 
 Copy [`values.example.yaml`](../charts/github-oidc-exchange/values.example.yaml)
 to a private deployment file, fill every mandatory empty field, and set
-`image.repository`, `image.digest`, exact `config.issuerUrl`, dedicated
+`image.repository`, `image.digest`, exact origin-only `config.issuerUrl`, dedicated
 `config.githubExchangeAudience`, `config.policyContract`, the matching
 `config.policyConfigMapName`, the keyring reference, and
 `networkPolicy.ingressCidrs` to the actual proxy/Gateway source CIDRs. The
@@ -334,12 +334,10 @@ one exposure option:
    Gateway listener, and `hostnames` containing the issuer DNS name. The
    Gateway owner controls TLS/certificate renewal and route acceptance.
 
-RFC 8414 inserts the well-known suffix before the issuer path. For issuer
-`https://identity.example.org/tenant`, expose
-`/.well-known/oauth-authorization-server/tenant`; for a root issuer, expose
-`/.well-known/oauth-authorization-server`. The chart derives this path from
-`config.issuerUrl`. The retained OpenID path remains
-`/.well-known/openid-configuration`.
+`config.issuerUrl` must be an HTTPS origin without a path, query, or fragment;
+both the chart schema and application startup reject path-bearing values. The
+RFC 8414 path is `/.well-known/oauth-authorization-server`, and the retained
+OpenID path is `/.well-known/openid-configuration`.
 
 For the behavior-preserving baseline, retain:
 
@@ -498,7 +496,7 @@ or raw authorization headers in evidence. Set `set +x` in token-handling jobs.
 | Test/action | Command or action | Expected non-secret result |
 | --- | --- | --- |
 | Pod/Service/RBAC | `kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" get pods,svc,deploy,role,rolebinding` | Two Ready replicas by default, ClusterIP ports 8080 (+8443 only with workload), namespaced Lease RBAC. No missing mounts/restarts. |
-| TLS/route | Probe the RFC 8414 URL `{origin}/.well-known/oauth-authorization-server{issuer-path}` and retained OpenID URL `{origin}/.well-known/openid-configuration` with `curl -fsS -o /dev/null -w '%{http_code}\n'`; run `openssl s_client -connect HOST:443 -servername HOST </dev/null` (inspect summary only). | Both metadata routes return HTTP 200 with a valid trusted external chain/SAN; neither workload path nor health/metrics is publicly routed. Ingress or Gateway reports accepted/ready; cert-manager Certificate `Ready=True` if used. |
+| TLS/route | Probe `$IDENTITY_ISSUER/.well-known/oauth-authorization-server` and `$IDENTITY_ISSUER/.well-known/openid-configuration` with `curl -fsS -o /dev/null -w '%{http_code}\n'`; run `openssl s_client -connect HOST:443 -servername HOST </dev/null` (inspect summary only). | Both metadata routes return HTTP 200 with a valid trusted external chain/SAN; neither workload path nor health/metrics is publicly routed. Ingress or Gateway reports accepted/ready; cert-manager Certificate `Ready=True` if used. |
 | Discovery/JWKS | Fetch both metadata documents, require them to be equal, and require exact issuer/JWKS/exchange URLs, exact `github_oidc_audience`, both entries in `identity_contracts_supported`, and both entries in `policy_versions_supported`; fetch JWKS and require an ES256 EC key. | Predicates pass; metadata contains no policy contents, identity mappings, or key material. Record only public `kid` values. |
 | Real admitted GitHub OIDC | From an admitted repository job with `id-token: write`, request a fresh assertion using the discovered audience; POST it as Bearer to `/v1/exchange`, save the response mode 0600, and verify status 200, `token_type=Bearer`, `expires_in=120`, signature, issuer, audience, selected contract, and source provenance. | v5 yields unchanged `steward-task-v2`; minimal v6 yields `steward-task-v3` with `actor_login` and no `email`, `email_verified`, or `groups`. The optional complete compatibility bundle yields all three legacy identity claims together. Replay returns 401. |
 | Negative GitHub admission | With fresh signed assertions, test wrong issuer/audience/signature/algorithm/key ID, expired/not-yet-valid times, malformed actor ID, wrong numeric owner/repository IDs, inconsistent provenance, and replay. Under v5 also test subject/event/ref/actor. Under v6 test only optional selectors that are present. | Each applicable denial returns 401. A 503 is dependency failure, not denial evidence. Omitted v6 selectors deliberately do not reject that dimension. |

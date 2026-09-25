@@ -85,11 +85,14 @@ jq -e '
   .redirect == "manual"
 ' tests/fixtures/steward-run-authorization-server-request.json >/dev/null
 jq -e '
-  .method == "GET" and
-  .url == "https://identity.example.invalid/.well-known/oauth-authorization-server/tenant" and
-  .headers.accept == "application/json" and
-  .redirect == "manual"
-' tests/fixtures/steward-run-path-issuer-authorization-server-request.json >/dev/null
+  .properties.config.properties.issuerUrl.pattern == "^https://[^/?#]+/?$"
+' charts/github-oidc-exchange/values.schema.json >/dev/null
+grep -Fq "!authority.contains('/')" src/config.rs
+for document in README.md docs/installation.md docs/quickstart.md \
+  docs/integration.md docs/consumer-contract-v1.md \
+  charts/github-oidc-exchange/README.md; do
+  grep -Fqi 'origin' "$document"
+done
 
 for document in README.md docs/installation.md docs/integration.md \
   docs/consumer-contract-v1.md docs/upgrade-v0.6.0.md \
@@ -113,13 +116,8 @@ for route in /.well-known/oauth-authorization-server \
   /.well-known/openid-configuration; do
   grep -Fq "$route" src/http.rs
   grep -Fq "$route" docs/consumer-contract-v1.md
-done
-grep -Fq '/.well-known/oauth-authorization-server%s' \
-  charts/github-oidc-exchange/templates/_helpers.tpl
-for template in charts/github-oidc-exchange/templates/ingress.yaml \
-  charts/github-oidc-exchange/templates/httproute.yaml; do
-  grep -Fq 'github-oidc-exchange.authorizationServerMetadataPath' "$template"
-  grep -Fq '/.well-known/openid-configuration' "$template"
+  grep -Fq "$route" charts/github-oidc-exchange/templates/ingress.yaml
+  grep -Fq "$route" charts/github-oidc-exchange/templates/httproute.yaml
 done
 
 for phrase in \

@@ -31,11 +31,10 @@ deployment storage and select one route: Service-only behind an HTTPS proxy,
 Ingress with explicit class/TLS, or HTTPRoute attached to an existing HTTPS
 Gateway. No cloud provider or ingress implementation is assumed.
 
-Each exposure mode must publish the RFC 8414 path derived from
-`config.issuerUrl`, the retained `/.well-known/openid-configuration`,
-`/jwks.json`, and `/v1/exchange`. For example, issuer path `/tenant` produces
-`/.well-known/oauth-authorization-server/tenant`. Both metadata paths return
-the same discovery contract.
+`config.issuerUrl` must be an HTTPS origin without a path, query, or fragment.
+Each exposure mode publishes `/.well-known/oauth-authorization-server`, the
+retained `/.well-known/openid-configuration`, `/jwks.json`, and `/v1/exchange`.
+Both metadata paths return the same discovery contract.
 
 `image.digest` must come from the release handoff or a verified
 manifest-preserving mirror. Placeholder and homogeneous digests are rejected;

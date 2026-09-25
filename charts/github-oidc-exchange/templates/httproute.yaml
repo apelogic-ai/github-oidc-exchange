@@ -34,7 +34,7 @@ spec:
     - matches:
         - path:
             type: Exact
-            value: {{ include "github-oidc-exchange.authorizationServerMetadataPath" . }}
+            value: /.well-known/oauth-authorization-server
       backendRefs: *backendRefs
     - matches:
         - path:

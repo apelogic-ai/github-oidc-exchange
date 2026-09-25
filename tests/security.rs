@@ -2025,97 +2025,81 @@ async fn steward_run_rfc8414_request_receives_the_existing_discovery_contract()
 -> Result<(), Box<dyn std::error::Error>> {
     install_test_crypto_provider()?;
     let (_, decoding) = rsa_key()?;
-    for (fixture_path, issuer) in [
-        (
-            "tests/fixtures/steward-run-authorization-server-request.json",
-            "https://identity.example.invalid",
-        ),
-        (
-            "tests/fixtures/steward-run-path-issuer-authorization-server-request.json",
-            "https://identity.example.invalid/tenant",
-        ),
-    ] {
-        let application = github_oidc_exchange::http::router(ExchangeService {
-            verifier: GitHubVerifier::with_test_key(
-                AUDIENCE.to_owned(),
-                "github-test-key".to_owned(),
-                decoding.clone(),
-            )
-            .await?,
-            policy: Arc::new(source_auth_policy()),
-            ledger: Arc::new(TestReplayLedger::default()),
-            keys: Arc::new(keyring()?),
-            issuer: issuer.to_owned(),
-            output_audience: "steward-task-api".to_owned(),
-            token_ttl: Duration::from_secs(120),
-            metrics: Arc::new(Metrics::default()),
-        });
-        let fixture: HttpRequestFixture = serde_json::from_slice(&fs::read(fixture_path)?)?;
-        assert_eq!(fixture.redirect, "manual");
-        assert_eq!(
-            fixture.headers.get("accept").map(String::as_str),
-            Some("application/json")
-        );
-        let request_url = reqwest::Url::parse(&fixture.url)?;
-        assert_eq!(
-            request_url.origin().ascii_serialization(),
-            "https://identity.example.invalid"
-        );
-        assert!(request_url.query().is_none());
-        let method = fixture.method.parse::<axum::http::Method>()?;
-        let accept = fixture
-            .headers
-            .get("accept")
-            .ok_or("steward-run request fixture must include accept")?;
-        let request = Request::builder()
-            .method(method)
-            .uri(request_url.path())
-            .header(header::ACCEPT, accept);
-        let rfc8414_response = application
-            .clone()
-            .oneshot(request.body(Body::empty())?)
-            .await?;
-        assert_eq!(rfc8414_response.status(), StatusCode::OK);
-        assert_eq!(
-            rfc8414_response.headers().get(header::CONTENT_TYPE),
-            Some(&header::HeaderValue::from_static("application/json"))
-        );
-        let rfc8414_body = rfc8414_response.into_body().collect().await?.to_bytes();
-        assert!(rfc8414_body.len() <= 4_096);
-        let rfc8414_metadata: serde_json::Value = serde_json::from_slice(&rfc8414_body)?;
+    let application = github_oidc_exchange::http::router(ExchangeService {
+        verifier: GitHubVerifier::with_test_key(
+            AUDIENCE.to_owned(),
+            "github-test-key".to_owned(),
+            decoding,
+        )
+        .await?,
+        policy: Arc::new(source_auth_policy()),
+        ledger: Arc::new(TestReplayLedger::default()),
+        keys: Arc::new(keyring()?),
+        issuer: "https://identity.example.invalid".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    });
+    let fixture: HttpRequestFixture = serde_json::from_slice(&fs::read(
+        "tests/fixtures/steward-run-authorization-server-request.json",
+    )?)?;
+    assert_eq!(fixture.redirect, "manual");
+    assert_eq!(
+        fixture.headers.get("accept").map(String::as_str),
+        Some("application/json")
+    );
+    let request_url = reqwest::Url::parse(&fixture.url)?;
+    assert_eq!(
+        request_url.origin().ascii_serialization(),
+        "https://identity.example.invalid"
+    );
+    assert!(request_url.query().is_none());
+    let method = fixture.method.parse::<axum::http::Method>()?;
+    let accept = fixture
+        .headers
+        .get("accept")
+        .ok_or("steward-run request fixture must include accept")?;
+    let request = Request::builder()
+        .method(method)
+        .uri(request_url.path())
+        .header(header::ACCEPT, accept);
+    let rfc8414_response = application
+        .clone()
+        .oneshot(request.body(Body::empty())?)
+        .await?;
+    assert_eq!(rfc8414_response.status(), StatusCode::OK);
+    assert_eq!(
+        rfc8414_response.headers().get(header::CONTENT_TYPE),
+        Some(&header::HeaderValue::from_static("application/json"))
+    );
+    let rfc8414_body = rfc8414_response.into_body().collect().await?.to_bytes();
+    assert!(rfc8414_body.len() <= 4_096);
+    let rfc8414_metadata: serde_json::Value = serde_json::from_slice(&rfc8414_body)?;
 
-        if issuer.ends_with("/tenant") {
-            let underived_response = application
-                .clone()
-                .oneshot(
-                    Request::get("/.well-known/oauth-authorization-server").body(Body::empty())?,
-                )
-                .await?;
-            assert_eq!(underived_response.status(), StatusCode::NOT_FOUND);
-        }
-
-        let openid_response = application
-            .oneshot(Request::get("/.well-known/openid-configuration").body(Body::empty())?)
-            .await?;
-        assert_eq!(openid_response.status(), StatusCode::OK);
-        let openid_metadata: serde_json::Value =
-            serde_json::from_slice(&openid_response.into_body().collect().await?.to_bytes())?;
-        assert_eq!(rfc8414_metadata, openid_metadata);
-        assert_eq!(rfc8414_metadata["issuer"], issuer);
-        assert_eq!(
-            rfc8414_metadata["token_endpoint"],
-            format!("{issuer}/v1/exchange")
-        );
-        assert_eq!(rfc8414_metadata["github_oidc_audience"], AUDIENCE);
-        assert_eq!(
-            rfc8414_metadata["identity_contracts_supported"],
-            serde_json::json!([IDENTITY_CONTRACT, SOURCE_AUTH_IDENTITY_CONTRACT])
-        );
-        assert_eq!(
-            rfc8414_metadata["policy_versions_supported"],
-            serde_json::json!([POLICY_VERSION, SOURCE_AUTH_POLICY_VERSION])
-        );
-    }
+    let openid_response = application
+        .oneshot(Request::get("/.well-known/openid-configuration").body(Body::empty())?)
+        .await?;
+    assert_eq!(openid_response.status(), StatusCode::OK);
+    let openid_metadata: serde_json::Value =
+        serde_json::from_slice(&openid_response.into_body().collect().await?.to_bytes())?;
+    assert_eq!(rfc8414_metadata, openid_metadata);
+    assert_eq!(
+        rfc8414_metadata["issuer"],
+        "https://identity.example.invalid"
+    );
+    assert_eq!(
+        rfc8414_metadata["token_endpoint"],
+        "https://identity.example.invalid/v1/exchange"
+    );
+    assert_eq!(rfc8414_metadata["github_oidc_audience"], AUDIENCE);
+    assert_eq!(
+        rfc8414_metadata["identity_contracts_supported"],
+        serde_json::json!([IDENTITY_CONTRACT, SOURCE_AUTH_IDENTITY_CONTRACT])
+    );
+    assert_eq!(
+        rfc8414_metadata["policy_versions_supported"],
+        serde_json::json!([POLICY_VERSION, SOURCE_AUTH_POLICY_VERSION])
+    );
     Ok(())
 }
 

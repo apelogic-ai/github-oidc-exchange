@@ -15,7 +15,7 @@ serviceAccount:
   name: github-oidc-exchange
   annotations: {}
 config:
-  issuerUrl: "" # externally trusted HTTPS URL, exact token issuer
+  issuerUrl: "" # externally trusted HTTPS origin, exact token issuer; no path/query/fragment
   githubExchangeAudience: "" # dedicated GitHub Actions OIDC request audience
   outputAudience: steward-task-api # protocol constant, not configurable
   policyContract: github-oidc-exchange.apelogic.io/v5 # unchanged default; v6 activation is explicit

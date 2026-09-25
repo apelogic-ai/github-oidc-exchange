@@ -84,7 +84,8 @@ cp charts/github-oidc-exchange/values.example.yaml ./private/values.yaml
 Set:
 
 - `image.repository` and exact `image.digest` from the handoff;
-- `config.issuerUrl` to `IDENTITY_ISSUER`;
+- `config.issuerUrl` to the origin-only `IDENTITY_ISSUER` (no path, query, or
+  fragment);
 - `config.githubExchangeAudience` to a dedicated bounded value;
 - `config.policyContract: github-oidc-exchange.apelogic.io/v5`;
 - `config.policyConfigMapName: github-oidc-exchange-policy`;
@@ -121,16 +122,10 @@ Validate both equivalent metadata endpoints without hard-coding the input
 audience:
 
 ```sh
-issuer_location="${IDENTITY_ISSUER#https://}"
-issuer_authority="${issuer_location%%/*}"
-issuer_path=""
-if [ "$issuer_location" != "$issuer_authority" ]; then
-  issuer_path="/${issuer_location#*/}"
-fi
-identity_origin="https://$issuer_authority"
-for metadata_url in \
-  "$identity_origin/.well-known/oauth-authorization-server$issuer_path" \
-  "$identity_origin/.well-known/openid-configuration"; do
+for metadata_path in \
+  /.well-known/oauth-authorization-server \
+  /.well-known/openid-configuration; do
+  metadata_url="$IDENTITY_ISSUER$metadata_path"
   curl -fsS "$metadata_url" | \
     jq -e --arg issuer "$IDENTITY_ISSUER" '
       .issuer == $issuer and

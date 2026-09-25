@@ -12,17 +12,9 @@ audience from discovery:
 
 ```sh
 export IDENTITY_ISSUER=https://identity.example.org
-issuer_location="${IDENTITY_ISSUER#https://}"
-issuer_authority="${issuer_location%%/*}"
-issuer_path=""
-if [ "$issuer_location" != "$issuer_authority" ]; then
-  issuer_path="/${issuer_location#*/}"
-fi
-identity_origin="https://$issuer_authority"
-discovery_url="$identity_origin/.well-known/oauth-authorization-server$issuer_path"
 discovery_file="$(mktemp)"
 chmod 0600 "$discovery_file"
-curl -fsS "$discovery_url" >"$discovery_file"
+curl -fsS "$IDENTITY_ISSUER/.well-known/oauth-authorization-server" >"$discovery_file"
 jq -e --arg issuer "$IDENTITY_ISSUER" '
   .issuer == $issuer and
   .github_oidc_exchange_endpoint == ($issuer + "/v1/exchange") and
@@ -35,10 +27,9 @@ export IDENTITY_AUDIENCE="$(jq -er .github_oidc_audience "$discovery_file")"
 rm "$discovery_file"
 ```
 
-The RFC 8414 URL inserts `/.well-known/oauth-authorization-server` before the
-issuer path. The retained
-`$identity_origin/.well-known/openid-configuration` endpoint returns the same
-metadata document for integrations that already use OpenID discovery.
+Identity requires `IDENTITY_ISSUER` to be an HTTPS origin without a path, query,
+or fragment. The retained `/.well-known/openid-configuration` endpoint returns
+the same metadata document for integrations that already use OpenID discovery.
 
 The GitHub input audience differs from the fixed output audience
 `steward-task-api`. Neither flow uses a GitHub OAuth App.

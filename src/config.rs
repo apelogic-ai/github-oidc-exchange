@@ -45,7 +45,7 @@ pub struct BrowserHop1Config {
 pub enum ConfigError {
     #[error("required environment variable {0} is missing")]
     Missing(&'static str),
-    #[error("ISSUER_URL must be an absolute HTTPS URL without a query or fragment")]
+    #[error("ISSUER_URL must be an HTTPS origin without a path, query, or fragment")]
     InvalidIssuer,
     #[error("OUTPUT_AUDIENCE must be steward-task-api")]
     InvalidOutputAudience,
@@ -79,16 +79,12 @@ pub enum ConfigError {
 
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
-        let issuer_url = required("ISSUER_URL")?.trim_end_matches('/').to_owned();
-        let parsed = reqwest::Url::parse(&issuer_url).map_err(|_| ConfigError::InvalidIssuer)?;
-        if parsed.scheme() != "https"
-            || issuer_url.len() > 2_048
-            || parsed.host_str().is_none()
-            || !parsed.username().is_empty()
-            || parsed.password().is_some()
-            || parsed.query().is_some()
-            || parsed.fragment().is_some()
-        {
+        let issuer_url = required("ISSUER_URL")?;
+        let issuer_url = issuer_url
+            .strip_suffix('/')
+            .unwrap_or(&issuer_url)
+            .to_owned();
+        if !valid_issuer_url(&issuer_url) {
             return Err(ConfigError::InvalidIssuer);
         }
         let output_audience = required("OUTPUT_AUDIENCE")?;
@@ -218,6 +214,22 @@ fn valid_https_url(value: &str) -> bool {
     })
 }
 
+fn valid_issuer_url(value: &str) -> bool {
+    let Some((_, authority)) = value.split_once("://") else {
+        return false;
+    };
+    !authority.contains('/')
+        && value.len() <= 2_048
+        && reqwest::Url::parse(value).is_ok_and(|parsed| {
+            parsed.scheme() == "https"
+                && parsed.host_str().is_some()
+                && parsed.username().is_empty()
+                && parsed.password().is_none()
+                && parsed.query().is_none()
+                && parsed.fragment().is_none()
+        })
+}
+
 fn valid_exchange_audience(value: &str) -> bool {
     !value.is_empty() && value.len() <= 255 && value.bytes().all(|byte| byte.is_ascii_graphic())
 }
@@ -232,6 +244,13 @@ mod tests {
 
     #[test]
     fn discovery_inputs_are_bounded_and_policy_activation_is_versioned() {
+        assert!(valid_issuer_url("https://identity.example.test"));
+        assert!(valid_issuer_url("https://identity.example.test:8443"));
+        assert!(!valid_issuer_url("https://identity.example.test/"));
+        assert!(!valid_issuer_url("https://identity.example.test/tenant"));
+        assert!(!valid_issuer_url("https://identity.example.test/tenant/"));
+        assert!(!valid_issuer_url("https://identity.example.test?tenant=1"));
+        assert!(!valid_issuer_url("https://identity.example.test#tenant"));
         assert!(valid_exchange_audience("github-identity-exchange"));
         assert!(valid_exchange_audience(&"a".repeat(255)));
         assert!(!valid_exchange_audience(""));
