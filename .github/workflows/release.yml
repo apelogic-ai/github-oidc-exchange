@@ -562,7 +562,9 @@ jobs:
           set -euo pipefail
           policy_contract="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
           identity_contract="$(sed -n 's/^pub const IDENTITY_CONTRACT: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
-          [[ -n "$policy_contract" && -n "$identity_contract" ]]
+          source_auth_policy_contract="$(sed -n 's/^pub const SOURCE_AUTH_POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
+          source_auth_identity_contract="$(sed -n 's/^pub const SOURCE_AUTH_IDENTITY_CONTRACT: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
+          [[ -n "$policy_contract" && -n "$identity_contract" && -n "$source_auth_policy_contract" && -n "$source_auth_identity_contract" ]]
           jq -n \
             --arg version "$VERSION" \
             --arg commit "$GITHUB_SHA" \
@@ -578,8 +580,10 @@ jobs:
             --arg ecr_chart_digest "${{ steps.chart.outputs.digest }}" \
             --arg policy_contract "$policy_contract" \
             --arg identity_contract "$identity_contract" \
+            --arg source_auth_policy_contract "$source_auth_policy_contract" \
+            --arg source_auth_identity_contract "$source_auth_identity_contract" \
             --slurpfile platforms dist/image-platforms.json \
-            '{version:$version,commit:$commit,release_url:$release_url,workflow_run_url:$workflow_run_url,image:$image,chart:$chart,ecr_image:$ecr_image,ecr_chart:$ecr_chart,public_image_digest:$public_image_digest,public_chart_digest:$public_chart_digest,ecr_image_digest:$ecr_image_digest,ecr_chart_digest:$ecr_chart_digest,image_platforms:$platforms[0],public_distribution:{registry:"ghcr.io",anonymous_pull_verified:true,byte_identical_to_ecr:true},policy_contract:$policy_contract,identity_contract:$identity_contract}' \
+            '{version:$version,commit:$commit,release_url:$release_url,workflow_run_url:$workflow_run_url,image:$image,chart:$chart,ecr_image:$ecr_image,ecr_chart:$ecr_chart,public_image_digest:$public_image_digest,public_chart_digest:$public_chart_digest,ecr_image_digest:$ecr_image_digest,ecr_chart_digest:$ecr_chart_digest,image_platforms:$platforms[0],public_distribution:{registry:"ghcr.io",anonymous_pull_verified:true,byte_identical_to_ecr:true},policy_contract:$policy_contract,identity_contract:$identity_contract,supported_policy_contracts:[$policy_contract,$source_auth_policy_contract],supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]}' \
             > dist/release-manifest.json
           identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
           cosign sign-blob --yes --bundle dist/release-manifest.sigstore.json dist/release-manifest.json

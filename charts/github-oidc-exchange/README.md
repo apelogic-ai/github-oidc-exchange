@@ -1,65 +1,55 @@
-# github-oidc-exchange Helm chart 0.5.1
+# github-oidc-exchange Helm chart 0.6.0
 
-Read the repository's [canonical installation guide](../../docs/installation.md)
-before deploying. It contains the exact prerequisites, Secret/ConfigMap bill
-of materials, TLS modes, fork-owned artifact publication, upgrade/rollback,
-rotation, post-install procedures, and live delivery checklist. The
-[consumer contract v1](../../docs/consumer-contract-v1.md) lists routes,
-audiences, token claims, and supported application/chart versions.
-For the shortest baseline Gateway API path, use the
-[customer quickstart](../../docs/quickstart.md); use the
-[integration guide](../../docs/integration.md) for GitHub Actions and
-steward-run examples.
+Read the [installation guide](../../docs/installation.md) before deploying.
+The [quickstart](../../docs/quickstart.md) covers the default v5 path; the
+[integration guide](../../docs/integration.md) covers GitHub Actions and
+Steward; the [consumer contracts](../../docs/consumer-contract-v1.md) define
+token verification.
 
-Chart/application 0.5.1 requires the task-only GitHub policy v5. Operators
-upgrading from 0.5.0 retain policy v5 but must replace any sentinel image
-digest before upgrading; see the
-[0.5.1 upgrade guide](../../docs/upgrade-v0.5.1.md). Operators coming from
-0.4.0 must also follow the
-[v4-to-v5 upgrade guide](../../docs/upgrade-v0.5.0.md).
+## GitHub policy selection
 
-This chart deliberately fails Helm validation until a customer supplies a
-fork-owned immutable image digest, HTTPS issuer, dedicated GitHub OIDC input
-audience, policy ConfigMap, ES256 keyring Secret, rollout revisions, and
-trusted ingress/proxy CIDRs. Copy [`values.example.yaml`](values.example.yaml)
-to private deployment storage, fill its empty mandatory fields, and select
-one route: Service-only behind a customer HTTPS proxy, Ingress with an explicit
-class and TLS Secret, or HTTPRoute attached to an existing HTTPS Gateway.
-No ALB, ECR, Secrets Manager, or ingress controller is assumed. Public TLS
-may be an existing customer-PKI Secret or a chart-created cert-manager
-Certificate; the Gateway owns TLS in HTTPRoute mode.
+Chart/application 0.6.0 supports both policies:
 
-`image.digest` must come from the selected release's signed handoff or from a
-verified manifest-preserving mirror. All-zero and other homogeneous
-hexadecimal sentinel digests are rejected by the published values schema.
-The chart does not test registry reachability during static validation; verify
-the destination descriptor after copying, then record that exact digest.
-For the clearest field-specific error before Helm or GitOps mutation, run:
+| `config.policyContract` | Policy object | Output |
+| --- | --- | --- |
+| `github-oidc-exchange.apelogic.io/v5` | Existing v5 ConfigMap; chart default | Unchanged `steward-task-v2` |
+| `github-oidc-exchange.apelogic.io/v6` | Separately named v6 ConfigMap; explicit opt-in | `steward-task-v3` |
+
+The chart passes the selected contract to the application as
+`EXPECTED_POLICY_VERSION`; startup fails if the mounted document does not
+match. An application upgrade with the default and existing v5 ConfigMap is
+behavior-preserving. Never modify the v5 object to activate v6. Create a
+separate v6 ConfigMap, change `policyContract`, `policyConfigMapName`, and
+`rolloutRevisions.githubPolicy` in one Helm revision. Roll back that Helm
+revision as a unit. See the [0.6.0 upgrade guide](../../docs/upgrade-v0.6.0.md).
+
+The chart deliberately fails validation until the operator supplies an
+immutable image digest, HTTPS issuer, dedicated GitHub OIDC input audience,
+policy ConfigMap, ES256 keyring Secret, rollout revisions, and trusted ingress
+source CIDRs. Copy [`values.example.yaml`](values.example.yaml) to private
+deployment storage and select one route: Service-only behind an HTTPS proxy,
+Ingress with explicit class/TLS, or HTTPRoute attached to an existing HTTPS
+Gateway. No cloud provider or ingress implementation is assumed.
+
+`image.digest` must come from the release handoff or a verified
+manifest-preserving mirror. Placeholder and homogeneous digests are rejected;
+tag-only deployment is unsupported. Validate before mutation:
 
 ```sh
 bash scripts/validate-chart-values.sh /path/to/deployment-values.yaml
+helm lint charts/github-oidc-exchange \
+  -f /path/to/deployment-values.yaml --strict
 ```
 
 `workloadExchange.enabled=false` is baseline. Enabling it additionally
 requires a dedicated RSA-3072 keyring Secret, workload policy ConfigMap,
-server-authenticated TLS Secret, TokenReview ClusterRole/Binding, an exact
-TokenReview audience, and nonempty caller namespace/pod selectors. Its
-internal HTTPS path is never added to the public route. Internal TLS may be
-an existing customer-PKI Secret or a chart-created cert-manager Certificate;
-the caller must receive the public CA bundle and verify the Service DNS SAN.
-The optional `browserHop1` feature requires workload exchange and a public
+server-authenticated TLS Secret, TokenReview RBAC, exact input audience, and
+nonempty caller namespace/pod selectors. Its internal HTTPS route is never
+public. Browser HOP-1 additionally requires workload exchange and a public
 Steward JWKS ConfigMap.
 
-```sh
-# Default values fail intentionally; the CI fixtures are not install profiles.
-helm lint charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/test-values.yaml --strict
-helm lint charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/workload-values.yaml --strict
-bash scripts/test-customer-chart.sh
-```
-
-Chart values contain object references only, never private key/policy/TLS
-contents. The Deployment hashes each reference plus an opaque
-`rolloutRevisions` value into its Pod template. After projecting a changed
-input, bump **only** its matching revision and wait for rollout; the process
-does not hot-reload signing keys or internal TLS. Maintain overlapping
-signing keys/trust through the token TTL plus skew and rollback window.
+Chart values contain object references only, never private key, policy, TLS,
+or registry credential contents. Projected inputs do not hot-reload. After a
+verified object change, bump only its corresponding `rolloutRevisions` value
+and wait for rollout. Preserve key overlap and both versioned policy objects
+through the rollback window.

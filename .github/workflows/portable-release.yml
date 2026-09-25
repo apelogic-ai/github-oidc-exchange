@@ -53,7 +53,7 @@ jobs:
       - name: Verify source and chart contracts
         run: |
           set -euo pipefail
-          bash scripts/test-customer-chart.sh
+          bash scripts/test-chart.sh
           bash scripts/test-portable-release.sh
           helm package charts/github-oidc-exchange --destination "$RUNNER_TEMP"
       - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
@@ -253,7 +253,9 @@ jobs:
           set -euo pipefail
           policy_contract="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
           identity_contract="$(sed -n 's/^pub const IDENTITY_CONTRACT: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
-          [[ -n "$policy_contract" && -n "$identity_contract" ]]
+          source_auth_policy_contract="$(sed -n 's/^pub const SOURCE_AUTH_POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
+          source_auth_identity_contract="$(sed -n 's/^pub const SOURCE_AUTH_IDENTITY_CONTRACT: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
+          [[ -n "$policy_contract" && -n "$identity_contract" && -n "$source_auth_policy_contract" && -n "$source_auth_identity_contract" ]]
           jq -n --arg version "$VERSION" --arg commit "$GITHUB_SHA" \
             --arg release_url "https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" \
             --arg workflow_run_url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
@@ -262,7 +264,9 @@ jobs:
             --arg amd64 "${{ needs.build-amd64.outputs.digest }}" \
             --arg arm64 "${{ needs.build-arm64.outputs.digest }}" \
             --arg policy_contract "$policy_contract" --arg identity_contract "$identity_contract" \
-            '{version:$version,commit:$commit,release_url:$release_url,workflow_run_url:$workflow_run_url,image:$image,chart:$chart,public_image_digest:$image_digest,public_chart_digest:$chart_digest,image_platforms:{linux:{amd64:$amd64,arm64:$arm64}},public_distribution:{registry:"ghcr.io"},policy_contract:$policy_contract,identity_contract:$identity_contract}' \
+            --arg source_auth_policy_contract "$source_auth_policy_contract" \
+            --arg source_auth_identity_contract "$source_auth_identity_contract" \
+            '{version:$version,commit:$commit,release_url:$release_url,workflow_run_url:$workflow_run_url,image:$image,chart:$chart,public_image_digest:$image_digest,public_chart_digest:$chart_digest,image_platforms:{linux:{amd64:$amd64,arm64:$arm64}},public_distribution:{registry:"ghcr.io"},policy_contract:$policy_contract,identity_contract:$identity_contract,supported_policy_contracts:[$policy_contract,$source_auth_policy_contract],supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]}' \
             > "$RUNNER_TEMP/release-manifest.json"
           identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/portable-release.yml@$GITHUB_REF"
           cosign sign-blob --yes --bundle "$RUNNER_TEMP/release-manifest.sigstore.json" "$RUNNER_TEMP/release-manifest.json"

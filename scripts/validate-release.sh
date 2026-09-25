@@ -86,8 +86,12 @@ required=(
   '--notes-file "docs/releases/v$VERSION.md"'
   '--arg policy_contract "$policy_contract"'
   '--arg identity_contract "$identity_contract"'
+  '--arg source_auth_policy_contract "$source_auth_policy_contract"'
+  '--arg source_auth_identity_contract "$source_auth_identity_contract"'
   'policy_contract:$policy_contract'
   'identity_contract:$identity_contract'
+  'supported_policy_contracts:[$policy_contract,$source_auth_policy_contract]'
+  'supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]'
 )
 
 for contract in "${required[@]}"; do

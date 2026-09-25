@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/apelogic-ai/github-oidc-exchange/blob/main/docs/policy-contract-v6.schema.json",
+  "title": "github-oidc-exchange source-authentication policy v6",
+  "type": "object",
+  "required": ["version", "service_group", "repositories"],
+  "properties": {
+    "version": {"const": "github-oidc-exchange.apelogic.io/v6"},
+    "service_group": {
+      "type": "string",
+      "pattern": "^agents\\.apelogic\\.ai/service-principal:[^\\s]+$"
+    },
+    "acting_group_prefix": {"const": "agents.apelogic.ai/acting-user:"},
+    "allowed_email_domains": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+      }
+    },
+    "repositories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["owner_id", "repository_id"],
+        "properties": {
+          "owner_id": {"type": "string", "pattern": "^[0-9]{1,20}$"},
+          "repository_id": {"type": "string", "pattern": "^[0-9]{1,20}$"},
+          "subjects": {"$ref": "#/$defs/subjects"},
+          "events": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
+          "refs": {"$ref": "#/$defs/nonEmptyUniqueStrings"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "actors": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[0-9]{1,20}$": {
+          "type": "object",
+          "required": ["email", "canonical_user_id", "verified"],
+          "properties": {
+            "email": {"type": "string", "pattern": "^[^@\\sA-Z]+@[^@\\sA-Z]+$"},
+            "canonical_user_id": {"type": "string", "pattern": "^usr_[0-9a-f]{32}$"},
+            "verified": {"const": true}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "anyOf": [
+          {"required": ["acting_group_prefix"]},
+          {"required": ["allowed_email_domains"]}
+        ]
+      },
+      "then": {"required": ["actors"]}
+    }
+  ],
+  "$defs": {
+    "nonEmptyUniqueStrings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "subjects": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 6,
+        "maxLength": 2048,
+        "pattern": "^repo:[!-~]+$"
+      }
+    }
+  },
+  "additionalProperties": false
+}

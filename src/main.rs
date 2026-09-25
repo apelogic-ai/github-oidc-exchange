@@ -28,7 +28,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let config = Config::from_env()?;
     let browser_hop1_config = config.browser_hop1.clone();
-    let policy = Arc::new(Policy::load(&config.policy_file)?);
+    let policy = Policy::load(&config.policy_file)?;
+    if policy.version != config.expected_policy_version {
+        return Err(std::io::Error::other(
+            "loaded policy version does not match EXPECTED_POLICY_VERSION",
+        )
+        .into());
+    }
+    let policy = Arc::new(policy);
     let keys = Arc::new(KeyRing::load(&config.keyring_file, Utc::now())?);
     let ledger = Arc::new(KubernetesLeaseReplayLedger::in_cluster(
         config.replay_lease_namespace.clone(),

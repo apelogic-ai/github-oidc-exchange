@@ -1,159 +1,99 @@
-# Baseline deployment quickstart — github-oidc-exchange 0.5.1
+# Baseline deployment quickstart — github-oidc-exchange 0.6.0
 
-This is the shortest supported path to a baseline GitHub Actions OIDC
-exchange. It deliberately excludes workload exchange and browser HOP-1. It
-assumes Kubernetes 1.30 or newer, an existing HTTPS Gateway API listener, a
-customer fork, and public fork-owned GHCR packages. Use the
-[full installation guide](installation.md) for Ingress, a separate HTTPS
-proxy, private registries, customer CA distribution, workload exchange,
-rotation, upgrade, rollback, and uninstall.
+This path installs the 0.6.0 chart with the unchanged v5 policy and
+`steward-task-v2` output. It assumes an existing Kubernetes cluster, HTTPS
+Gateway, DNS/certificate, and a published immutable image/chart handoff.
+Use the [installation guide](installation.md) for other exposure modes,
+private registries, rotation, optional workload exchange, and uninstall.
 
-This quickstart creates a task-only GitHub policy v5. If upgrading an existing
-0.4.0 deployment, use the [v4-to-v5 migration guide](upgrade-v0.5.0.md)
-instead of replacing the policy in place.
+The v6 source-authentication policy is not enabled by this quickstart. After a
+v5 deployment passes, use the [0.6.0 upgrade guide](upgrade-v0.6.0.md) to opt
+in with a separate v6 ConfigMap and atomic rollback plan.
 
-The result is an Identity deployment with three public routes:
+## 1. Pin the environment and artifacts
 
-- `GET /.well-known/openid-configuration`
-- `GET /jwks.json`
-- `POST /v1/exchange`
-
-The workload endpoint is not enabled or exposed. A GitHub OAuth App is not
-used.
-
-## Before starting
-
-You need:
-
-- a clean checkout of the deployment fork at the reviewed `0.5.1` source;
-- GitHub CLI authentication allowed to run Actions, create a release, and
-  publish packages in that fork;
-- Rust 1.95, Helm 3.17+, `kubectl`, `jq`, `oras`, and an explicit
-  kubeconfig/context;
-- a DNS name and existing HTTPS Gateway listener whose certificate covers it;
-- the Gateway name, namespace, listener section name, and source CIDRs seen by
-  the Identity Pod;
-- a private, access-restricted repository in which to observe the real GitHub
-  OIDC claims and run the final exchange test.
-
-Set the non-secret coordinates used below. Keep the GHCR owner lowercase.
+Required tools: Rust 1.95, Helm 3.17+, `kubectl`, `jq`, `oras`, and an explicit
+kubeconfig/context. Start from the reviewed 0.6.0 source.
 
 ```sh
-export IDENTITY_FORK=customer-org/github-oidc-exchange
-export IDENTITY_VERSION=0.5.1
-export IDENTITY_KUBECONFIG=/absolute/path/to/customer-kubeconfig
-export IDENTITY_CONTEXT=customer-context
+export IDENTITY_VERSION=0.6.0
+export IDENTITY_KUBECONFIG=/absolute/path/to/cluster-kubeconfig
+export IDENTITY_CONTEXT=platform-context
 export IDENTITY_NAMESPACE=identity
-export IDENTITY_ISSUER=https://identity.customer.example
-export IDENTITY_AUDIENCE=customer-github-identity-exchange
+export IDENTITY_ISSUER=https://identity.example.org
+export IDENTITY_FORK=ORG/github-oidc-exchange
+
+kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
+  get namespace "$IDENTITY_NAMESPACE" >/dev/null 2>&1 || \
+kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
+  create namespace "$IDENTITY_NAMESPACE"
 ```
 
-## 1. Publish fork-owned artifacts
-
-Run the AWS-free workflow from the fork's `main` branch. It builds native
-amd64/arm64 images, scans and smokes them, publishes the image and chart to the
-fork owner's GHCR, signs them, and creates `v0.5.1` with an immutable handoff.
-The version must match `Cargo.toml` and `Chart.yaml`, and the release/tag must
-not already exist in the fork.
+Download the release handoff and resolve immutable references:
 
 ```sh
-gh workflow run portable-release.yml --repo "$IDENTITY_FORK" --ref main \
-  -f version="$IDENTITY_VERSION"
-gh run list --repo "$IDENTITY_FORK" --workflow portable-release.yml \
-  --event workflow_dispatch --limit 1
-# Copy the run ID from the preceding command.
-gh run watch RUN_ID --repo "$IDENTITY_FORK" --exit-status
-
-install -d ./dist
+umask 077
+install -d -m 0700 ./private ./dist
 gh release download "v$IDENTITY_VERSION" --repo "$IDENTITY_FORK" \
   --pattern release-manifest.json --dir ./dist
 export IDENTITY_IMAGE_REFERENCE="$(jq -er .image ./dist/release-manifest.json)"
 export IDENTITY_CHART_REFERENCE="$(jq -er .chart ./dist/release-manifest.json)"
-printf 'image=%s\nchart=%s\n' \
-  "$IDENTITY_IMAGE_REFERENCE" "$IDENTITY_CHART_REFERENCE"
-
 export IDENTITY_IMAGE_REPOSITORY="${IDENTITY_IMAGE_REFERENCE%@*}"
 export IDENTITY_IMAGE_DIGEST="${IDENTITY_IMAGE_REFERENCE#*@}"
 export IDENTITY_CHART_REPOSITORY="${IDENTITY_CHART_REFERENCE%@*}"
-export IDENTITY_CHART_DIGEST="${IDENTITY_CHART_REFERENCE#*@}"
+
 test "$(oras manifest fetch --descriptor \
   "$IDENTITY_IMAGE_REPOSITORY:$IDENTITY_VERSION" | jq -er .digest)" \
   = "$IDENTITY_IMAGE_DIGEST"
-test "$(oras manifest fetch --descriptor \
-  "$IDENTITY_CHART_REPOSITORY:$IDENTITY_VERSION" | jq -er .digest)" \
-  = "$IDENTITY_CHART_DIGEST"
 ```
 
-Both references must contain `@sha256:`. Make the two fork GHCR packages
-public if cluster nodes will pull anonymously. Keep the manifest with the
-deployment handoff; do not replace its digests with mutable tags.
-All-zero and homogeneous hexadecimal sentinel digests are invalid even though
-they match the general SHA-256 shape. For a private registry, use a
-manifest-preserving copy, query the destination descriptor, and put that exact
-digest in values; static chart validation intentionally does not test registry
-reachability.
+Both handoff references must contain `@sha256:`. Do not replace a digest with
+a mutable tag.
 
-## 2. Create the namespace, signing key, and policy
+## 2. Create the v5 policy and issuer key
 
-Use only the intended cluster context. The policy example is not an approved
-identity policy: replace every example identity with values observed from the
-actual customer workflow by following the
-[integration guide](integration.md#1-observe-the-real-github-claims).
+The example is schema-valid but not an approved deployment policy. Replace all
+identity values with claims observed from the real workflow as described in
+the [integration guide](integration.md).
 
 ```sh
-kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
-  create namespace "$IDENTITY_NAMESPACE"
-
-umask 077
-install -d -m 0700 ./private
-install -m 0600 docs/policy-contract.example.json ./private/policy.json
+install -m 0600 docs/policy-contract.example.json ./private/policy-v5.json
 cargo run --locked --bin keyring-tool -- generate-es256 \
-  ./private/issuer-keyring.json issuer-0.5.1-a
+  ./private/issuer-keyring.json issuer-0.6.0-a
 cargo run --locked --bin keyring-tool -- validate-es256 \
   ./private/issuer-keyring.json
-
-# Privately edit task-only policy v5 with observed claims and reviewed actor mappings.
-jq empty ./private/policy.json
+jq -e '.version == "github-oidc-exchange.apelogic.io/v5"' \
+  ./private/policy-v5.json >/dev/null
 
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
   -n "$IDENTITY_NAMESPACE" create configmap github-oidc-exchange-policy \
-  --from-file=policy.json=./private/policy.json
+  --from-file=policy.json=./private/policy-v5.json
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
   -n "$IDENTITY_NAMESPACE" create secret generic github-oidc-exchange-keyring \
   --type=Opaque --from-file=keyring.json=./private/issuer-keyring.json
-
-bash scripts/check-install-inputs.sh "$IDENTITY_KUBECONFIG" \
-  "$IDENTITY_CONTEXT" "$IDENTITY_NAMESPACE"
 ```
 
-The checker verifies names, Kubernetes types, and key presence without
-printing values. Keep `private/` outside Git and backed up through an encrypted,
-access-controlled recovery channel.
+Keep both files outside Git in encrypted, access-controlled storage.
 
-## 3. Prepare the baseline values
-
-Copy the fail-closed template. The separate
-[`production-values.yaml`](../charts/github-oidc-exchange/examples/production-values.yaml)
-is a renderable shape example only; its domains, digest, CIDR, object names,
-and Gateway references are deliberately fake.
+## 3. Configure and validate values
 
 ```sh
 cp charts/github-oidc-exchange/values.example.yaml ./private/values.yaml
 ```
 
-Edit `private/values.yaml` and set all of the following:
+Set:
 
-- `image.repository` to `IDENTITY_IMAGE_REPOSITORY` and `image.digest` to
-  `IDENTITY_IMAGE_DIGEST`;
-- `config.issuerUrl` to `IDENTITY_ISSUER` without a trailing slash;
-- `config.githubExchangeAudience` to `IDENTITY_AUDIENCE`;
-- `httpRoute.enabled: true`, the real HTTPS Gateway `parentRefs`, and the
-  issuer hostname under `hostnames`;
-- `networkPolicy.ingressCidrs` to the actual Gateway/proxy source CIDRs;
-- `ingress.enabled: false` and `workloadExchange.enabled: false`.
+- `image.repository` and exact `image.digest` from the handoff;
+- `config.issuerUrl` to `IDENTITY_ISSUER`;
+- `config.githubExchangeAudience` to a dedicated bounded value;
+- `config.policyContract: github-oidc-exchange.apelogic.io/v5`;
+- `config.policyConfigMapName: github-oidc-exchange-policy`;
+- the existing ES256 keyring Secret name;
+- `httpRoute.enabled: true`, the existing HTTPS Gateway parent, and issuer
+  hostname; and
+- exact ingress source CIDRs.
 
-Do not place policy data, keys, TLS material, or registry credentials in the
-values file. Then render and review:
+Leave workload exchange, browser HOP-1, and Ingress disabled for baseline.
 
 ```sh
 bash scripts/validate-chart-values.sh ./private/values.yaml
@@ -161,17 +101,11 @@ helm lint charts/github-oidc-exchange -f ./private/values.yaml --strict
 helm template identity charts/github-oidc-exchange \
   --namespace "$IDENTITY_NAMESPACE" -f ./private/values.yaml \
   > ./dist/identity-rendered.yaml
-grep -E 'kind: (Deployment|Service|HTTPRoute|NetworkPolicy|Role|RoleBinding)' \
-  ./dist/identity-rendered.yaml
+grep -F 'EXPECTED_POLICY_VERSION' ./dist/identity-rendered.yaml
+grep -F 'github-oidc-exchange.apelogic.io/v5' ./dist/identity-rendered.yaml
 ```
 
-Confirm the HTTPRoute contains only the three public paths above and the
-Deployment image is the recorded digest.
-
-## 4. Install and verify baseline readiness
-
-Helm installs an OCI chart by version. Verify that its version tag still
-resolves to `IDENTITY_CHART_REFERENCE`, then install it:
+## 4. Install and verify
 
 ```sh
 helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
@@ -181,17 +115,27 @@ helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
   -n "$IDENTITY_NAMESPACE" rollout status \
   deployment/github-oidc-exchange --timeout=5m
+```
 
+Validate discovery without hard-coding the input audience:
+
+```sh
 curl -fsS "$IDENTITY_ISSUER/.well-known/openid-configuration" | \
-  jq -e --arg iss "$IDENTITY_ISSUER" \
-    '.issuer==$iss and .jwks_uri==($iss+"/jwks.json") and .token_endpoint==($iss+"/v1/exchange")' \
-  >/dev/null
+  jq -e --arg issuer "$IDENTITY_ISSUER" '
+    .issuer == $issuer and
+    .jwks_uri == ($issuer + "/jwks.json") and
+    .github_oidc_exchange_endpoint == ($issuer + "/v1/exchange") and
+    (.github_oidc_audience | type == "string" and length > 0) and
+    (.identity_contracts_supported | index("steward-task-v2")) and
+    (.identity_contracts_supported | index("steward-task-v3")) and
+    (.policy_versions_supported | index("github-oidc-exchange.apelogic.io/v5")) and
+    (.policy_versions_supported | index("github-oidc-exchange.apelogic.io/v6"))
+  ' >/dev/null
 curl -fsS "$IDENTITY_ISSUER/jwks.json" | \
-  jq -e '[.keys[] | select(.alg=="ES256" and .kty=="EC")] | length>0' \
+  jq -e '[.keys[] | select(.alg == "ES256" and .kty == "EC")] | length > 0' \
   >/dev/null
 ```
 
-Readiness is not delivery acceptance. Finish the positive, replay, wrong
-repository/ref/actor/audience, and consumer-verification tests in the
-[integration guide](integration.md) and the full guide's
-[delivery checklist](installation.md#7-post-install-and-delivery-test-checklist).
+Finish with the integration guide's real positive, replay, negative, and
+consumer-verification cases. Baseline v5 must reject wrong repository, subject,
+event, ref, actor, and audience. Helm rendering alone is not acceptance.

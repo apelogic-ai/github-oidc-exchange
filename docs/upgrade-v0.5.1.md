@@ -1,5 +1,9 @@
 # Upgrade to 0.5.1: immutable image digest validation
 
+> Historical guide for the 0.5.1 boundary. For current 0.6.0 installation,
+> policy selection, and rollback, use the [installation guide](installation.md)
+> and [0.6.0 upgrade guide](upgrade-v0.6.0.md).
+
 Release 0.5.1 rejects placeholder image digests before Kubernetes mutation.
 The published Helm schema and chart-owned values preflight reject the all-zero
 SHA-256 value and every homogeneous hexadecimal sentinel. Tag-only deployment

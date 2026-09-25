@@ -1,26 +1,28 @@
-# Installation guide — github-oidc-exchange 0.5.1
+# Installation guide — github-oidc-exchange 0.6.0
 
-This is the canonical operator guide for application **0.5.1**, Helm chart
-**0.5.1**, and [consumer contract v1](consumer-contract-v1.md). It installs
-Identity alone in a customer-owned Kubernetes cluster from fork-owned artifacts.
-No ApeLogic account, AWS credential, Secrets Manager, ECR, ALB, External Secrets
-Operator, GitHub OAuth App, or database is required. The baseline exchanges
-GitHub Actions OIDC assertions; workload exchange and browser HOP-1 are opt-in.
+This is the canonical operator guide for application **0.6.0**, Helm chart
+**0.6.0**, and the [Identity consumer contracts](consumer-contract-v1.md).
+It installs Identity in an operator-owned Kubernetes cluster from fork-owned
+artifacts. No ApeLogic account, cloud credential, external secret controller,
+GitHub OAuth App, or database is required. The baseline exchanges GitHub
+Actions OIDC assertions; workload exchange and browser HOP-1 are opt-in.
+
 The image/chart build, template, keyring, and object-name commands are tested
-in this repository. A real customer registry, issuer DNS, GitHub Actions token,
-and Kubernetes TokenReview must be tested in the target environment using the
-delivery checklist below; a successful `helm template` alone is not acceptance.
+in this repository. Registry access, issuer DNS/TLS, real GitHub assertions,
+and optional Kubernetes TokenReview must be tested in the target environment;
+successful Helm rendering alone is not acceptance.
 
-For an opinionated baseline installation using an existing HTTPS Gateway,
-start with the [customer quickstart](quickstart.md), then return here for
-operations and optional features. Use the
-[customer integration guide](integration.md) for copy-ready claim enrollment,
-exchange smoke, and steward-run examples.
+For an opinionated v5 installation using an existing HTTPS Gateway, start with
+the [baseline quickstart](quickstart.md), then return here for operations and
+optional features. Use the [integration guide](integration.md) for claim
+observation, exchange smoke, and Steward integration.
 
-New installations use GitHub policy v5. Existing 0.4.0 installations must use
-the atomic [v4-to-v5 upgrade procedure](upgrade-v0.5.0.md); application 0.5.0
-and newer do not accept policy v4. Existing 0.5.0 installations should use the
-[0.5.1 digest-validation upgrade procedure](upgrade-v0.5.1.md).
+Application 0.6.0 supports `github-oidc-exchange.apelogic.io/v5` and
+`github-oidc-exchange.apelogic.io/v6`. The chart defaults to v5 and an existing
+v5 ConfigMap, preserving `steward-task-v2` behavior. Policy v6 is an explicit
+opt-in that issues `steward-task-v3`; activate it with a separately named
+ConfigMap using the [0.6.0 upgrade procedure](upgrade-v0.6.0.md).
+Existing older installations must first follow their version-specific guides.
 
 ## Prerequisites and decisions
 
@@ -30,7 +32,7 @@ and newer do not accept policy v4. Existing 0.5.0 installations should use the
 | Tools | Rust 1.95, Helm 3.17+, Docker/buildx, `kubectl`, `jq`, and `oras` for digest lookup; `crane` when mirroring; explicit kubeconfig/context. | Same, plus a projected, bound service-account token for each caller. |
 | Registry | Fork-owned OCI image/chart repositories accessible from cluster nodes; immutable digest for image and chart. Private registry requires a pre-created `kubernetes.io/dockerconfigjson` pull Secret named only in `image.pullSecrets`. | Same image/chart. |
 | Issuer/public network | Unique HTTPS issuer URL and DNS A/CNAME; publicly trusted certificate whose SAN covers its DNS name; select external HTTPS proxy + internal Service, chart Ingress with chosen controller, or chart HTTPRoute attached to an existing HTTPS Gateway. Allow its actual source CIDRs to port 8080. Hosted GitHub runners need a reachable public issuer/exchange; self-hosted runners may use a private route if DNS and trust agree. | Workload listener is internal Service port 8443 only. Server certificate SAN must include `github-oidc-exchange.<namespace>.svc.cluster.local`; distribute its public issuer CA bundle to callers and plan renewal/overlap. |
-| GitHub policy | Dedicated inbound audience, observed exact GitHub `sub`, immutable numeric `repository_owner_id` and `repository_id`, allowed event/ref and reviewed numeric `actor_id` to corporate identity mapping. GitHub jobs need `permissions: id-token: write` and must expose `job_workflow_ref`/`job_workflow_sha` via a reusable workflow. | Independent exact service-account username-to-subject/roles policy and TokenReview input audience. |
+| GitHub policy | Dedicated inbound audience and immutable numeric `repository_owner_id`/`repository_id`. v5 additionally requires exact subject/event/ref and mapped actor. v6 enforces those selectors only when configured. All signed provenance remains shape- and consistency-validated. GitHub jobs need `permissions: id-token: write`. | Independent exact service-account username-to-subject/roles policy and TokenReview input audience. |
 | Private material | Offline mode-0600 ES256 keyring; private policy file and object RBAC; TLS key controlled by the chosen certificate owner. | Offline mode-0600 RSA-3072 keyring; workload TLS private key and caller public CA trust. |
 | Optional CRDs | Gateway API `gateway.networking.k8s.io/v1` for HTTPRoute, cert-manager `cert-manager.io/v1` for chart-created Certificate, Prometheus Operator for ServiceMonitor — only if selected. | cert-manager optional for internal serving Certificate too. |
 
@@ -38,11 +40,11 @@ Use an explicit kubeconfig and context for **every** command; do not use an
 ambient context. In the examples below choose a real, isolated target:
 
 ```sh
-export IDENTITY_KUBECONFIG=/absolute/path/to/customer-kubeconfig
-export IDENTITY_CONTEXT=customer-context
+export IDENTITY_KUBECONFIG=/absolute/path/to/cluster-kubeconfig
+export IDENTITY_CONTEXT=platform-context
 export IDENTITY_NAMESPACE=identity
-export IDENTITY_ISSUER=https://identity.customer.tld
-export IDENTITY_AUDIENCE=customer-identity-exchange
+export IDENTITY_ISSUER=https://identity.example.org
+export IDENTITY_AUDIENCE=github-identity-exchange
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
   get namespace "$IDENTITY_NAMESPACE" >/dev/null 2>&1 || \
   kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
@@ -58,22 +60,22 @@ ledger is the only persistent runtime state.
 All listed Identity objects live in the selected release namespace, `identity`
 in these commands. The chart references but does **not** create policy/key/TLS
 inputs unless cert-manager Certificate issuance is explicitly selected.
-`scripts/test-customer-chart.sh` checks object/key references against rendered
+The chart regression checks object/key references against rendered
 Deployment mounts and runtime file environment variables. The live checker
 `scripts/check-install-inputs.sh` checks namespace, type, and key *names* only;
 it never prints Secret data.
 
 | Object / type | Exact data key(s) | Required, source, owner, rotation |
 | --- | --- | --- |
-| `Secret/github-oidc-exchange-keyring`, `Opaque` | `keyring.json` | Always. Offline `keyring-tool` ES256 output; customer operator creates and rotates. Never in Helm values/Git. |
-| `ConfigMap/github-oidc-exchange-policy` | `policy.json` | Always. Reviewed private policy file; customer operator creates/rotates. Contains actor/email/canonical-user mappings: keep in a restricted repository or local mode-0600 file, restrict ConfigMap get/list RBAC and audit access. Use a separate namespace if existing RBAC is broad. |
+| `Secret/github-oidc-exchange-keyring`, `Opaque` | `keyring.json` | Always. Offline `keyring-tool` ES256 output; operator creates and rotates. Never in Helm values/Git. |
+| `ConfigMap/github-oidc-exchange-policy` (existing v5) or `ConfigMap/github-oidc-exchange-policy-v6` | `policy.json` | Always select exactly one. Retain the distinct v5 and v6 objects through activation/rollback. A v5 policy contains actor mappings; a minimal v6 policy need not. Restrict ConfigMap get/list RBAC and audit access. |
 | `Secret/github-oidc-exchange-workload-rsa-keyring`, `Opaque` | `rsa-keyring.json` | Only if `workloadExchange.enabled`; required for Steward/OpenShell profile. Offline RSA-3072 output; operator rotates. |
 | `ConfigMap/github-oidc-exchange-workload-policy` | `workload-policy.json` | Only if workload enabled. Exact admitted service-account usernames/roles; restrict ConfigMap RBAC. |
-| `Secret/github-oidc-exchange-server-tls`, `kubernetes.io/tls` | `tls.crt`, `tls.key` | Only if workload enabled. Customer PKI creates it, or chart Certificate requests it from cert-manager. SAN `github-oidc-exchange.<namespace>.svc.cluster.local`; issuer CA is separately distributed to callers. cert-manager owns renewal if selected; operator bumps rollout revision after projection. |
-| Customer-selected public Ingress TLS Secret, `kubernetes.io/tls` | `tls.crt`, `tls.key` | Only with chart Ingress. Existing customer PKI or chart Certificate/cert-manager. SAN exactly covers `ingress.host`/issuer host. Customer's Ingress controller reloads its certificate; verify after renewal. Gateway mode instead uses a Gateway-owned certificate outside this chart. |
-| Customer-selected image-pull Secret, `kubernetes.io/dockerconfigjson` | `.dockerconfigjson` | Only for private registry without node-level access. Customer owns creation/rotation; chart stores its name, not credentials. |
+| `Secret/github-oidc-exchange-server-tls`, `kubernetes.io/tls` | `tls.crt`, `tls.key` | Only if workload enabled. Operator PKI creates it, or chart Certificate requests it from cert-manager. SAN `github-oidc-exchange.<namespace>.svc.cluster.local`; issuer CA is separately distributed to callers. cert-manager owns renewal if selected; operator bumps rollout revision after projection. |
+| Operator-selected public Ingress TLS Secret, `kubernetes.io/tls` | `tls.crt`, `tls.key` | Only with chart Ingress. Existing PKI or chart Certificate/cert-manager. SAN exactly covers `ingress.host`/issuer host. The Ingress controller reloads its certificate; verify after renewal. Gateway mode uses a Gateway-owned certificate outside this chart. |
+| Operator-selected image-pull Secret, `kubernetes.io/dockerconfigjson` | `.dockerconfigjson` | Only for private registry without node-level access. Operator owns creation/rotation; chart stores its name, not credentials. |
 | `ConfigMap/<steward-public-jwks>` | `jwks.json` | Only with `browserHop1.enabled`; public Steward verifier keys, not an Identity signing secret. Operator chooses the object name and rotates trust with `rolloutRevisions.browserHop1Jwks`. |
-| Caller-side CA bundle | Customer-selected public ConfigMap/file | Workload callers only, **not** an Identity Secret or chart object. CA owner distributes overlapping roots and verifies DNS SAN/renewal. |
+| Caller-side CA bundle | Operator-selected public ConfigMap/file | Workload callers only, **not** an Identity Secret or chart object. CA owner distributes overlapping roots and verifies DNS SAN/renewal. |
 
 Baseline chart RBAC creates a namespaced Role/Binding for `coordination.k8s.io`
 Leases (`create/get/update/list/delete`) and a ServiceAccount. Workload mode adds
@@ -92,24 +94,24 @@ GHCR, signs/attests the artifacts, and attaches immutable coordinates to a
 GitHub release. It needs the fork's `GITHUB_TOKEN` package/write/OIDC rights,
 not any cloud credential. The older `release.yml` ECR workflow is optional and
 not part of this installation path. Make fork GHCR packages public if anonymous
-pulls are intended; verify visibility separately. For another customer-owned
+pulls are intended; verify visibility separately. For another operator-owned
 OCI registry, authenticate with that registry's own account and run:
 
 ```sh
-export IDENTITY_VERSION=0.5.1
-export IDENTITY_IMAGE_REPO=registry.customer.tld/team/github-oidc-exchange
-export IDENTITY_CHART_REPO=registry.customer.tld/team/charts/github-oidc-exchange
+export IDENTITY_VERSION=0.6.0
+export IDENTITY_IMAGE_REPO=registry.example.org/team/github-oidc-exchange
+export IDENTITY_CHART_REPO=registry.example.org/team/charts/github-oidc-exchange
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
 bash scripts/validate-release.sh
-bash scripts/test-customer-chart.sh
+bash scripts/test-chart.sh
 docker buildx build --platform linux/amd64,linux/arm64 --push \
   -t "$IDENTITY_IMAGE_REPO:$IDENTITY_VERSION" .
 install -d ./dist
 helm package charts/github-oidc-exchange --destination ./dist
 helm push "./dist/github-oidc-exchange-$IDENTITY_VERSION.tgz" \
-  "oci://registry.customer.tld/team/charts"
+  "oci://registry.example.org/team/charts"
 export IDENTITY_IMAGE_DIGEST="$(oras manifest fetch --descriptor "$IDENTITY_IMAGE_REPO:$IDENTITY_VERSION" | jq -r .digest)"
 export IDENTITY_CHART_DIGEST="$(oras manifest fetch --descriptor "$IDENTITY_CHART_REPO:$IDENTITY_VERSION" | jq -r .digest)"
 printf 'image=%s@%s\nchart=%s@%s\n' "$IDENTITY_IMAGE_REPO" "$IDENTITY_IMAGE_DIGEST" "$IDENTITY_CHART_REPO" "$IDENTITY_CHART_DIGEST"
@@ -147,7 +149,7 @@ To run the portable path from a fork whose package and release permissions are
 enabled, use the exact source version and watch the resulting run:
 
 ```sh
-export IDENTITY_FORK=customer-org/github-oidc-exchange
+export IDENTITY_FORK=ORG/github-oidc-exchange
 gh workflow run portable-release.yml --repo "$IDENTITY_FORK" --ref main \
   -f version="$IDENTITY_VERSION"
 gh run list --repo "$IDENTITY_FORK" --workflow portable-release.yml \
@@ -166,20 +168,28 @@ registry pull Secret and reference only its name in values.
 ## 2. Prepare policy and signing files privately
 
 Create a private directory (`umask` also protects temporary editor files).
-The GitHub example is a task-only policy v5. The example JSON files are
-**schemas/examples only** and contain no usable
-credentials or approved identities. Copy the policy example locally and edit
-real mappings only in private storage; do not commit it or include it in CI
-artifacts. The chart's fixed output audiences are `steward-task-api` and,
-when enabled, `openshell-api`.
+Both policy examples are **schemas/examples only** and contain no approved
+identity data. A new baseline copies v5. If preparing v6 activation, preserve
+that v5 file and additionally copy v6; edit real values only in private
+storage. The chart's fixed output audiences are `steward-task-api` and, when
+enabled, `openshell-api`.
+
+The default v5 path requires exact subjects, events, refs, and verified actor
+mappings. The v6 path always binds signed numeric owner/repository IDs and
+makes `actors`, `allowed_email_domains`, `acting_group_prefix`, `subjects`,
+`events`, and `refs` optional exact compatibility selectors. When an optional
+selector is absent, Identity does not decide that dimension. It still validates
+the shape and consistency of signed provenance and preserves it in the token.
 
 ```sh
 umask 077
 install -d -m 0700 ./private
-install -m 0600 docs/policy-contract.example.json ./private/policy.json
-# Privately edit policy.json: observed exact sub, numeric owner/repository IDs,
-# allowed events/refs, reviewed actor_id -> email/canonical_user_id mapping.
-jq empty ./private/policy.json
+# Default v5:
+install -m 0600 docs/policy-contract.example.json ./private/policy-v5.json
+# Explicit v6 alternative:
+install -m 0600 docs/policy-contract-v6.example.json ./private/policy-v6.json
+jq empty ./private/policy-v5.json
+jq empty ./private/policy-v6.json
 cargo run --locked --bin keyring-tool -- generate-es256 \
   ./private/issuer-keyring.json issuer-2026-09-a
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
@@ -194,12 +204,12 @@ the actual GitHub repository and reusable-workflow context with
 only the local JWT payload and inspect `sub`, `repository_owner_id`,
 `repository_id`, `ref`, `event_name`, `actor_id`, `job_workflow_ref`, and
 `job_workflow_sha`. Never print or retain the JWT; avoid public workflow logs.
-Admit the **observed exact** `sub` in `policy.json`, bind it to the separately
-signed numeric IDs and reviewed actor mapping, then remove the probe. The
-policy validator accepts a normal GitHub `repo:` subject; its numeric ID
-checks are on separate signed claims. Task rules do not gate workflow path;
-the signed workflow claims remain source provenance rather than authorization
-selectors. Policy v5 has no workflow-selected privileged profile.
+For v5, admit the **observed exact** subject, event, ref, and actor mapping. For
+v6, configure only the exact compatibility selectors that Identity must
+enforce. A minimal v6 policy intentionally accepts valid branch, tag, pull
+request, event, workflow-subject, and numeric actor variations from the same
+admitted numeric repository without policy edits. In both versions, the
+numeric IDs and signed provenance remain mandatory trust inputs.
 GitHub OAuth Apps do not participate in this flow.
 
 If enabling workload exchange, prepare its separate policy and keyring:
@@ -225,11 +235,11 @@ already issued tokens after its public key disappears from JWKS.
 
 Select a certificate path **before** enabling workload exchange or Ingress:
 
-- Existing customer PKI: issue public Ingress leaf/chain for the exact issuer
+- Existing operator PKI: issue public Ingress leaf/chain for the exact issuer
   DNS name and internal workload leaf/chain for
   `github-oidc-exchange.<namespace>.svc.cluster.local`. Ensure clients trust
   the chain and private key matches; install TLS Secrets with `kubectl create
-  secret tls` below. Customer PKI owns renewal. A self-signed development
+  secret tls` below. Operator PKI owns renewal. A self-signed development
   certificate is not a production trust anchor.
 - cert-manager: install its CRDs/controller, configure an Issuer/ClusterIssuer
   whose CA is trusted by the relevant clients, set the chart's
@@ -238,7 +248,7 @@ Select a certificate path **before** enabling workload exchange or Ingress:
   ACME/corporate CA and internal CA may be different Issuers. Distribute the
   internal public CA bundle out of band; cert-manager Secret renewal alone
   does not reload Identity's workload listener.
-- HTTPRoute: the customer-owned Gateway (outside this chart) terminates public
+- HTTPRoute: the operator-owned Gateway (outside this chart) terminates public
   TLS and must admit the route's namespace/host. The chart never creates a
   Gateway certificate. Service-only mode requires a separately managed HTTPS
   proxy/route; port 8080 itself is plaintext and must not be exposed publicly.
@@ -248,8 +258,12 @@ prints object names, not file contents. Use `--type=Opaque` to make the Secret
 type exact. Run only the conditional commands you selected:
 
 ```sh
+# Default v5 object. Keep it for rollback if v6 is later activated.
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
-  create configmap github-oidc-exchange-policy --from-file=policy.json=./private/policy.json
+  create configmap github-oidc-exchange-policy --from-file=policy.json=./private/policy-v5.json
+# v6 opt-in only; create separately and do not replace the v5 object.
+kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
+  create configmap github-oidc-exchange-policy-v6 --from-file=policy.json=./private/policy-v6.json
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
   create secret generic github-oidc-exchange-keyring --type=Opaque \
   --from-file=keyring.json=./private/issuer-keyring.json
@@ -260,11 +274,11 @@ kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$I
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
   create secret generic github-oidc-exchange-workload-rsa-keyring --type=Opaque \
   --from-file=rsa-keyring.json=./private/workload-keyring.json
-# Workload mode with existing customer-PKI cert only (not cert-manager):
+# Workload mode with existing operator-PKI cert only (not cert-manager):
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
   create secret tls github-oidc-exchange-server-tls \
   --cert=./private/server.crt --key=./private/server.key
-# Chart Ingress with existing customer-PKI cert only (not cert-manager):
+# Chart Ingress with existing operator-PKI cert only (not cert-manager):
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
   create secret tls identity-public-tls \
   --cert=./private/public.crt --key=./private/public.key
@@ -288,12 +302,17 @@ use `--workload --skip-workload-tls` before Helm install, then rerun
 `--workload` after Certificate readiness. A missing key/type/name/namespace
 fails without showing values.
 
+When v6 is selected, add
+`--github-policy github-oidc-exchange-policy-v6`; the default checker target is
+the existing `github-oidc-exchange-policy` v5 object.
+
 ## 4. Configure and install baseline
 
 Copy [`values.example.yaml`](../charts/github-oidc-exchange/values.example.yaml)
 to a private deployment file, fill every mandatory empty field, and set
 `image.repository`, `image.digest`, exact `config.issuerUrl`, dedicated
-`config.githubExchangeAudience`, the two baseline object references, and
+`config.githubExchangeAudience`, `config.policyContract`, the matching
+`config.policyConfigMapName`, the keyring reference, and
 `networkPolicy.ingressCidrs` to the actual proxy/Gateway source CIDRs. The
 chart's default values intentionally **fail**. It never substitutes dummy
 credentials. The renderable
@@ -311,6 +330,17 @@ one exposure option:
    Gateway listener, and `hostnames` containing the issuer DNS name. The
    Gateway owner controls TLS/certificate renewal and route acceptance.
 
+For the behavior-preserving baseline, retain:
+
+```yaml
+config:
+  policyContract: github-oidc-exchange.apelogic.io/v5
+  policyConfigMapName: github-oidc-exchange-policy
+```
+
+The chart passes the selected contract through `EXPECTED_POLICY_VERSION` and
+the process refuses to start if the mounted document has another version.
+
 ```sh
 umask 077
 cp charts/github-oidc-exchange/values.example.yaml ./private/values.yaml
@@ -320,7 +350,7 @@ helm lint charts/github-oidc-exchange -f ./private/values.yaml --strict
 helm template identity charts/github-oidc-exchange --namespace "$IDENTITY_NAMESPACE" \
   -f ./private/values.yaml >/dev/null
 helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
-  upgrade --install identity "oci://registry.customer.tld/team/charts/github-oidc-exchange" \
+  upgrade --install identity "oci://registry.example.org/team/charts/github-oidc-exchange" \
   --version "$IDENTITY_VERSION" --namespace "$IDENTITY_NAMESPACE" \
   --values ./private/values.yaml --wait --timeout 10m
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
@@ -341,14 +371,14 @@ helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
   rollback identity PREVIOUS_REVISION --namespace "$IDENTITY_NAMESPACE" --wait --timeout 10m
 ```
 
-Validate discovery/JWKS and a fresh exchange again. Do not roll back
-to a binary that cannot read the current policy/keyring schema. There is no
-database migration; keep the same namespace to preserve replay Leases.
-For the 0.5.0 boundary specifically, upgrade and rollback the application and
-GitHub policy atomically: `0.5.0` with v5, or `0.4.0` with v4. An image-only
-rollback that leaves policy v5 mounted is unsupported. Keep the old v4
-ConfigMap and let Helm restore its reference as described in the
-[upgrade guide](upgrade-v0.5.0.md).
+Validate discovery/JWKS and a fresh exchange again. There is no database
+migration; keep the same namespace to preserve replay Leases. A 0.6.0
+application upgrade that retains v5 is safe to roll back normally. After v6
+activation, an older binary cannot read v6: roll back the chart/application
+and `policyContract`/`policyConfigMapName` together to the retained v5 object.
+Never perform an image-only rollback while v6 remains mounted. The exact
+preflight, activation, and rollback sequence is in the
+[0.6.0 upgrade guide](upgrade-v0.6.0.md).
 
 ## 5. Enable optional workload exchange
 
@@ -458,12 +488,12 @@ or raw authorization headers in evidence. Set `set +x` in token-handling jobs.
 | --- | --- | --- |
 | Pod/Service/RBAC | `kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" get pods,svc,deploy,role,rolebinding` | Two Ready replicas by default, ClusterIP ports 8080 (+8443 only with workload), namespaced Lease RBAC. No missing mounts/restarts. |
 | TLS/route | `curl -fsS -o /dev/null -w '%{http_code}\n' "$IDENTITY_ISSUER/.well-known/openid-configuration"`; `openssl s_client -connect HOST:443 -servername HOST </dev/null` (inspect summary only) | HTTP 200, valid trusted external chain/SAN; neither workload path nor health/metrics publicly routed. Ingress or Gateway reports accepted/ready; cert-manager Certificate `Ready=True` if used. |
-| Discovery/JWKS | `curl -fsS "$IDENTITY_ISSUER/.well-known/openid-configuration" | jq -e --arg iss "$IDENTITY_ISSUER" '.issuer==$iss and .jwks_uri==($iss+"/jwks.json") and .token_endpoint==($iss+"/v1/exchange")' >/dev/null`; `curl -fsS "$IDENTITY_ISSUER/jwks.json" | jq -e '[.keys[] | select(.alg=="ES256" and .kty=="EC")] | length>0' >/dev/null` | Both predicates pass; record only public `kid` set. Baseline contains no RSA key. |
-| Real admitted GitHub OIDC | From an admitted repo/ref/actor **reusable-workflow** job with `id-token: write`, request a fresh assertion with `IDENTITY_AUDIENCE`; POST it as Bearer to `/v1/exchange`, save response in a mode-0600 temporary file, assert HTTP 200 and `token_type=Bearer`, `expires_in=120`. Configure a consumer to verify issuer, audience `steward-task-api`, ES256, JWKS signature, `steward-task-v2` and signed provenance. | One fresh exchange succeeds; replay of the same assertion returns HTTP 401. Do not print assertion/output token or response body. |
-| Negative GitHub admission | Repeat with a fresh assertion from another repository (wrong numeric repository/owner ID), a disallowed ref, a different unmapped actor, and a separately requested wrong audience; keep all other inputs valid. | Each returns HTTP 401. A network/JWKS outage gives 503 and is **not** a valid denial proof. Use distinct real jobs/identities; do not edit JWT payloads. |
+| Discovery/JWKS | Fetch discovery and require exact issuer/JWKS/exchange URLs, exact `github_oidc_audience`, both entries in `identity_contracts_supported`, and both entries in `policy_versions_supported`; fetch JWKS and require an ES256 EC key. | Predicates pass; discovery contains no policy contents, identity mappings, or key material. Record only public `kid` values. |
+| Real admitted GitHub OIDC | From an admitted repository job with `id-token: write`, request a fresh assertion using the discovered audience; POST it as Bearer to `/v1/exchange`, save the response mode 0600, and verify status 200, `token_type=Bearer`, `expires_in=120`, signature, issuer, audience, selected contract, and source provenance. | v5 yields unchanged `steward-task-v2`; v6 yields `steward-task-v3`, including operation with only the service-principal group and no human entitlement claims when no actor mapping is configured. Replay returns 401. |
+| Negative GitHub admission | With fresh signed assertions, test wrong issuer/audience/signature/algorithm/key ID, expired/not-yet-valid times, malformed actor ID, wrong numeric owner/repository IDs, inconsistent provenance, and replay. Under v5 also test subject/event/ref/actor. Under v6 test only optional selectors that are present. | Each applicable denial returns 401. A 503 is dependency failure, not denial evidence. Omitted v6 selectors deliberately do not reject that dimension. |
 | Key rotation | Perform add/activate/rollback/retire sequence above; compare only public JWKS `kid`s and new token header `kid` in private test tooling. | Overlap publishes both keys, activation changes signer, rollback can select old signer while both verify, retirement occurs only after token TTL plus skew and consumer refresh. |
 | Workload enabled | From an admitted caller Pod with a projected token for exact `inputAudience` and mounted public CA, POST empty body to internal `:8443/v1/workload/exchange`; verify output signature/issuer/audience/roles with JWKS. Repeat with wrong projected audience and unmapped service account; verify TLS with wrong CA fails. | Admitted request 200/RS256/120 s; wrong audience or caller 401; wrong CA/SAN fails TLS handshake. TokenReview permission `yes`; port 8443 unreachable from nonselected Pods. |
-| Workload disabled | `bash scripts/test-customer-chart.sh` plus live Service/RBAC inspection. | No workload port, TokenReview RBAC, RSA/TLS mount, or RSA JWKS key. |
+| Workload disabled | `bash scripts/test-chart.sh` plus live Service/RBAC inspection. | No workload port, TokenReview RBAC, RSA/TLS mount, or RSA JWKS key. |
 
 For a GitHub Actions delivery job, keep both tokens in shell memory/private
 runner files and emit only status; the exact HTTP probe is:
@@ -491,25 +521,26 @@ downstream integration owner tests Steward and steward-run against the
 [consumer contract](consumer-contract-v1.md); this installation guide does not
 claim that three-product acceptance.
 
-The [customer integration guide](integration.md) supplies copy-ready reusable
-workflows for observing allowlisted claims without printing a token, exercising
-the exchange, and calling the customer steward-run workflow with both required
-Identity inputs.
+The [integration guide](integration.md) supplies copy-ready reusable workflows
+for observing bounded claims without printing a token, exercising both policy
+paths, and calling steward-run with the required exchange endpoint and audience.
+Pin both values in the consumer workflow. Before enabling v6, prove that the
+deployed Steward accepts `steward-task-v3`, permits absent compatibility
+claims, and performs Task authorization independently from Identity source
+authentication.
 
-The steward-run customer reusable workflow requires both exchange inputs,
-`identity-exchange-url` and `identity-exchange-audience` and passes both values
-to the action. Only the direct-action fallback uses
-`apelogic-github-identity-exchange` when `identity-exchange-audience` is omitted;
-that fallback is not the customer handoff. For a customer-owned issuer, pin both
-the expected audience and trusted endpoint in the consumer workflow, then
-exercise them and the negative cases in the target environment before counting
-the handoff as governed acceptance. The resolved boundary is recorded in
+The steward-run reusable workflow requires both exchange inputs,
+`identity-exchange-url` and `identity-exchange-audience`, and passes both to
+the action. Only the direct-action fallback uses
+`apelogic-github-identity-exchange` when the audience is omitted; that fallback
+is not the supported handoff for a deployed issuer. The established endpoint
+and audience boundary is recorded in
 [steward-run #43](https://github.com/apelogic-ai/steward-run/issues/43).
 
 ## Release-document drift gate
 
 Before tagging any release, run `bash scripts/validate-release.sh`,
-`bash scripts/test-customer-chart.sh`, `bash scripts/test-install-inputs.sh`,
+`bash scripts/test-chart.sh`, `bash scripts/test-install-inputs.sh`,
 `bash scripts/test-kubectl-files.sh`,
 the disposable-cluster `bash scripts/test-install-rotation.sh KUBECONFIG CONTEXT NAMESPACE`,
 `cargo test --locked --all-targets --all-features`, and the target-cluster

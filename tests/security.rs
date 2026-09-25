@@ -15,7 +15,8 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{Duration as ChronoDuration, Utc};
 use github_oidc_exchange::{
     GITHUB_ISSUER, IDENTITY_CONTRACT, KEYRING_VERSION, POLICY_VERSION, RSA_KEYRING_VERSION,
-    SOURCE_PROVENANCE_CONTRACT, WORKLOAD_IDENTITY_CONTRACT, WORKLOAD_POLICY_VERSION,
+    SOURCE_AUTH_IDENTITY_CONTRACT, SOURCE_AUTH_POLICY_VERSION, SOURCE_PROVENANCE_CONTRACT,
+    WORKLOAD_IDENTITY_CONTRACT, WORKLOAD_POLICY_VERSION,
     github::{Audience, GitHubClaims, GitHubVerifier},
     http::separated_routers_with_workload,
     keys::{KeyRing, RsaKeyRing},
@@ -95,23 +96,40 @@ fn policy() -> Policy {
     Policy {
         version: POLICY_VERSION.to_owned(),
         service_group: "agents.apelogic.ai/service-principal:steward-run".to_owned(),
-        acting_group_prefix: "agents.apelogic.ai/acting-user:".to_owned(),
-        allowed_email_domains: vec!["example.invalid".to_owned()],
+        acting_group_prefix: Some("agents.apelogic.ai/acting-user:".to_owned()),
+        allowed_email_domains: Some(vec!["example.invalid".to_owned()]),
         repositories: vec![RepositoryPolicy {
             owner_id: "227278099".to_owned(),
             repository_id: "1320906141".to_owned(),
-            subjects: vec![SUBJECT.to_owned()],
-            events: vec!["workflow_dispatch".to_owned()],
-            refs: vec!["refs/heads/main".to_owned()],
+            subjects: Some(vec![SUBJECT.to_owned()]),
+            events: Some(vec!["workflow_dispatch".to_owned()]),
+            refs: Some(vec!["refs/heads/main".to_owned()]),
         }],
-        actors: HashMap::from([(
+        actors: Some(HashMap::from([(
             "12345".to_owned(),
             Actor {
                 email: "engineer@example.invalid".to_owned(),
                 canonical_user_id: "usr_0123456789abcdef0123456789abcdef".to_owned(),
                 verified: true,
             },
-        )]),
+        )])),
+    }
+}
+
+fn source_auth_policy() -> Policy {
+    Policy {
+        version: SOURCE_AUTH_POLICY_VERSION.to_owned(),
+        service_group: "agents.apelogic.ai/service-principal:steward-run".to_owned(),
+        acting_group_prefix: None,
+        allowed_email_domains: None,
+        repositories: vec![RepositoryPolicy {
+            owner_id: "227278099".to_owned(),
+            repository_id: "1320906141".to_owned(),
+            subjects: None,
+            events: None,
+            refs: None,
+        }],
+        actors: None,
     }
 }
 
@@ -124,9 +142,11 @@ fn policy_file_error(value: &serde_json::Value) -> Result<PolicyError, Box<dyn s
     }
 }
 
-fn policy_schema_accepts(value: &serde_json::Value) -> Result<bool, Box<dyn std::error::Error>> {
-    let schema: serde_json::Value =
-        serde_json::from_slice(&fs::read("docs/policy-contract.schema.json")?)?;
+fn policy_schema_accepts(
+    schema_path: &str,
+    value: &serde_json::Value,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let schema: serde_json::Value = serde_json::from_slice(&fs::read(schema_path)?)?;
     let validator = jsonschema::validator_for(&schema)?;
     Ok(validator.is_valid(value))
 }
@@ -138,11 +158,11 @@ fn task_only_policy_ignores_workflow_paths_and_never_grants_former_bootstrap_aut
     let task_identity = policy.authorize(&claims())?;
     assert_eq!(
         task_identity.groups,
-        vec![
-            "agents.apelogic.ai/acting-user:engineer@example.invalid",
-            "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef",
-            "agents.apelogic.ai/service-principal:steward-run",
-        ]
+        Some(vec![
+            "agents.apelogic.ai/acting-user:engineer@example.invalid".to_owned(),
+            "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef".to_owned(),
+            "agents.apelogic.ai/service-principal:steward-run".to_owned(),
+        ])
     );
 
     let mut alternate_task_workflow = claims();
@@ -173,6 +193,8 @@ fn task_only_policy_ignores_workflow_paths_and_never_grants_former_bootstrap_aut
     assert!(
         task_identity
             .groups
+            .as_deref()
+            .ok_or("v5 identity must contain groups")?
             .iter()
             .all(|group| !group.starts_with("agents.apelogic.ai/service-envelope-bootstrap:"))
     );
@@ -190,7 +212,7 @@ fn claims() -> GitHubClaims {
         nbf: now - 5,
         jti: "one-time-source-token".to_owned(),
         actor_id: "12345".to_owned(),
-        actor: ACTOR.to_owned(),
+        actor: Some(ACTOR.to_owned()),
         repository: REPOSITORY.to_owned(),
         repository_id: "1320906141".to_owned(),
         repository_owner_id: "227278099".to_owned(),
@@ -281,15 +303,14 @@ async fn source_claims_cannot_select_or_override_canonical_identity()
         .verify(&signed_github_assertion(&attacker_controlled, &encoding)?)
         .await?;
     let identity = policy().authorize(&reviewed)?;
-    assert!(identity.groups.contains(
+    let groups = identity
+        .groups
+        .as_deref()
+        .ok_or("v5 identity must contain groups")?;
+    assert!(groups.contains(
         &"agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef".to_owned()
     ));
-    assert!(
-        !identity
-            .groups
-            .iter()
-            .any(|group| group.contains("ffffffff"))
-    );
+    assert!(!groups.iter().any(|group| group.contains("ffffffff")));
     Ok(())
 }
 
@@ -403,7 +424,6 @@ async fn github_assertions_require_every_source_provenance_claim()
         "sha",
         "run_id",
         "run_attempt",
-        "actor",
         "workflow_sha",
         "job_workflow_sha",
     ] {
@@ -420,6 +440,22 @@ async fn github_assertions_require_every_source_provenance_claim()
             "GitHub assertion missing {required} must fail closed"
         );
     }
+
+    let mut commit_pinned_reusable_workflow = claims();
+    commit_pinned_reusable_workflow.jti = "commit-pinned-reusable-workflow".to_owned();
+    commit_pinned_reusable_workflow.job_workflow_ref = format!(
+        "apelogic-ai/steward-run/.github/workflows/reusable.yml@{}",
+        commit_pinned_reusable_workflow.job_workflow_sha
+    );
+    assert!(
+        verifier
+            .verify(&signed_github_assertion(
+                &commit_pinned_reusable_workflow,
+                &encoding
+            )?)
+            .await
+            .is_ok()
+    );
     Ok(())
 }
 
@@ -452,6 +488,8 @@ async fn malformed_source_provenance_claims_fail_closed() -> Result<(), Box<dyn 
         ),
         ("event_name", "workflow dispatch"),
         ("ref", "refs/heads/main branch"),
+        ("ref", "refs/heads/bad~name"),
+        ("ref", "refs/heads/.hidden"),
     ] {
         let mut claims = claims_with_source_provenance()?;
         claims[claim] = serde_json::json!(malformed);
@@ -500,12 +538,11 @@ async fn repository_name_cannot_substitute_for_a_mismatched_stable_id()
     mismatched["repository_id"] = serde_json::json!("999");
     mismatched["repository"] = serde_json::json!(REPOSITORY);
 
-    let verified = verifier
-        .verify(&signed_github_assertion(&mismatched, &encoding)?)
-        .await?;
-    assert_eq!(
-        policy().authorize(&verified),
-        Err(PolicyError::Unauthorized)
+    assert!(
+        verifier
+            .verify(&signed_github_assertion(&mismatched, &encoding)?)
+            .await
+            .is_err()
     );
     Ok(())
 }
@@ -684,15 +721,15 @@ fn policy_is_default_deny_and_emits_only_ratified_groups() -> Result<(), Box<dyn
     let policy = policy();
     policy.validate()?;
     let identity = policy.authorize(&claims())?;
-    assert_eq!(identity.email, "engineer@example.invalid");
-    assert!(identity.email_verified);
+    assert_eq!(identity.email.as_deref(), Some("engineer@example.invalid"));
+    assert_eq!(identity.email_verified, Some(true));
     assert_eq!(
         identity.groups,
-        vec![
-            "agents.apelogic.ai/acting-user:engineer@example.invalid",
-            "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef",
-            "agents.apelogic.ai/service-principal:steward-run",
-        ]
+        Some(vec![
+            "agents.apelogic.ai/acting-user:engineer@example.invalid".to_owned(),
+            "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef".to_owned(),
+            "agents.apelogic.ai/service-principal:steward-run".to_owned(),
+        ])
     );
 
     let mut wrong_repository = claims();
@@ -744,6 +781,8 @@ fn duplicate_rules_fail_validation_and_overlapping_rules_fail_authorization()
     let mut overlapping = ambiguous.repositories[0].clone();
     overlapping
         .subjects
+        .as_mut()
+        .ok_or("v5 subjects must be configured")?
         .push("repo:unused/example:ref:refs/heads/main".to_owned());
     ambiguous.repositories.push(overlapping);
     ambiguous.validate()?;
@@ -759,7 +798,7 @@ fn standard_github_subject_is_bound_to_separate_immutable_ids()
 -> Result<(), Box<dyn std::error::Error>> {
     let subject = "repo:apelogic-ai/steward-run:ref:refs/heads/main";
     let mut policy = policy();
-    policy.repositories[0].subjects = vec![subject.to_owned()];
+    policy.repositories[0].subjects = Some(vec![subject.to_owned()]);
     policy.validate()?;
     let mut assertion = claims();
     assertion.sub = subject.to_owned();
@@ -774,8 +813,30 @@ fn policy_schema_and_runtime_agree_on_v5_shape_and_removed_fields()
 -> Result<(), Box<dyn std::error::Error>> {
     let example_path = Path::new("docs/policy-contract.example.json");
     let example: serde_json::Value = serde_json::from_slice(&fs::read(example_path)?)?;
-    assert!(policy_schema_accepts(&example)?);
+    assert!(policy_schema_accepts(
+        "docs/policy-contract.schema.json",
+        &example
+    )?);
     Policy::load(example_path)?;
+
+    let mut legacy_long_ids = policy();
+    legacy_long_ids.repositories[0].owner_id = "1".repeat(21);
+    let actor = legacy_long_ids
+        .actors
+        .as_mut()
+        .and_then(|actors| actors.remove("12345"))
+        .ok_or("legacy actor fixture must exist")?;
+    legacy_long_ids
+        .actors
+        .as_mut()
+        .ok_or("legacy actors fixture must exist")?
+        .insert("2".repeat(21), actor);
+    let legacy_long_ids_value = serde_json::to_value(&legacy_long_ids)?;
+    assert!(policy_schema_accepts(
+        "docs/policy-contract.schema.json",
+        &legacy_long_ids_value
+    )?);
+    legacy_long_ids.validate()?;
 
     let mut v4 = serde_json::to_value(policy())?;
     v4["version"] = serde_json::json!("github-oidc-exchange.apelogic.io/v4");
@@ -785,7 +846,10 @@ fn policy_schema_and_runtime_agree_on_v5_shape_and_removed_fields()
             "bootstrap_group".to_owned(),
             serde_json::json!("agents.apelogic.ai/service-envelope-bootstrap:steward-run"),
         );
-    assert!(!policy_schema_accepts(&v4)?);
+    assert!(!policy_schema_accepts(
+        "docs/policy-contract.schema.json",
+        &v4
+    )?);
     assert_eq!(
         policy_file_error(&v4)?,
         PolicyError::Invalid("unsupported policy version".to_owned())
@@ -801,7 +865,10 @@ fn policy_schema_and_runtime_agree_on_v5_shape_and_removed_fields()
             .as_object_mut()
             .ok_or("repository fixture must be an object")?
             .insert(field.to_owned(), value);
-        assert!(!policy_schema_accepts(&removed)?);
+        assert!(!policy_schema_accepts(
+            "docs/policy-contract.schema.json",
+            &removed
+        )?);
         assert!(
             policy_file_error(&removed)?
                 .to_string()
@@ -817,7 +884,10 @@ fn policy_schema_and_runtime_agree_on_v5_shape_and_removed_fields()
             "bootstrap_group".to_owned(),
             serde_json::json!("agents.apelogic.ai/service-envelope-bootstrap:steward-run"),
         );
-    assert!(!policy_schema_accepts(&removed)?);
+    assert!(!policy_schema_accepts(
+        "docs/policy-contract.schema.json",
+        &removed
+    )?);
     assert!(
         policy_file_error(&removed)?
             .to_string()
@@ -827,9 +897,244 @@ fn policy_schema_and_runtime_agree_on_v5_shape_and_removed_fields()
 }
 
 #[test]
+fn source_auth_policy_schema_accepts_omitted_and_present_selectors()
+-> Result<(), Box<dyn std::error::Error>> {
+    let example_path = Path::new("docs/policy-contract-v6.example.json");
+    let example: serde_json::Value = serde_json::from_slice(&fs::read(example_path)?)?;
+    assert!(policy_schema_accepts(
+        "docs/policy-contract-v6.schema.json",
+        &example
+    )?);
+    let loaded = Policy::load(example_path)?;
+    assert_eq!(loaded.version, SOURCE_AUTH_POLICY_VERSION);
+    assert_eq!(loaded.identity_contract(), SOURCE_AUTH_IDENTITY_CONTRACT);
+
+    let mut compatibility = source_auth_policy();
+    compatibility.acting_group_prefix = Some("agents.apelogic.ai/acting-user:".to_owned());
+    compatibility.allowed_email_domains = Some(vec!["example.invalid".to_owned()]);
+    compatibility.repositories[0].subjects = Some(vec![SUBJECT.to_owned()]);
+    compatibility.repositories[0].events = Some(vec!["workflow_dispatch".to_owned()]);
+    compatibility.repositories[0].refs = Some(vec!["refs/heads/main".to_owned()]);
+    compatibility.actors = policy().actors;
+    let compatibility_value = serde_json::to_value(&compatibility)?;
+    assert!(policy_schema_accepts(
+        "docs/policy-contract-v6.schema.json",
+        &compatibility_value
+    )?);
+    compatibility.validate()?;
+
+    let mut source_long_repository_id = compatibility.clone();
+    source_long_repository_id.repositories[0].owner_id = "1".repeat(21);
+    let source_long_repository_id_value = serde_json::to_value(&source_long_repository_id)?;
+    assert!(!policy_schema_accepts(
+        "docs/policy-contract-v6.schema.json",
+        &source_long_repository_id_value
+    )?);
+    assert_eq!(
+        source_long_repository_id.validate(),
+        Err(PolicyError::Invalid(
+            "repository numeric IDs are required".to_owned()
+        ))
+    );
+
+    let mut source_long_actor_id = compatibility.clone();
+    let actor = source_long_actor_id
+        .actors
+        .as_mut()
+        .and_then(|actors| actors.remove("12345"))
+        .ok_or("source-auth actor fixture must exist")?;
+    source_long_actor_id
+        .actors
+        .as_mut()
+        .ok_or("source-auth actors fixture must exist")?
+        .insert("2".repeat(21), actor);
+    let source_long_actor_id_value = serde_json::to_value(&source_long_actor_id)?;
+    assert!(!policy_schema_accepts(
+        "docs/policy-contract-v6.schema.json",
+        &source_long_actor_id_value
+    )?);
+    assert_eq!(
+        source_long_actor_id.validate(),
+        Err(PolicyError::Invalid(
+            "actor mappings require a numeric ID, verified canonical email, and opaque canonical user ID"
+                .to_owned()
+        ))
+    );
+
+    let mut unknown = serde_json::to_value(source_auth_policy())?;
+    unknown
+        .as_object_mut()
+        .ok_or("policy fixture must be an object")?
+        .insert("unexpected".to_owned(), serde_json::json!(true));
+    assert!(!policy_schema_accepts(
+        "docs/policy-contract-v6.schema.json",
+        &unknown
+    )?);
+    assert!(
+        policy_file_error(&unknown)?
+            .to_string()
+            .contains("unknown field")
+    );
+
+    let mut actor_settings_without_actor_selector = serde_json::to_value(source_auth_policy())?;
+    actor_settings_without_actor_selector
+        .as_object_mut()
+        .ok_or("policy fixture must be an object")?
+        .insert(
+            "allowed_email_domains".to_owned(),
+            serde_json::json!(["example.invalid"]),
+        );
+    assert!(!policy_schema_accepts(
+        "docs/policy-contract-v6.schema.json",
+        &actor_settings_without_actor_selector
+    )?);
+    assert!(
+        policy_file_error(&actor_settings_without_actor_selector)?
+            .to_string()
+            .contains("actor compatibility settings require an actors selector")
+    );
+    Ok(())
+}
+
+#[test]
+fn source_auth_policy_omits_human_and_git_selectors_without_weakening_repository_ids()
+-> Result<(), Box<dyn std::error::Error>> {
+    let policy = source_auth_policy();
+    policy.validate()?;
+    for (actor_id, subject, event, git_ref) in [
+        (
+            "12345",
+            "repo:apelogic-ai/steward-run:ref:refs/heads/main",
+            "workflow_dispatch",
+            "refs/heads/main",
+        ),
+        (
+            "67890",
+            "repo:apelogic-ai/steward-run:ref:refs/heads/feature/source-auth",
+            "push",
+            "refs/heads/feature/source-auth",
+        ),
+        (
+            "12345",
+            "repo:apelogic-ai/steward-run:ref:refs/tags/v1.2.3",
+            "push",
+            "refs/tags/v1.2.3",
+        ),
+        (
+            "67890",
+            "repo:apelogic-ai/steward-run:pull_request",
+            "pull_request",
+            "refs/pull/42/merge",
+        ),
+    ] {
+        let mut assertion = claims();
+        assertion.actor_id = actor_id.to_owned();
+        assertion.sub = subject.to_owned();
+        assertion.event_name = event.to_owned();
+        assertion.git_ref = git_ref.to_owned();
+        assertion.workflow_ref =
+            format!("apelogic-ai/steward-run/.github/workflows/roundtrip.yml@{git_ref}");
+        let identity = policy.authorize(&assertion)?;
+        assert_eq!(identity.subject, format!("github-actions:actor:{actor_id}"));
+        assert_eq!(identity.identity_contract, SOURCE_AUTH_IDENTITY_CONTRACT);
+        assert!(identity.email.is_none());
+        assert_eq!(
+            identity.groups,
+            Some(vec![
+                "agents.apelogic.ai/service-principal:steward-run".to_owned()
+            ])
+        );
+    }
+
+    let mut wrong_owner = claims();
+    wrong_owner.repository_owner_id = "999".to_owned();
+    assert_eq!(
+        policy.authorize(&wrong_owner),
+        Err(PolicyError::Unauthorized)
+    );
+    let mut wrong_repository = claims();
+    wrong_repository.repository_id = "999".to_owned();
+    assert_eq!(
+        policy.authorize(&wrong_repository),
+        Err(PolicyError::Unauthorized)
+    );
+    Ok(())
+}
+
+#[test]
+fn source_auth_policy_enforces_every_configured_compatibility_selector()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut source_policy = source_auth_policy();
+    source_policy.acting_group_prefix = Some("agents.apelogic.ai/acting-user:".to_owned());
+    source_policy.allowed_email_domains = Some(vec!["example.invalid".to_owned()]);
+    source_policy.actors = policy().actors;
+    source_policy.repositories[0].subjects = Some(vec![SUBJECT.to_owned()]);
+    source_policy.repositories[0].events = Some(vec!["workflow_dispatch".to_owned()]);
+    source_policy.repositories[0].refs = Some(vec!["refs/heads/main".to_owned()]);
+    source_policy.validate()?;
+
+    let identity = source_policy.authorize(&claims())?;
+    assert_eq!(identity.email.as_deref(), Some("engineer@example.invalid"));
+    assert_eq!(
+        identity.groups,
+        Some(vec![
+            "agents.apelogic.ai/acting-user:engineer@example.invalid".to_owned(),
+            "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef".to_owned(),
+            "agents.apelogic.ai/service-principal:steward-run".to_owned(),
+        ])
+    );
+
+    let mut malformed_actor = claims();
+    malformed_actor.actor_id = "not-numeric".to_owned();
+    assert_eq!(
+        source_auth_policy().authorize(&malformed_actor),
+        Err(PolicyError::Unauthorized)
+    );
+
+    for rejected in [
+        {
+            let mut value = claims();
+            value.actor_id = "67890".to_owned();
+            value
+        },
+        {
+            let mut value = claims();
+            value.sub = "repo:apelogic-ai/steward-run:ref:refs/heads/feature".to_owned();
+            value
+        },
+        {
+            let mut value = claims();
+            value.event_name = "push".to_owned();
+            value
+        },
+        {
+            let mut value = claims();
+            value.git_ref = "refs/heads/feature".to_owned();
+            value
+        },
+    ] {
+        assert_eq!(
+            source_policy.authorize(&rejected),
+            Err(PolicyError::Unauthorized)
+        );
+    }
+
+    let mut duplicate = source_auth_policy();
+    duplicate
+        .repositories
+        .push(duplicate.repositories[0].clone());
+    assert!(duplicate.validate().is_err());
+    Ok(())
+}
+
+#[test]
 fn unverified_or_noncanonical_actor_mapping_fails_closed() {
     let mut unverified = policy();
-    if let Some(actor) = unverified.actors.get_mut("12345") {
+    if let Some(actor) = unverified
+        .actors
+        .as_mut()
+        .and_then(|actors| actors.get_mut("12345"))
+    {
         actor.verified = false;
     }
     assert!(unverified.validate().is_err());
@@ -839,13 +1144,21 @@ fn unverified_or_noncanonical_actor_mapping_fails_closed() {
     );
 
     let mut profile_email = policy();
-    if let Some(actor) = profile_email.actors.get_mut("12345") {
+    if let Some(actor) = profile_email
+        .actors
+        .as_mut()
+        .and_then(|actors| actors.get_mut("12345"))
+    {
         actor.email = "Display Name <Engineer@example.invalid>".to_owned();
     }
     assert!(profile_email.validate().is_err());
 
     let mut personal_email = policy();
-    if let Some(actor) = personal_email.actors.get_mut("12345") {
+    if let Some(actor) = personal_email
+        .actors
+        .as_mut()
+        .and_then(|actors| actors.get_mut("12345"))
+    {
         actor.email = "engineer@example.com".to_owned();
     }
     assert!(personal_email.validate().is_err());
@@ -859,21 +1172,27 @@ fn unverified_or_noncanonical_actor_mapping_fails_closed() {
         "usr_0123456789ABCDEF0123456789ABCDEF",
     ] {
         let mut invalid_canonical_user = policy();
-        if let Some(actor) = invalid_canonical_user.actors.get_mut("12345") {
+        if let Some(actor) = invalid_canonical_user
+            .actors
+            .as_mut()
+            .and_then(|actors| actors.get_mut("12345"))
+        {
             actor.canonical_user_id = malformed.to_owned();
         }
         assert!(invalid_canonical_user.validate().is_err());
     }
 
     let mut duplicate_canonical_user = policy();
-    duplicate_canonical_user.actors.insert(
-        "67890".to_owned(),
-        Actor {
-            email: "other@example.invalid".to_owned(),
-            canonical_user_id: "usr_0123456789abcdef0123456789abcdef".to_owned(),
-            verified: true,
-        },
-    );
+    if let Some(actors) = duplicate_canonical_user.actors.as_mut() {
+        actors.insert(
+            "67890".to_owned(),
+            Actor {
+                email: "other@example.invalid".to_owned(),
+                canonical_user_id: "usr_0123456789abcdef0123456789abcdef".to_owned(),
+                verified: true,
+            },
+        );
+    }
     assert!(duplicate_canonical_user.validate().is_err());
 }
 
@@ -904,6 +1223,28 @@ async fn github_assertions_require_exact_issuer_audience_and_freshness()
             .await
             .is_ok()
     );
+
+    let (wrong_encoding, _) = rsa_key()?;
+    assert!(
+        verifier
+            .verify(&signed_github_assertion(&claims(), &wrong_encoding)?)
+            .await
+            .is_err()
+    );
+    let mut wrong_kid_header = Header::new(Algorithm::RS256);
+    wrong_kid_header.kid = Some("unknown-key".to_owned());
+    wrong_kid_header.typ = Some("JWT".to_owned());
+    let wrong_kid = encode(&wrong_kid_header, &claims(), &encoding)?;
+    assert!(verifier.verify(&wrong_kid).await.is_err());
+    let mut wrong_algorithm_header = Header::new(Algorithm::HS256);
+    wrong_algorithm_header.kid = Some("github-test-key".to_owned());
+    wrong_algorithm_header.typ = Some("JWT".to_owned());
+    let wrong_algorithm = encode(
+        &wrong_algorithm_header,
+        &claims(),
+        &EncodingKey::from_secret(b"repository-owned-test-key"),
+    )?;
+    assert!(verifier.verify(&wrong_algorithm).await.is_err());
 
     let mut wrong_audience = claims();
     wrong_audience.aud = Audience::One("wrong".to_owned());
@@ -970,6 +1311,113 @@ async fn github_assertions_require_exact_issuer_audience_and_freshness()
     Ok(())
 }
 
+#[tokio::test]
+async fn github_source_provenance_accepts_valid_ref_kinds_and_rejects_inconsistency()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (encoding, decoding) = rsa_key()?;
+    let verifier =
+        GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
+            .await?;
+
+    for (index, subject, event, git_ref) in [
+        (
+            1,
+            "repo:apelogic-ai/steward-run:ref:refs/heads/main",
+            "workflow_dispatch",
+            "refs/heads/main",
+        ),
+        (
+            2,
+            "repo:apelogic-ai/steward-run:ref:refs/heads/feature/source-auth",
+            "push",
+            "refs/heads/feature/source-auth",
+        ),
+        (
+            3,
+            "repo:apelogic-ai/steward-run:ref:refs/tags/v1.2.3",
+            "push",
+            "refs/tags/v1.2.3",
+        ),
+        (
+            4,
+            "repo:apelogic-ai/steward-run:pull_request",
+            "pull_request",
+            "refs/pull/42/merge",
+        ),
+    ] {
+        let mut assertion = claims();
+        assertion.sub = subject.to_owned();
+        assertion.event_name = event.to_owned();
+        assertion.git_ref = git_ref.to_owned();
+        assertion.jti = format!("source-shape-{index}");
+        assertion.workflow_ref =
+            format!("apelogic-ai/steward-run/.github/workflows/roundtrip.yml@{git_ref}");
+        assert!(
+            verifier
+                .verify(&signed_github_assertion(&assertion, &encoding)?)
+                .await
+                .is_ok()
+        );
+    }
+
+    let mut missing_login = claims();
+    missing_login.actor = None;
+    missing_login.jti = "missing-login".to_owned();
+    let reviewed = verifier
+        .verify(&signed_github_assertion(&missing_login, &encoding)?)
+        .await?;
+    assert!(source_auth_policy().authorize(&reviewed).is_ok());
+    assert_eq!(
+        policy().authorize(&reviewed),
+        Err(PolicyError::Unauthorized)
+    );
+
+    for (index, inconsistent) in [
+        {
+            let mut value = claims();
+            value.sub = "repo:other/repository:ref:refs/heads/main".to_owned();
+            value
+        },
+        {
+            let mut value = claims();
+            value.workflow_ref =
+                "other/repository/.github/workflows/run.yml@refs/heads/main".to_owned();
+            value
+        },
+        {
+            let mut value = claims();
+            value.git_ref = "refs/heads/feature".to_owned();
+            value
+        },
+        {
+            let mut value = claims();
+            value.job_workflow_ref = "not-a-workflow-ref".to_owned();
+            value
+        },
+        {
+            let mut value = claims();
+            value.job_workflow_ref =
+                "apelogic-ai/steward-run/.github/workflows/reusable.yml@0123456789abcdef0123456789abcdef01234567"
+                    .to_owned();
+            value
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut inconsistent = inconsistent;
+        inconsistent.jti = format!("inconsistent-{index}");
+        assert!(
+            verifier
+                .verify(&signed_github_assertion(&inconsistent, &encoding)?)
+                .await
+                .is_err()
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn keyring_requires_exact_seed_length_and_rejects_unknown_fields()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -1023,7 +1471,7 @@ fn policy_file_rejects_unknown_fields() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[tokio::test]
-async fn source_jti_is_single_use_and_output_is_eks_shaped()
+async fn released_v5_fixture_preserves_authorization_v2_claims_and_replay()
 -> Result<(), Box<dyn std::error::Error>> {
     install_test_crypto_provider()?;
     let (encoding, decoding) = rsa_key()?;
@@ -1034,9 +1482,10 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
     let jwks: JwkSet = serde_json::from_value(serde_json::to_value(keyring.jwks())?)?;
     let output_key = DecodingKey::from_jwk(&jwks.keys[0])?;
     let metrics = Arc::new(Metrics::default());
+    let released_v5_policy = Policy::load(Path::new("docs/policy-contract.example.json"))?;
     let service = ExchangeService {
         verifier,
-        policy: Arc::new(policy()),
+        policy: Arc::new(released_v5_policy),
         ledger: Arc::new(TestReplayLedger::default()),
         keys: Arc::new(keyring),
         issuer: "https://identity.example.invalid".to_owned(),
@@ -1044,17 +1493,33 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
         token_ttl: Duration::from_secs(120),
         metrics: metrics.clone(),
     };
-    let assertion = signed_github_assertion(&claims(), &encoding)?;
+    let mut released_v5_claims = claims();
+    released_v5_claims.sub = "repo:example-org/example-repo:ref:refs/heads/main".to_owned();
+    released_v5_claims.actor_id = "345678".to_owned();
+    released_v5_claims.repository = "example-org/example-repo".to_owned();
+    released_v5_claims.repository_owner_id = "123456".to_owned();
+    released_v5_claims.repository_id = "789012".to_owned();
+    released_v5_claims.workflow_ref =
+        "example-org/example-repo/.github/workflows/caller.yml@refs/heads/main".to_owned();
+    released_v5_claims.job_workflow_ref =
+        "example-org/identity-workflows/.github/workflows/exchange.yml@refs/heads/main".to_owned();
+    let assertion = signed_github_assertion(&released_v5_claims, &encoding)?;
     let output = service.exchange(&assertion).await?;
 
     #[derive(Debug, Deserialize)]
     struct OutputClaims {
         iss: String,
+        sub: String,
         aud: Vec<String>,
+        github_actor: Option<String>,
         email: String,
         email_verified: bool,
         groups: Vec<String>,
         identity_contract: String,
+        exp: u64,
+        iat: u64,
+        nbf: u64,
+        jti: String,
     }
     let output_header = jsonwebtoken::decode_header(&output)?;
     assert_eq!(output_header.alg, Algorithm::ES256);
@@ -1063,14 +1528,19 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
     validation.set_audience(&["steward-task-api"]);
     let decoded = decode::<OutputClaims>(&output, &output_key, &validation)?.claims;
     assert_eq!(decoded.iss, "https://identity.example.invalid");
+    assert_eq!(decoded.sub, "github-actions:actor:345678");
     assert_eq!(decoded.aud, vec!["steward-task-api"]);
-    assert_eq!(decoded.email, "engineer@example.invalid");
+    assert!(decoded.github_actor.is_none());
+    assert_eq!(decoded.email, "verified-user@hypershell.ai");
     assert!(decoded.email_verified);
     assert_eq!(decoded.identity_contract, IDENTITY_CONTRACT);
+    assert_eq!(decoded.exp - decoded.iat, 120);
+    assert_eq!(decoded.iat - decoded.nbf, 5);
+    assert_ne!(decoded.jti, released_v5_claims.jti);
     assert_eq!(
         decoded.groups,
         vec![
-            "agents.apelogic.ai/acting-user:engineer@example.invalid",
+            "agents.apelogic.ai/acting-user:verified-user@hypershell.ai",
             "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef",
             "agents.apelogic.ai/service-principal:steward-run",
         ]
@@ -1081,6 +1551,76 @@ async fn source_jti_is_single_use_and_output_is_eks_shaped()
     );
     assert_eq!(metrics.issued.load(Ordering::Relaxed), 1);
     assert_eq!(metrics.replayed.load(Ordering::Relaxed), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_auth_policy_emits_v3_without_unmapped_entitlements()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (encoding, decoding) = rsa_key()?;
+    let verifier =
+        GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
+            .await?;
+    let keyring = keyring()?;
+    let jwks: JwkSet = serde_json::from_value(serde_json::to_value(keyring.jwks())?)?;
+    let output_key = DecodingKey::from_jwk(&jwks.keys[0])?;
+    let service = ExchangeService {
+        verifier,
+        policy: Arc::new(source_auth_policy()),
+        ledger: Arc::new(TestReplayLedger::default()),
+        keys: Arc::new(keyring),
+        issuer: "https://identity.example.invalid".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    };
+    let mut asserted = serde_json::to_value(claims())?;
+    let asserted_object = asserted
+        .as_object_mut()
+        .ok_or("claims fixture must be an object")?;
+    asserted_object.insert(
+        "email".to_owned(),
+        serde_json::json!("forged@example.invalid"),
+    );
+    asserted_object.insert(
+        "groups".to_owned(),
+        serde_json::json!(["agents.apelogic.ai/canonical-user:forged"]),
+    );
+    asserted_object.insert("audience".to_owned(), serde_json::json!("forged-api"));
+    asserted_object.insert("identity_contract".to_owned(), serde_json::json!("forged"));
+    let output = service
+        .exchange(&signed_github_assertion(&asserted, &encoding)?)
+        .await?;
+
+    let mut validation = Validation::new(Algorithm::ES256);
+    validation.set_issuer(&["https://identity.example.invalid"]);
+    validation.set_audience(&["steward-task-api"]);
+    let decoded = decode::<serde_json::Value>(&output, &output_key, &validation)?.claims;
+    assert_eq!(decoded["sub"], "github-actions:actor:12345");
+    assert_eq!(decoded["aud"], serde_json::json!(["steward-task-api"]));
+    assert_eq!(decoded["identity_contract"], SOURCE_AUTH_IDENTITY_CONTRACT);
+    assert_eq!(decoded["github_actor"], ACTOR);
+    assert_eq!(
+        decoded["exp"].as_u64().ok_or("v3 exp must be an integer")?
+            - decoded["iat"].as_u64().ok_or("v3 iat must be an integer")?,
+        120
+    );
+    assert_ne!(decoded["jti"], claims().jti);
+    assert!(decoded.get("email").is_none());
+    assert!(decoded.get("email_verified").is_none());
+    assert_eq!(
+        decoded["groups"],
+        serde_json::json!(["agents.apelogic.ai/service-principal:steward-run"])
+    );
+    assert_eq!(
+        decoded["source_provenance"]["repository"]["id"],
+        "1320906141"
+    );
+    assert_eq!(
+        decoded["source_provenance"]["repository"]["ownerId"],
+        "227278099"
+    );
     Ok(())
 }
 
@@ -1247,12 +1787,38 @@ async fn workload_http_contract_is_empty_body_only_and_preserves_github_es256()
         .oneshot(Request::get("/.well-known/openid-configuration").body(Body::empty())?)
         .await?;
     assert_eq!(discovery.status(), StatusCode::OK);
-    let discovery: serde_json::Value =
-        serde_json::from_slice(&discovery.into_body().collect().await?.to_bytes())?;
+    let discovery_body = discovery.into_body().collect().await?.to_bytes();
+    assert!(discovery_body.len() <= 4_096);
+    let discovery: serde_json::Value = serde_json::from_slice(&discovery_body)?;
+    assert_eq!(discovery["issuer"], "https://identity.example.invalid");
+    assert_eq!(
+        discovery["jwks_uri"],
+        "https://identity.example.invalid/jwks.json"
+    );
+    assert_eq!(
+        discovery["token_endpoint"],
+        "https://identity.example.invalid/v1/exchange"
+    );
     assert_eq!(
         discovery["id_token_signing_alg_values_supported"],
         serde_json::json!(["ES256", "RS256"])
     );
+    assert_eq!(
+        discovery["github_oidc_exchange_endpoint"],
+        "https://identity.example.invalid/v1/exchange"
+    );
+    assert_eq!(discovery["github_oidc_audience"], AUDIENCE);
+    assert_eq!(
+        discovery["identity_contracts_supported"],
+        serde_json::json!([IDENTITY_CONTRACT, SOURCE_AUTH_IDENTITY_CONTRACT])
+    );
+    assert_eq!(
+        discovery["policy_versions_supported"],
+        serde_json::json!([POLICY_VERSION, SOURCE_AUTH_POLICY_VERSION])
+    );
+    assert!(discovery.get("actors").is_none());
+    assert!(discovery.get("repositories").is_none());
+    assert!(discovery.get("signing_keys").is_none());
 
     let public_workload_route = public_application
         .clone()
@@ -1333,5 +1899,38 @@ async fn workload_http_contract_is_empty_body_only_and_preserves_github_es256()
         .alg,
         Algorithm::ES256
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn discovery_remains_bounded_at_the_maximum_configured_input_audience()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (_, decoding) = rsa_key()?;
+    let maximum_audience = "a".repeat(255);
+    let verifier = GitHubVerifier::with_test_key(
+        maximum_audience.clone(),
+        "github-test-key".to_owned(),
+        decoding,
+    )
+    .await?;
+    let application = github_oidc_exchange::http::router(ExchangeService {
+        verifier,
+        policy: Arc::new(source_auth_policy()),
+        ledger: Arc::new(TestReplayLedger::default()),
+        keys: Arc::new(keyring()?),
+        issuer: "https://identity.example.invalid".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    });
+    let response = application
+        .oneshot(Request::get("/.well-known/openid-configuration").body(Body::empty())?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await?.to_bytes();
+    assert!(body.len() <= 4_096);
+    let discovery: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(discovery["github_oidc_audience"], maximum_audience);
     Ok(())
 }
