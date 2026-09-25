@@ -64,8 +64,20 @@ jq -e '
   (.properties.repositories.items.required | index("subjects") | not) and
   (.properties.repositories.items.required | index("events") | not) and
   (.properties.repositories.items.required | index("refs") | not) and
-  (.allOf | length > 0)
+  (.oneOf | length == 2) and
+  (.properties.repositories.items.properties.owner_id.pattern == "^[1-9][0-9]{0,19}$") and
+  (.properties.actors.patternProperties | has("^[1-9][0-9]{0,19}$"))
 ' docs/policy-contract-v6.schema.json >/dev/null
+jq -e '
+  .identity_contract == "steward-task-v3" and
+  .sub == "github-actions:actor:12345" and
+  .actor_login == "alice" and
+  .source_provenance.actor == "alice" and
+  (has("email") | not) and
+  (has("email_verified") | not) and
+  (has("groups") | not) and
+  (has("github_actor") | not)
+' docs/steward-task-v3.example.json >/dev/null
 
 for document in README.md docs/installation.md docs/integration.md \
   docs/consumer-contract-v1.md docs/upgrade-v0.6.0.md \
@@ -203,6 +215,7 @@ current_surfaces=(
   docs/policy-contract.example.json
   docs/policy-contract-v6.schema.json
   docs/policy-contract-v6.example.json
+  docs/steward-task-v3.example.json
   charts/github-oidc-exchange/README.md
   charts/github-oidc-exchange/examples/production-values.yaml
 )

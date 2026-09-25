@@ -43,32 +43,32 @@ Policy v5 preserves the existing exact semantics:
 - required validated email and canonical-user mapping; and
 - policy-owned `groups`, `email`, and `email_verified=true` claims.
 
-The output does not add `github_actor`; its claim set remains compatible with
+The output does not add `actor_login`; its claim set remains compatible with
 the existing v2 consumer.
 
 ## `steward-task-v3` under policy v6
 
 Policy v6 always requires numeric repository owner and repository IDs.
 `subjects`, `events`, and `refs` on a repository rule are optional exact
-selectors. `actors`, `allowed_email_domains`, and `acting_group_prefix` are
-optional actor-compatibility selectors.
+selectors. `actors`, `allowed_email_domains`, and `acting_group_prefix` form
+one optional all-or-none actor-compatibility bundle.
 
 When a selector is present, Identity validates and enforces it. When
 `subjects`, `events`, or `refs` are absent, Identity does not decide which
 workflow subjects, events, branches, tags, or pull requests may submit a run.
-When `actors` is absent, any well-formed numeric actor from the admitted
-numeric repository can be authenticated without an Identity actor
-authorization decision.
+When the actor compatibility bundle is absent, any positive canonical numeric
+actor from the admitted numeric repository can be authenticated without an
+Identity actor authorization decision.
 
 The v3 token:
 
-- keeps `sub=github-actions:actor:<numeric actor ID>`;
-- may include bounded signed `github_actor` login as display/audit metadata;
-- always includes the policy-selected service-principal group;
-- omits `email`, `email_verified`, acting-user, and canonical-user claims when
-  no actor mapping exists;
-- includes those human compatibility claims only from a validated configured
-  actor mapping; and
+- keeps `sub=github-actions:actor:<positive canonical numeric actor ID>`;
+- includes the required bounded signed login as `actor_login` display/audit
+  metadata;
+- omits `email`, `email_verified`, and `groups` together when the actor
+  compatibility bundle is absent;
+- includes a complete v2-compatible email and service/acting/canonical group
+  set only from a validated configured actor compatibility bundle; and
 - always preserves signed source provenance.
 
 The GitHub login is never a durable identity or authorization selector.
@@ -83,15 +83,18 @@ Both token contracts sign the same `source_provenance` structure:
 - contract version and provider;
 - numeric repository ID, numeric owner ID, and repository name;
 - triggered SHA, run ID, and run attempt;
-- event, ref, numeric actor ID, and optional actor login;
+- event, ref, positive canonical numeric actor ID, and required actor login;
 - caller workflow ref/SHA; and
 - reusable workflow ref/SHA.
 
 Consumers must validate issuer, audience, ES256, expiry, the selected
-`identity_contract`, and source-provenance structure. A v3 consumer must
-require the service-principal group but must not require optional email or
-human-identity groups. It must not treat repository provenance or display
-metadata as sufficient Task authorization.
+`identity_contract`, and source-provenance structure. A v3 consumer must accept
+either no `email`/`email_verified`/`groups` claims or a complete valid
+v2-compatible set; partial compatibility identity is invalid. It must read the
+login from `actor_login` and must not treat repository provenance or display
+metadata as sufficient Task authorization. The checked-in
+[`steward-task-v3` fixture](steward-task-v3.example.json) is the normative
+copy-ready claim shape for the no-compatibility path.
 
 ## Optional workload and browser contracts
 

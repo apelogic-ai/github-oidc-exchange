@@ -97,11 +97,12 @@ events, and refs mean Identity does not choose which actors, branches, tags,
 pull requests, events, or workflow subjects may submit from that repository.
 Signed provenance is still checked and preserved.
 
-Add any compatibility selector only when Identity must retain that exact
-restriction. If `actors` is present, only mapped verified numeric actors are
-accepted and the validated mapping can produce email and human-identity
-groups. If it is absent, the v3 token retains only the policy-selected
-service-principal group and contains no human entitlement claims.
+Add a repository compatibility selector only when Identity must retain that
+exact restriction. Actor compatibility is an all-or-none bundle:
+`actors`, `allowed_email_domains`, and `acting_group_prefix` must either all be
+present or all be absent. When present, only mapped verified actors are
+accepted and Identity emits a complete v2-compatible email/group identity.
+When absent, `email`, `email_verified`, and `groups` are all omitted.
 
 ```sh
 umask 077
@@ -159,8 +160,10 @@ substitute for real signed test cases and never upload response bodies.
 ## 5. Connect Steward
 
 Before selecting v6, verify the deployed Steward consumer accepts
-`steward-task-v3`, requires the service-principal group, and does not require
-optional email or human-identity groups. Steward must validate:
+`steward-task-v3`, reads the bounded `actor_login` metadata field, and accepts
+either no compatibility identity claims or the complete validated set. Use
+the checked-in [v3 conformance fixture](steward-task-v3.example.json). Steward
+must validate:
 
 - exact Identity issuer and `aud=["steward-task-api"]`;
 - ES256 signature from the issuer JWKS;
@@ -209,7 +212,7 @@ token to Steward. An ARC registration secret is unrelated to this exchange.
 - Configured optional selectors are each proven exact; omitted selectors are
   verified not to impose an Identity authorization decision.
 - Steward verifies the chosen v2 or v3 contract and source provenance.
-- v3 operation succeeds with only the service-principal group and without
-  email or human-identity groups when no actor map exists.
+- v3 operation succeeds with `actor_login` and with `email`, `email_verified`,
+  and `groups` all absent when the actor compatibility bundle is absent.
 - Evidence contains immutable revisions and public key IDs, never tokens,
   policy mappings, or authorization headers.

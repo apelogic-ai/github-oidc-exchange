@@ -31,23 +31,26 @@ Never rewrite or delete the v5 object during activation. Rollback after v6
 activation switches the application/chart revision and policy reference back
 together. See the [0.6.0 upgrade guide](docs/upgrade-v0.6.0.md).
 
-In v6, `actors`, `allowed_email_domains`, `acting_group_prefix`, repository
-`subjects`, `events`, and `refs` are compatibility selectors. A selector is
-validated and enforced when present. When actors are absent, any well-formed
-numeric actor from the admitted numeric repository is authenticated. When
-subjects, events, or refs are absent, Identity does not decide which branches,
-tags, pull requests, workflow subjects, events, or actors may submit a run.
-Those signed values remain validated source provenance. Steward remains
-responsible for user binding and Task authority. Identity has no runtime
-dependency on Steward and does not query Steward users, policies, or Tasks;
-Steward is a downstream verifier of the issued contract.
+In v6, repository `subjects`, `events`, and `refs` are independent optional
+compatibility selectors. `actors`, `allowed_email_domains`, and
+`acting_group_prefix` form one optional all-or-none compatibility bundle so
+Identity can emit either no legacy identity claims or a complete validated v2
+identity. When that bundle is absent, any positive canonical numeric actor
+from the admitted numeric repository is authenticated. When subjects, events,
+or refs are absent, Identity does not decide which branches, tags, pull
+requests, workflow subjects, events, or actors may submit a run. Those signed
+values remain validated source provenance. Steward remains responsible for
+user binding and Task authority. Identity has no runtime dependency on Steward
+and does not query Steward users, policies, or Tasks; Steward is a downstream
+verifier of the issued contract.
 
 The v3 token keeps the stable subject
-`github-actions:actor:<numeric actor ID>`. A bounded signed GitHub login may be
-included as display/audit metadata, never as a durable identifier or
-authorization input. The policy-selected service-principal group is always
-emitted. Email and human-identity groups are emitted only when the v6 policy
-contains a validated actor mapping. The caller cannot select subject,
+`github-actions:actor:<positive canonical numeric actor ID>`. The required
+bounded signed GitHub login is emitted as `actor_login` display/audit metadata,
+never as a durable identifier or authorization input. Without the optional
+actor compatibility bundle, `email`, `email_verified`, and `groups` are all
+absent. With that bundle, Identity emits the complete validated v2-compatible
+email and service/acting/canonical group set. The caller cannot select subject,
 audience, service identity, groups, TTL, contract version, or source
 provenance.
 

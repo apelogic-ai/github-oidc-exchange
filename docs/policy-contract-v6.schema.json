@@ -27,8 +27,8 @@
         "type": "object",
         "required": ["owner_id", "repository_id"],
         "properties": {
-          "owner_id": {"type": "string", "pattern": "^[0-9]{1,20}$"},
-          "repository_id": {"type": "string", "pattern": "^[0-9]{1,20}$"},
+          "owner_id": {"type": "string", "pattern": "^[1-9][0-9]{0,19}$"},
+          "repository_id": {"type": "string", "pattern": "^[1-9][0-9]{0,19}$"},
           "subjects": {"$ref": "#/$defs/subjects"},
           "events": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
           "refs": {"$ref": "#/$defs/nonEmptyUniqueStrings"}
@@ -40,7 +40,7 @@
       "type": "object",
       "minProperties": 1,
       "patternProperties": {
-        "^[0-9]{1,20}$": {
+        "^[1-9][0-9]{0,19}$": {
           "type": "object",
           "required": ["email", "canonical_user_id", "verified"],
           "properties": {
@@ -54,15 +54,18 @@
       "additionalProperties": false
     }
   },
-  "allOf": [
+  "oneOf": [
     {
-      "if": {
+      "required": ["actors", "allowed_email_domains", "acting_group_prefix"]
+    },
+    {
+      "not": {
         "anyOf": [
+          {"required": ["actors"]},
           {"required": ["acting_group_prefix"]},
           {"required": ["allowed_email_domains"]}
         ]
-      },
-      "then": {"required": ["actors"]}
+      }
     }
   ],
   "$defs": {

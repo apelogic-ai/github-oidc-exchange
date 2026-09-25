@@ -212,7 +212,7 @@ fn claims() -> GitHubClaims {
         nbf: now - 5,
         jti: "one-time-source-token".to_owned(),
         actor_id: "12345".to_owned(),
-        actor: Some(ACTOR.to_owned()),
+        actor: ACTOR.to_owned(),
         repository: REPOSITORY.to_owned(),
         repository_id: "1320906141".to_owned(),
         repository_owner_id: "227278099".to_owned(),
@@ -414,6 +414,7 @@ async fn github_assertions_require_every_source_provenance_claim()
 
     for required in [
         "actor_id",
+        "actor",
         "repository_id",
         "repository_owner_id",
         "workflow_ref",
@@ -470,6 +471,7 @@ async fn malformed_source_provenance_claims_fail_closed() -> Result<(), Box<dyn 
 
     for (claim, malformed) in [
         ("actor_id", "alice"),
+        ("actor", ""),
         ("actor", "alice example"),
         ("repository", "example-org/../example-repo"),
         ("repository", "../example-repo"),
@@ -976,23 +978,55 @@ fn source_auth_policy_schema_accepts_omitted_and_present_selectors()
             .contains("unknown field")
     );
 
-    let mut actor_settings_without_actor_selector = serde_json::to_value(source_auth_policy())?;
-    actor_settings_without_actor_selector
-        .as_object_mut()
-        .ok_or("policy fixture must be an object")?
-        .insert(
-            "allowed_email_domains".to_owned(),
-            serde_json::json!(["example.invalid"]),
-        );
-    assert!(!policy_schema_accepts(
-        "docs/policy-contract-v6.schema.json",
-        &actor_settings_without_actor_selector
-    )?);
-    assert!(
-        policy_file_error(&actor_settings_without_actor_selector)?
-            .to_string()
-            .contains("actor compatibility settings require an actors selector")
-    );
+    let actors = serde_json::to_value(policy().actors.ok_or("actor fixture must exist")?)?;
+    for partial in [
+        serde_json::json!({"actors": actors.clone()}),
+        serde_json::json!({
+            "actors": actors.clone(),
+            "acting_group_prefix": "agents.apelogic.ai/acting-user:"
+        }),
+        serde_json::json!({
+            "actors": actors.clone(),
+            "allowed_email_domains": ["example.invalid"]
+        }),
+        serde_json::json!({"allowed_email_domains": ["example.invalid"]}),
+    ] {
+        let mut incomplete = serde_json::to_value(source_auth_policy())?;
+        incomplete
+            .as_object_mut()
+            .ok_or("policy fixture must be an object")?
+            .extend(
+                partial
+                    .as_object()
+                    .ok_or("partial compatibility fixture must be an object")?
+                    .clone(),
+            );
+        assert!(!policy_schema_accepts(
+            "docs/policy-contract-v6.schema.json",
+            &incomplete
+        )?);
+        policy_file_error(&incomplete)?;
+    }
+
+    for actor_id in ["0", "00123"] {
+        let mut noncanonical = compatibility.clone();
+        let actor = noncanonical
+            .actors
+            .as_mut()
+            .and_then(|actors| actors.remove("12345"))
+            .ok_or("source-auth actor fixture must exist")?;
+        noncanonical
+            .actors
+            .as_mut()
+            .ok_or("source-auth actors fixture must exist")?
+            .insert(actor_id.to_owned(), actor);
+        let value = serde_json::to_value(&noncanonical)?;
+        assert!(!policy_schema_accepts(
+            "docs/policy-contract-v6.schema.json",
+            &value
+        )?);
+        assert!(noncanonical.validate().is_err());
+    }
     Ok(())
 }
 
@@ -1037,13 +1071,10 @@ fn source_auth_policy_omits_human_and_git_selectors_without_weakening_repository
         let identity = policy.authorize(&assertion)?;
         assert_eq!(identity.subject, format!("github-actions:actor:{actor_id}"));
         assert_eq!(identity.identity_contract, SOURCE_AUTH_IDENTITY_CONTRACT);
+        assert_eq!(identity.actor_login.as_deref(), Some(ACTOR));
         assert!(identity.email.is_none());
-        assert_eq!(
-            identity.groups,
-            Some(vec![
-                "agents.apelogic.ai/service-principal:steward-run".to_owned()
-            ])
-        );
+        assert!(identity.email_verified.is_none());
+        assert!(identity.groups.is_none());
     }
 
     let mut wrong_owner = claims();
@@ -1084,12 +1115,14 @@ fn source_auth_policy_enforces_every_configured_compatibility_selector()
         ])
     );
 
-    let mut malformed_actor = claims();
-    malformed_actor.actor_id = "not-numeric".to_owned();
-    assert_eq!(
-        source_auth_policy().authorize(&malformed_actor),
-        Err(PolicyError::Unauthorized)
-    );
+    for actor_id in ["not-numeric", "0", "00123"] {
+        let mut malformed_actor = claims();
+        malformed_actor.actor_id = actor_id.to_owned();
+        assert_eq!(
+            source_auth_policy().authorize(&malformed_actor),
+            Err(PolicyError::Unauthorized)
+        );
+    }
 
     for rejected in [
         {
@@ -1223,6 +1256,17 @@ async fn github_assertions_require_exact_issuer_audience_and_freshness()
             .await
             .is_ok()
     );
+
+    for actor_id in ["0", "00123"] {
+        let mut noncanonical_actor = claims();
+        noncanonical_actor.actor_id = actor_id.to_owned();
+        assert!(
+            verifier
+                .verify(&signed_github_assertion(&noncanonical_actor, &encoding)?)
+                .await
+                .is_err()
+        );
+    }
 
     let (wrong_encoding, _) = rsa_key()?;
     assert!(
@@ -1375,18 +1419,6 @@ async fn github_source_provenance_accepts_valid_ref_kinds_and_rejects_inconsiste
             .is_ok()
     );
 
-    let mut missing_login = claims();
-    missing_login.actor = None;
-    missing_login.jti = "missing-login".to_owned();
-    let reviewed = verifier
-        .verify(&signed_github_assertion(&missing_login, &encoding)?)
-        .await?;
-    assert!(source_auth_policy().authorize(&reviewed).is_ok());
-    assert_eq!(
-        policy().authorize(&reviewed),
-        Err(PolicyError::Unauthorized)
-    );
-
     for (index, inconsistent) in [
         {
             let mut value = claims();
@@ -1525,7 +1557,7 @@ async fn released_v5_fixture_preserves_authorization_v2_claims_and_replay()
         iss: String,
         sub: String,
         aud: Vec<String>,
-        github_actor: Option<String>,
+        actor_login: Option<String>,
         email: String,
         email_verified: bool,
         groups: Vec<String>,
@@ -1544,7 +1576,7 @@ async fn released_v5_fixture_preserves_authorization_v2_claims_and_replay()
     assert_eq!(decoded.iss, "https://identity.example.invalid");
     assert_eq!(decoded.sub, "github-actions:actor:345678");
     assert_eq!(decoded.aud, vec!["steward-task-api"]);
-    assert!(decoded.github_actor.is_none());
+    assert!(decoded.actor_login.is_none());
     assert_eq!(decoded.email, "verified-user@hypershell.ai");
     assert!(decoded.email_verified);
     assert_eq!(decoded.identity_contract, IDENTITY_CONTRACT);
@@ -1614,7 +1646,8 @@ async fn source_auth_policy_emits_v3_without_unmapped_entitlements()
     assert_eq!(decoded["sub"], "github-actions:actor:12345");
     assert_eq!(decoded["aud"], serde_json::json!(["steward-task-api"]));
     assert_eq!(decoded["identity_contract"], SOURCE_AUTH_IDENTITY_CONTRACT);
-    assert_eq!(decoded["github_actor"], ACTOR);
+    assert_eq!(decoded["actor_login"], ACTOR);
+    assert!(decoded.get("github_actor").is_none());
     assert_eq!(
         decoded["exp"].as_u64().ok_or("v3 exp must be an integer")?
             - decoded["iat"].as_u64().ok_or("v3 iat must be an integer")?,
@@ -1623,10 +1656,7 @@ async fn source_auth_policy_emits_v3_without_unmapped_entitlements()
     assert_ne!(decoded["jti"], claims().jti);
     assert!(decoded.get("email").is_none());
     assert!(decoded.get("email_verified").is_none());
-    assert_eq!(
-        decoded["groups"],
-        serde_json::json!(["agents.apelogic.ai/service-principal:steward-run"])
-    );
+    assert!(decoded.get("groups").is_none());
     assert_eq!(
         decoded["source_provenance"]["repository"]["id"],
         "1320906141"
@@ -1635,6 +1665,66 @@ async fn source_auth_policy_emits_v3_without_unmapped_entitlements()
         decoded["source_provenance"]["repository"]["ownerId"],
         "227278099"
     );
+    assert_eq!(decoded["source_provenance"]["actor"], ACTOR);
+
+    let mut normalized = decoded;
+    normalized["exp"] = serde_json::json!(1_735_689_720_u64);
+    normalized["iat"] = serde_json::json!(1_735_689_600_u64);
+    normalized["nbf"] = serde_json::json!(1_735_689_595_u64);
+    normalized["jti"] = serde_json::json!("fixture-output-jti");
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&fs::read("docs/steward-task-v3.example.json")?)?;
+    assert_eq!(normalized, fixture);
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_auth_policy_emits_only_a_complete_v2_compatibility_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (encoding, decoding) = rsa_key()?;
+    let verifier =
+        GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
+            .await?;
+    let keyring = keyring()?;
+    let jwks: JwkSet = serde_json::from_value(serde_json::to_value(keyring.jwks())?)?;
+    let output_key = DecodingKey::from_jwk(&jwks.keys[0])?;
+    let mut compatibility_policy = source_auth_policy();
+    compatibility_policy.acting_group_prefix = Some("agents.apelogic.ai/acting-user:".to_owned());
+    compatibility_policy.allowed_email_domains = Some(vec!["example.invalid".to_owned()]);
+    compatibility_policy.actors = policy().actors;
+    compatibility_policy.validate()?;
+    let service = ExchangeService {
+        verifier,
+        policy: Arc::new(compatibility_policy),
+        ledger: Arc::new(TestReplayLedger::default()),
+        keys: Arc::new(keyring),
+        issuer: "https://identity.example.invalid".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    };
+    let output = service
+        .exchange(&signed_github_assertion(&claims(), &encoding)?)
+        .await?;
+    let mut validation = Validation::new(Algorithm::ES256);
+    validation.set_issuer(&["https://identity.example.invalid"]);
+    validation.set_audience(&["steward-task-api"]);
+    let decoded = decode::<serde_json::Value>(&output, &output_key, &validation)?.claims;
+
+    assert_eq!(decoded["identity_contract"], SOURCE_AUTH_IDENTITY_CONTRACT);
+    assert_eq!(decoded["actor_login"], ACTOR);
+    assert_eq!(decoded["email"], "engineer@example.invalid");
+    assert_eq!(decoded["email_verified"], true);
+    assert_eq!(
+        decoded["groups"],
+        serde_json::json!([
+            "agents.apelogic.ai/acting-user:engineer@example.invalid",
+            "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef",
+            "agents.apelogic.ai/service-principal:steward-run"
+        ])
+    );
+    assert!(decoded.get("canonical_user_id").is_none());
     Ok(())
 }
 

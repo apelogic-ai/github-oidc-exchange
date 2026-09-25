@@ -24,8 +24,7 @@ pub struct GitHubClaims {
     pub nbf: i64,
     pub jti: String,
     pub actor_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor: Option<String>,
+    pub actor: String,
     pub repository: String,
     pub repository_id: String,
     pub repository_owner_id: String,
@@ -148,10 +147,7 @@ impl GitHubVerifier {
             || claims.sub.is_empty()
             || claims.jti.is_empty()
             || !numeric_identifier(&claims.actor_id)
-            || claims
-                .actor
-                .as_deref()
-                .is_some_and(|actor| !bounded_ascii(actor, 255))
+            || !bounded_ascii(&claims.actor, 128)
             || !github_repository(&claims.repository)
             || !numeric_identifier(&claims.repository_id)
             || !numeric_identifier(&claims.repository_owner_id)
@@ -261,6 +257,8 @@ fn numeric_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 20
         && value.bytes().all(|character| character.is_ascii_digit())
+        && value != "0"
+        && !value.starts_with('0')
 }
 
 mod numeric_string {
@@ -439,7 +437,7 @@ mod tests {
             nbf: now - 5,
             jti: "fresh-after-cold-build".to_owned(),
             actor_id: "300001".to_owned(),
-            actor: Some("alice".to_owned()),
+            actor: "alice".to_owned(),
             repository: "local-fixture/steward-run".to_owned(),
             repository_id: "200001".to_owned(),
             repository_owner_id: "100001".to_owned(),

@@ -54,7 +54,7 @@ struct OutputClaims {
     nbf: u64,
     jti: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    github_actor: Option<String>,
+    actor_login: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -77,8 +77,7 @@ struct SourceProvenance {
     #[serde(rename = "ref")]
     git_ref: String,
     actor_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    actor: Option<String>,
+    actor: String,
     caller_workflow: SourceWorkflow,
     reusable_workflow: SourceWorkflow,
 }
@@ -176,7 +175,7 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
                 iat: now,
                 nbf: now.saturating_sub(5),
                 jti: Uuid::new_v4().to_string(),
-                github_actor: identity.github_actor,
+                actor_login: identity.actor_login,
                 email: identity.email,
                 email_verified: identity.email_verified,
                 groups: identity.groups,

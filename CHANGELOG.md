@@ -16,11 +16,15 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 - Added opt-in source-authentication policy
   `github-oidc-exchange.apelogic.io/v6` and output contract
   `steward-task-v3` while retaining the v5/v2 path.
-- Added optional exact actor, email-domain, acting-group, subject, event, and
-  ref compatibility selectors to v6. Omitted selectors do not create an
-  Identity authorization decision for that dimension.
+- Added optional exact subject, event, and ref selectors to v6. Actor mapping,
+  email-domain, and acting-group settings form an optional all-or-none
+  compatibility bundle; without it, Identity emits no legacy identity claims.
+  Omitted selectors do not create an Identity authorization decision for that
+  dimension.
 - Added discovery fields for the GitHub exchange endpoint, exact input
   audience, supported policy versions, and supported output contracts.
+- Added the bounded `actor_login` audit field, positive canonical numeric actor
+  IDs, and a checked-in `steward-task-v3` conformance fixture.
 - Added v6 schema/example, compatibility tests, installation/integration
   guidance, release notes, and atomic activation/rollback documentation.
 

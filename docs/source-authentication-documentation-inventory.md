@@ -12,6 +12,7 @@ This inventory records the documentation currency review for policy v6 and
 | `docs/consumer-contract-v1.md` | Updated | Normative v2/v3 claims, discovery fields, optional compatibility claims, and compatibility matrix. Filename retained for link stability. |
 | `docs/policy-contract.schema.json` and `docs/policy-contract.example.json` | Reviewed, unchanged | Historical/current v5 schema and example remain strict and are still loaded by compatibility tests. |
 | `docs/policy-contract-v6.schema.json` and `docs/policy-contract-v6.example.json` | Added | Exact new contract with optional compatibility selectors and minimal repository-only example. |
+| `docs/steward-task-v3.example.json` | Added | Consumer conformance fixture with `actor_login`, canonical numeric actor subject, required provenance actor, and no partial compatibility identity. |
 | `charts/github-oidc-exchange/README.md` | Updated | Chart default, explicit v6 selection, startup version guard, separate objects, and rollback. |
 | `charts/github-oidc-exchange/values.yaml` | Updated | New `config.policyContract`; v5 is the default. |
 | `charts/github-oidc-exchange/values.example.yaml` | Updated | Copy-ready v5 default with explicit v6 activation comment. |

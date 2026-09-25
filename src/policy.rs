@@ -53,7 +53,7 @@ pub struct Actor {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
     pub actor_id: String,
-    pub github_actor: Option<String>,
+    pub actor_login: Option<String>,
     pub email: Option<String>,
     pub email_verified: Option<bool>,
     pub subject: String,
@@ -182,18 +182,23 @@ impl Policy {
         if let Some(domains) = self.allowed_email_domains.as_deref() {
             validate_domains(domains)?;
         }
-        if (self.acting_group_prefix.is_some() || self.allowed_email_domains.is_some())
-            && self.actors.is_none()
-        {
-            return Err(invalid(
-                "actor compatibility settings require an actors selector",
-            ));
-        }
-        if let Some(actors) = &self.actors {
-            if actors.is_empty() {
-                return Err(invalid("actors must be non-empty when configured"));
+        match (
+            self.actors.as_ref(),
+            self.allowed_email_domains.as_deref(),
+            self.acting_group_prefix.as_deref(),
+        ) {
+            (None, None, None) => {}
+            (Some(actors), Some(domains), Some(ACTING_PREFIX)) => {
+                if actors.is_empty() {
+                    return Err(invalid("actors must be non-empty when configured"));
+                }
+                validate_actors(actors, Some(domains), true)?;
             }
-            validate_actors(actors, self.allowed_email_domains.as_deref(), true)?;
+            _ => {
+                return Err(invalid(
+                    "actors, allowed_email_domains, and acting_group_prefix must be configured together",
+                ));
+            }
         }
 
         let mut repository_ids = HashSet::new();
@@ -234,7 +239,7 @@ impl Policy {
                 && selector_matches(&repository.refs, &claims.git_ref)
         });
         let repository = matching_rules.next().ok_or(PolicyError::Unauthorized)?;
-        if matching_rules.next().is_some() || claims.actor.is_none() {
+        if matching_rules.next().is_some() {
             return Err(PolicyError::Unauthorized);
         }
         let mut groups = vec![
@@ -251,7 +256,7 @@ impl Policy {
         groups.sort();
         Ok(Identity {
             actor_id: claims.actor_id.clone(),
-            github_actor: None,
+            actor_login: None,
             email: Some(actor.email.clone()),
             email_verified: Some(actor.verified),
             subject: format!("github-actions:actor:{}", claims.actor_id),
@@ -288,27 +293,31 @@ impl Policy {
             ),
             None => None,
         };
-        let mut groups = vec![self.service_group.clone()];
-        let (email, email_verified) = if let Some(actor) = actor {
+        let (email, email_verified, groups) = if let Some(actor) = actor {
+            let acting_group_prefix = self
+                .acting_group_prefix
+                .as_deref()
+                .ok_or(PolicyError::Unauthorized)?;
+            let mut groups = vec![
+                self.service_group.clone(),
+                format!("{acting_group_prefix}{}", actor.email),
+            ];
             groups.push(format!(
                 "{CANONICAL_USER_PREFIX}{}",
                 actor.canonical_user_id
             ));
-            if let Some(prefix) = &self.acting_group_prefix {
-                groups.push(format!("{prefix}{}", actor.email));
-            }
-            (Some(actor.email.clone()), Some(true))
+            groups.sort();
+            (Some(actor.email.clone()), Some(true), Some(groups))
         } else {
-            (None, None)
+            (None, None, None)
         };
-        groups.sort();
         Ok(Identity {
             actor_id: claims.actor_id.clone(),
-            github_actor: claims.actor.clone(),
+            actor_login: Some(claims.actor.clone()),
             email,
             email_verified,
             subject: format!("github-actions:actor:{}", claims.actor_id),
-            groups: Some(groups),
+            groups,
             identity_contract: SOURCE_AUTH_IDENTITY_CONTRACT,
             repository: format!("{}/{}", repository.owner_id, repository.repository_id),
             workflow_ref: claims.workflow_ref.clone(),
@@ -433,7 +442,7 @@ fn optional_selector_matches(selector: &Option<Vec<String>>, wanted: &str) -> bo
 }
 
 fn numeric_identifier(value: &str) -> bool {
-    value.len() <= 20 && decimal_identifier(value)
+    value.len() <= 20 && decimal_identifier(value) && value != "0" && !value.starts_with('0')
 }
 
 fn decimal_identifier(value: &str) -> bool {

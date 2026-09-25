@@ -43,13 +43,16 @@ Rollback of phase 1 is a normal Helm rollback because both revisions use v5.
 
 ## Phase 2: prepare v6 without mutating v5
 
-1. Confirm Steward accepts `steward-task-v3`, requires the service-principal
-   group, treats email and human-identity groups as optional, validates source
-   provenance, and performs its own Task authorization.
+1. Confirm Steward accepts `steward-task-v3`, reads `actor_login`, accepts all
+   compatibility identity claims as absent or complete, validates the required
+   provenance actor, and performs its own Task authorization. Validate against
+   `docs/steward-task-v3.example.json`.
 2. Copy and privately edit `docs/policy-contract-v6.example.json`.
-3. Keep only numeric owner/repository IDs for minimal source authentication.
-   Add optional exact actors/subjects/events/refs only when Identity must
-   retain that compatibility restriction.
+3. Keep only positive canonical numeric owner/repository IDs for minimal source
+   authentication. Add optional exact subjects/events/refs independently. Add
+   actors only together with `allowed_email_domains` and
+   `acting_group_prefix` when the complete v2-compatible transition identity
+   is required.
 4. Validate the JSON and create a new object:
 
    ```sh
@@ -93,12 +96,14 @@ After activation:
 - discovery advertises both policy versions and both output contracts;
 - a valid main-branch, feature-branch, tag, and pull-request assertion from the
   same admitted repository succeeds when those selectors are absent;
-- two distinct well-formed numeric actors succeed when `actors` is absent;
+- two distinct positive canonical numeric actors succeed when the actor
+  compatibility bundle is absent;
 - wrong numeric owner/repository, issuer, audience, signature, time,
   provenance, and replay cases fail;
 - every configured optional selector retains exact denial behavior; and
-- the output is `steward-task-v3`, with only the service-principal group and no
-  human entitlement claims when no actor mapping is configured.
+- the output is `steward-task-v3`, includes `actor_login`, and omits `email`,
+  `email_verified`, and `groups` together when the actor compatibility bundle
+  is absent.
 
 ## Atomic rollback after v6 activation
 

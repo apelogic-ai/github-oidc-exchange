@@ -175,11 +175,13 @@ storage. The chart's fixed output audiences are `steward-task-api` and, when
 enabled, `openshell-api`.
 
 The default v5 path requires exact subjects, events, refs, and verified actor
-mappings. The v6 path always binds signed numeric owner/repository IDs and
-makes `actors`, `allowed_email_domains`, `acting_group_prefix`, `subjects`,
-`events`, and `refs` optional exact compatibility selectors. When an optional
-selector is absent, Identity does not decide that dimension. It still validates
-the shape and consistency of signed provenance and preserves it in the token.
+mappings. The v6 path always binds signed numeric owner/repository IDs.
+`subjects`, `events`, and `refs` are independent optional exact selectors.
+`actors`, `allowed_email_domains`, and `acting_group_prefix` are optional only
+as one complete compatibility bundle. Without that bundle, Identity emits no
+legacy email or group claims. It still validates the shape and consistency of
+signed provenance, including the required bounded actor login, and preserves
+it in the token.
 
 ```sh
 umask 077
@@ -202,11 +204,12 @@ the actual GitHub repository and reusable-workflow context with
 `permissions: id-token: write`. Request the selected audience using
 `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`; decode
 only the local JWT payload and inspect `sub`, `repository_owner_id`,
-`repository_id`, `ref`, `event_name`, `actor_id`, `job_workflow_ref`, and
+`repository_id`, `ref`, `event_name`, `actor_id`, `actor`, `job_workflow_ref`, and
 `job_workflow_sha`. Never print or retain the JWT; avoid public workflow logs.
 For v5, admit the **observed exact** subject, event, ref, and actor mapping. For
-v6, configure only the exact compatibility selectors that Identity must
-enforce. A minimal v6 policy intentionally accepts valid branch, tag, pull
+v6, configure the complete actor compatibility bundle only when Identity must
+emit a v2-compatible identity; configure repository selectors only when their
+exact restriction is required. A minimal v6 policy intentionally accepts valid branch, tag, pull
 request, event, workflow-subject, and numeric actor variations from the same
 admitted numeric repository without policy edits. In both versions, the
 numeric IDs and signed provenance remain mandatory trust inputs.
@@ -489,7 +492,7 @@ or raw authorization headers in evidence. Set `set +x` in token-handling jobs.
 | Pod/Service/RBAC | `kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" get pods,svc,deploy,role,rolebinding` | Two Ready replicas by default, ClusterIP ports 8080 (+8443 only with workload), namespaced Lease RBAC. No missing mounts/restarts. |
 | TLS/route | `curl -fsS -o /dev/null -w '%{http_code}\n' "$IDENTITY_ISSUER/.well-known/openid-configuration"`; `openssl s_client -connect HOST:443 -servername HOST </dev/null` (inspect summary only) | HTTP 200, valid trusted external chain/SAN; neither workload path nor health/metrics publicly routed. Ingress or Gateway reports accepted/ready; cert-manager Certificate `Ready=True` if used. |
 | Discovery/JWKS | Fetch discovery and require exact issuer/JWKS/exchange URLs, exact `github_oidc_audience`, both entries in `identity_contracts_supported`, and both entries in `policy_versions_supported`; fetch JWKS and require an ES256 EC key. | Predicates pass; discovery contains no policy contents, identity mappings, or key material. Record only public `kid` values. |
-| Real admitted GitHub OIDC | From an admitted repository job with `id-token: write`, request a fresh assertion using the discovered audience; POST it as Bearer to `/v1/exchange`, save the response mode 0600, and verify status 200, `token_type=Bearer`, `expires_in=120`, signature, issuer, audience, selected contract, and source provenance. | v5 yields unchanged `steward-task-v2`; v6 yields `steward-task-v3`, including operation with only the service-principal group and no human entitlement claims when no actor mapping is configured. Replay returns 401. |
+| Real admitted GitHub OIDC | From an admitted repository job with `id-token: write`, request a fresh assertion using the discovered audience; POST it as Bearer to `/v1/exchange`, save the response mode 0600, and verify status 200, `token_type=Bearer`, `expires_in=120`, signature, issuer, audience, selected contract, and source provenance. | v5 yields unchanged `steward-task-v2`; minimal v6 yields `steward-task-v3` with `actor_login` and no `email`, `email_verified`, or `groups`. The optional complete compatibility bundle yields all three legacy identity claims together. Replay returns 401. |
 | Negative GitHub admission | With fresh signed assertions, test wrong issuer/audience/signature/algorithm/key ID, expired/not-yet-valid times, malformed actor ID, wrong numeric owner/repository IDs, inconsistent provenance, and replay. Under v5 also test subject/event/ref/actor. Under v6 test only optional selectors that are present. | Each applicable denial returns 401. A 503 is dependency failure, not denial evidence. Omitted v6 selectors deliberately do not reject that dimension. |
 | Key rotation | Perform add/activate/rollback/retire sequence above; compare only public JWKS `kid`s and new token header `kid` in private test tooling. | Overlap publishes both keys, activation changes signer, rollback can select old signer while both verify, retirement occurs only after token TTL plus skew and consumer refresh. |
 | Workload enabled | From an admitted caller Pod with a projected token for exact `inputAudience` and mounted public CA, POST empty body to internal `:8443/v1/workload/exchange`; verify output signature/issuer/audience/roles with JWKS. Repeat with wrong projected audience and unmapped service account; verify TLS with wrong CA fails. | Admitted request 200/RS256/120 s; wrong audience or caller 401; wrong CA/SAN fails TLS handshake. TokenReview permission `yes`; port 8443 unreachable from nonselected Pods. |
@@ -525,9 +528,12 @@ The [integration guide](integration.md) supplies copy-ready reusable workflows
 for observing bounded claims without printing a token, exercising both policy
 paths, and calling steward-run with the required exchange endpoint and audience.
 Pin both values in the consumer workflow. Before enabling v6, prove that the
-deployed Steward accepts `steward-task-v3`, permits absent compatibility
-claims, and performs Task authorization independently from Identity source
-authentication.
+deployed Steward accepts `steward-task-v3`, reads `actor_login`, permits all
+compatibility identity claims to be absent, consumes the required provenance
+actor, and performs Task authorization independently from Identity source
+authentication. The checked-in
+[`steward-task-v3` fixture](steward-task-v3.example.json) is the copy-ready
+consumer conformance shape.
 
 The steward-run reusable workflow requires both exchange inputs,
 `identity-exchange-url` and `identity-exchange-audience`, and passes both to

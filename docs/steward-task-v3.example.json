@@ -1,0 +1,37 @@
+{
+  "iss": "https://identity.example.invalid",
+  "sub": "github-actions:actor:12345",
+  "aud": ["steward-task-api"],
+  "exp": 1735689720,
+  "iat": 1735689600,
+  "nbf": 1735689595,
+  "jti": "fixture-output-jti",
+  "actor_login": "alice",
+  "identity_contract": "steward-task-v3",
+  "source_provenance": {
+    "contractVersion": "steward.source-provenance/v1",
+    "provider": "github",
+    "repository": {
+      "id": "1320906141",
+      "ownerId": "227278099",
+      "name": "apelogic-ai/steward-run"
+    },
+    "triggeredSha": "git:sha1:0123456789abcdef0123456789abcdef01234567",
+    "run": {
+      "id": "3456789012",
+      "attempt": 2
+    },
+    "event": "workflow_dispatch",
+    "ref": "refs/heads/main",
+    "actorId": "12345",
+    "actor": "alice",
+    "callerWorkflow": {
+      "ref": "apelogic-ai/steward-run/.github/workflows/roundtrip.yml@refs/heads/main",
+      "sha": "git:sha1:123456789abcdef0123456789abcdef012345678"
+    },
+    "reusableWorkflow": {
+      "ref": "apelogic-ai/steward-run/.github/workflows/steward-task.yml@refs/heads/main",
+      "sha": "git:sha1:23456789abcdef0123456789abcdef0123456789"
+    }
+  }
+}
