@@ -12,6 +12,7 @@ use serde::Serialize;
 use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::{
+    IDENTITY_CONTRACT, POLICY_VERSION, SOURCE_AUTH_IDENTITY_CONTRACT, SOURCE_AUTH_POLICY_VERSION,
     browser_hop1::{BrowserHop1ExchangeError, BrowserHop1ExchangeService},
     keys::KeyRing,
     replay::ReplayLedger,
@@ -195,6 +196,10 @@ async fn discovery<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone +
         "issuer": state.service.issuer,
         "jwks_uri": format!("{}/jwks.json", state.service.issuer),
         "token_endpoint": format!("{}/v1/exchange", state.service.issuer),
+        "github_oidc_exchange_endpoint": format!("{}/v1/exchange", state.service.issuer),
+        "github_oidc_audience": state.service.verifier.audience(),
+        "identity_contracts_supported": [IDENTITY_CONTRACT, SOURCE_AUTH_IDENTITY_CONTRACT],
+        "policy_versions_supported": [POLICY_VERSION, SOURCE_AUTH_POLICY_VERSION],
         "response_types_supported": ["id_token"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": algorithms

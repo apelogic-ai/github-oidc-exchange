@@ -65,11 +65,12 @@
     },
     "config": {
       "type": "object",
-      "required": ["issuerUrl", "githubExchangeAudience", "outputAudience", "policyConfigMapName", "keyringSecretName"],
+      "required": ["issuerUrl", "githubExchangeAudience", "outputAudience", "policyContract", "policyConfigMapName", "keyringSecretName"],
       "properties": {
-        "issuerUrl": {"type": "string", "pattern": "^https://[^/?#]+(?:/[^?#]*)?$", "not": {"pattern": "example\\.invalid"}},
-        "githubExchangeAudience": {"type": "string", "minLength": 1, "not": {"pattern": "^(replace-|example-)"}},
+        "issuerUrl": {"type": "string", "maxLength": 2048, "pattern": "^https://[^/?#]+(?:/[^?#]*)?$", "not": {"pattern": "example\\.invalid"}},
+        "githubExchangeAudience": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[!-~]+$", "not": {"pattern": "^(replace-|example-)"}},
         "outputAudience": {"const": "steward-task-api"},
+        "policyContract": {"enum": ["github-oidc-exchange.apelogic.io/v5", "github-oidc-exchange.apelogic.io/v6"]},
         "policyConfigMapName": {"type": "string", "minLength": 1},
         "policyConfigMapKey": {"const": "policy.json"},
         "keyringSecretName": {"type": "string", "minLength": 1},

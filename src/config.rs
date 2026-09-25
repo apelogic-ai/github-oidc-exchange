@@ -2,10 +2,13 @@ use std::{env, net::SocketAddr, path::PathBuf, time::Duration};
 
 use thiserror::Error;
 
+use crate::{POLICY_VERSION, SOURCE_AUTH_POLICY_VERSION};
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub issuer_url: String,
     pub github_exchange_audience: String,
+    pub expected_policy_version: String,
     pub output_audience: String,
     pub policy_file: PathBuf,
     pub keyring_file: PathBuf,
@@ -46,6 +49,10 @@ pub enum ConfigError {
     InvalidIssuer,
     #[error("OUTPUT_AUDIENCE must be steward-task-api")]
     InvalidOutputAudience,
+    #[error("GITHUB_EXCHANGE_AUDIENCE must be bounded visible ASCII")]
+    InvalidGitHubExchangeAudience,
+    #[error("EXPECTED_POLICY_VERSION must select policy v5 or v6")]
+    InvalidExpectedPolicyVersion,
     #[error("LISTEN_ADDRESS is invalid")]
     InvalidListenAddress,
     #[error("WORKLOAD_LISTEN_ADDRESS is invalid")]
@@ -75,6 +82,7 @@ impl Config {
         let issuer_url = required("ISSUER_URL")?.trim_end_matches('/').to_owned();
         let parsed = reqwest::Url::parse(&issuer_url).map_err(|_| ConfigError::InvalidIssuer)?;
         if parsed.scheme() != "https"
+            || issuer_url.len() > 2_048
             || parsed.host_str().is_none()
             || !parsed.username().is_empty()
             || parsed.password().is_some()
@@ -93,9 +101,19 @@ impl Config {
             .map_err(|_| ConfigError::InvalidListenAddress)?;
         let workload = WorkloadConfig::from_env(listen_address)?;
         let browser_hop1 = BrowserHop1Config::from_env(workload.is_some())?;
+        let github_exchange_audience = required("GITHUB_EXCHANGE_AUDIENCE")?;
+        if !valid_exchange_audience(&github_exchange_audience) {
+            return Err(ConfigError::InvalidGitHubExchangeAudience);
+        }
+        let expected_policy_version =
+            env::var("EXPECTED_POLICY_VERSION").unwrap_or_else(|_| POLICY_VERSION.to_owned());
+        if !supported_policy_version(&expected_policy_version) {
+            return Err(ConfigError::InvalidExpectedPolicyVersion);
+        }
         Ok(Self {
             issuer_url,
-            github_exchange_audience: required("GITHUB_EXCHANGE_AUDIENCE")?,
+            github_exchange_audience,
+            expected_policy_version,
             output_audience,
             policy_file: PathBuf::from(required("POLICY_FILE")?),
             keyring_file: PathBuf::from(required("KEYRING_FILE")?),
@@ -198,4 +216,32 @@ fn valid_https_url(value: &str) -> bool {
             && parsed.query().is_none()
             && parsed.fragment().is_none()
     })
+}
+
+fn valid_exchange_audience(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 255 && value.bytes().all(|byte| byte.is_ascii_graphic())
+}
+
+fn supported_policy_version(value: &str) -> bool {
+    matches!(value, POLICY_VERSION | SOURCE_AUTH_POLICY_VERSION)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovery_inputs_are_bounded_and_policy_activation_is_versioned() {
+        assert!(valid_exchange_audience("github-identity-exchange"));
+        assert!(valid_exchange_audience(&"a".repeat(255)));
+        assert!(!valid_exchange_audience(""));
+        assert!(!valid_exchange_audience("contains whitespace"));
+        assert!(!valid_exchange_audience("contains\0control"));
+        assert!(!valid_exchange_audience(&"a".repeat(256)));
+        assert!(supported_policy_version(POLICY_VERSION));
+        assert!(supported_policy_version(SOURCE_AUTH_POLICY_VERSION));
+        assert!(!supported_policy_version(
+            "github-oidc-exchange.apelogic.io/v7"
+        ));
+    }
 }

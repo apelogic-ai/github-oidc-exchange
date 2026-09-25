@@ -9,6 +9,42 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-25
+
+### Added
+
+- Added opt-in source-authentication policy
+  `github-oidc-exchange.apelogic.io/v6` and output contract
+  `steward-task-v3` while retaining the v5/v2 path.
+- Added optional exact subject, event, and ref selectors to v6. Actor mapping,
+  email-domain, and acting-group settings form an optional all-or-none
+  compatibility bundle; without it, Identity emits no legacy identity claims.
+  Omitted selectors do not create an Identity authorization decision for that
+  dimension.
+- Added discovery fields for the GitHub exchange endpoint, exact input
+  audience, supported policy versions, and supported output contracts.
+- Added the bounded `actor_login` audit field, positive canonical numeric actor
+  IDs, and a checked-in `steward-task-v3` conformance fixture.
+- Added v6 schema/example, compatibility tests, installation/integration
+  guidance, release notes, and atomic activation/rollback documentation.
+
+### Changed
+
+- Validated signed subject/ref/workflow provenance for shape and consistency
+  independently from whether v6 uses it as an authorization selector.
+- Added explicit Helm `config.policyContract` selection and startup validation
+  that the mounted document matches the selected contract.
+
+### Preserved
+
+- Policy v5 remains the chart default and continues to enforce exact
+  subject/event/ref/actor rules and issue unchanged `steward-task-v2` claims.
+- Fixed output audience, two-minute TTL, ES256 restrictions, numeric repository
+  trust boundary, replay protection, and no-secret logging remain unchanged.
+- v6 activation uses a separately named policy ConfigMap; rollback restores the
+  application/chart and v5 policy reference atomically without modifying
+  either policy object.
+
 ## [0.5.1] - 2026-09-24
 
 ### Fixed
@@ -29,7 +65,7 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ### Added
 
-- Added an opinionated baseline customer quickstart, a GitHub Actions and
+- Added an opinionated baseline operator quickstart, a GitHub Actions and
   steward-run integration guide, and reusable claim-probe and exchange-smoke
   workflow examples.
 - Documented the exact AWS-free fork release invocation and the downstream
@@ -65,7 +101,7 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 ### Added
 
 - Added MIT licensing and third-party notice boundaries.
-- Added a customer-neutral, fail-closed Helm installation contract with
+- Added an operator-neutral, fail-closed Helm installation contract with
   Service-only, Ingress, and Gateway API exposure; existing-PKI and
   cert-manager TLS; and conditional workload-exchange resources.
 - Added offline ES256 and RSA-3072 keyring generation, validation, activation,
@@ -172,7 +208,8 @@ signatures, attestations, SBOMs, and vulnerability evidence.
   short-lived EKS-compatible ES256 token issuance.
 - Added signed image/chart release validation with immutable artifact digests.
 
-[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.3.8...v0.4.0

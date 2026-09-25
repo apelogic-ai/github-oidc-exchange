@@ -18,6 +18,7 @@ config:
   issuerUrl: "" # externally trusted HTTPS URL, exact token issuer
   githubExchangeAudience: "" # dedicated GitHub Actions OIDC request audience
   outputAudience: steward-task-api # protocol constant, not configurable
+  policyContract: github-oidc-exchange.apelogic.io/v5 # unchanged default; v6 activation is explicit
   policyConfigMapName: github-oidc-exchange-policy
   policyConfigMapKey: policy.json
   keyringSecretName: github-oidc-exchange-keyring
@@ -61,11 +62,11 @@ service:
   port: 8080
 ingress:
   enabled: false # enable exactly one of Ingress or HTTPRoute; neither = Service only
-  className: "" # selected customer controller
+  className: "" # selected operator-managed controller
   annotations: {}
   host: ""
   tls:
-    secretName: "" # pre-created customer PKI Secret or cert-manager target
+    secretName: "" # pre-created operator PKI Secret or cert-manager target
     certManager:
       enabled: false
       issuerRef:

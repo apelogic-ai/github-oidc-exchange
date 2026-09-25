@@ -1,5 +1,5 @@
 # Copy this file to .github/workflows/identity-exchange-smoke.yml in a
-# customer-controlled reusable workflow repository and pin callers to a
+# controlled reusable workflow repository and pin callers to a
 # reviewed 40-character commit.
 name: Verify GitHub OIDC exchange
 

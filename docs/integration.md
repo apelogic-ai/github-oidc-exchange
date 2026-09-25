@@ -1,32 +1,41 @@
-# Integration guide — github-oidc-exchange 0.5.1
+# Integration guide — github-oidc-exchange 0.6.0
 
-This guide connects a customer GitHub Actions workflow to a deployed Identity
-issuer and then to Steward through steward-run. It complements the
-[baseline quickstart](quickstart.md), the
-[full installation guide](installation.md), and the normative
-[consumer contract](consumer-contract-v1.md).
+This guide connects GitHub Actions to Identity and then to Steward through
+steward-run. It complements the [quickstart](quickstart.md),
+[installation guide](installation.md), and normative
+[consumer contracts](consumer-contract-v1.md).
 
-## Values shared across the integration
+## 1. Discover the exchange contract
 
-| Value | Example | Owner and use |
-| --- | --- | --- |
-| Issuer | `https://identity.customer.example` | Identity operator; exact `config.issuerUrl`, discovery issuer, and issued-token `iss`. |
-| Exchange endpoint | `https://identity.customer.example/v1/exchange` | Identity operator; pinned in the customer workflow. |
-| GitHub input audience | `customer-github-identity-exchange` | Identity operator; exact `config.githubExchangeAudience` and GitHub OIDC request audience. |
-| Output audience | `steward-task-api` | Protocol constant; Steward must require it. The caller cannot change it. |
-| Reusable workflow revision | Forty-character commit SHA | Workflow owner; GitHub signs it into `job_workflow_sha`. Never use a moving branch or tag for production. |
+Pin the issuer URL, then obtain the exchange endpoint and exact GitHub input
+audience from discovery:
 
-The GitHub input audience and the issued Steward audience are intentionally
-different. Neither flow uses a GitHub OAuth App. An ARC registration GitHub
-App belongs to steward-run infrastructure and is not an Identity credential.
+```sh
+export IDENTITY_ISSUER=https://identity.example.org
+discovery_file="$(mktemp)"
+chmod 0600 "$discovery_file"
+curl -fsS "$IDENTITY_ISSUER/.well-known/openid-configuration" >"$discovery_file"
+jq -e --arg issuer "$IDENTITY_ISSUER" '
+  .issuer == $issuer and
+  .github_oidc_exchange_endpoint == ($issuer + "/v1/exchange") and
+  (.github_oidc_audience | type == "string" and length > 0) and
+  (.identity_contracts_supported | index("steward-task-v2")) and
+  (.identity_contracts_supported | index("steward-task-v3"))
+' "$discovery_file" >/dev/null
+export IDENTITY_EXCHANGE_URL="$(jq -er .github_oidc_exchange_endpoint "$discovery_file")"
+export IDENTITY_AUDIENCE="$(jq -er .github_oidc_audience "$discovery_file")"
+rm "$discovery_file"
+```
 
-## 1. Observe the real GitHub claims
+The GitHub input audience differs from the fixed output audience
+`steward-task-api`. Neither flow uses a GitHub OAuth App.
 
-Do not infer `sub`, numeric IDs, or reusable-workflow claims. Copy
+## 2. Observe signed GitHub claims
+
+Do not infer `sub`, numeric IDs, refs, or reusable-workflow claims. Copy
 [`github-oidc-claim-probe.yml`](examples/github-oidc-claim-probe.yml) into
-`.github/workflows/identity-claim-probe.yml` in a private, access-restricted
-customer workflow repository. Commit it, record the resulting 40-character
-commit SHA, and call it from an approved repository:
+an access-restricted workflow repository, pin it to a reviewed 40-character
+commit, and call it from the intended repository:
 
 ```yaml
 name: Observe Identity claims
@@ -37,59 +46,90 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: CUSTOMER_ORG/IDENTITY_WORKFLOWS/.github/workflows/identity-claim-probe.yml@REVIEWED_40_HEX_COMMIT
+    uses: ORG/IDENTITY_WORKFLOWS/.github/workflows/identity-claim-probe.yml@REVIEWED_40_HEX_COMMIT
     with:
-      identity-exchange-audience: customer-github-identity-exchange
+      identity-exchange-audience: EXACT_DISCOVERED_AUDIENCE
 ```
 
-The reusable workflow writes only an allowlisted claim projection to the job
-summary; it never prints or uploads the JWT. Restrict access to the run, copy
-the required values into private policy preparation storage, and delete the
-run afterward according to customer retention policy. Review at least:
+The reusable workflow exposes only an allowlisted claim projection. Review:
 
-- exact `sub`, `ref`, and `event_name`;
+- exact `iss`, requested `aud`, `sub`, `ref`, and `event_name`;
 - numeric `repository_owner_id`, `repository_id`, and `actor_id`;
-- exact `workflow_ref`, `job_workflow_ref`, and 40-character
-  `job_workflow_sha`;
-- exact `iss` and requested `aud`.
+- `workflow_ref`, `workflow_sha`, `job_workflow_ref`, and the 40-character
+  `job_workflow_sha`; and
+- run ID, attempt, and triggered SHA.
 
-Remove the probe after enrollment. It is not a production authentication
-workflow.
+Remove the probe after verification. Never print, upload, or retain the raw
+assertion.
 
-## 2. Enroll the repository and actor
+## 3. Select and install a policy
 
-Copy `docs/policy-contract.example.json` to a mode-0600 private file. Replace
-every example value. A normal task rule binds the exact repository owner ID,
-repository ID, subject, event, ref, and a reviewed numeric actor mapping.
-Policy v5 is task-only: workflow refs remain signed provenance but are not
-policy selectors.
-Never add wildcards or derive email/canonical identity from GitHub display
-data.
+The chart defaults to v5. Choose exactly one path.
 
-Application 0.5.0 and newer reject policy v4. For an existing 0.4.0
-installation, create a
-separate v5 ConfigMap and follow the [atomic migration procedure](upgrade-v0.5.0.md)
-so old pods retain v4 while new pods receive v5.
+### Preserve v5 and `steward-task-v2`
+
+Copy `docs/policy-contract.example.json`. Replace every example value with
+reviewed values. v5 requires exact subject, event, ref, numeric owner/repository
+IDs, and a verified numeric actor mapping.
 
 ```sh
 umask 077
-install -m 0600 docs/policy-contract.example.json ./private/policy.json
-# Edit privately using the observed claims and reviewed corporate identity.
-jq empty ./private/policy.json
+install -m 0600 docs/policy-contract.example.json ./private/policy-v5.json
+jq empty ./private/policy-v5.json
+kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
+  -n "$IDENTITY_NAMESPACE" create configmap github-oidc-exchange-policy \
+  --from-file=policy.json=./private/policy-v5.json
 ```
 
-Project the reviewed file into
-`ConfigMap/github-oidc-exchange-policy` as `policy.json`, then bump only
-`rolloutRevisions.githubPolicy` and run `helm upgrade`. The process does not
-hot-reload policy. Follow the version-checked replacement procedure in
-[the installation guide](installation.md#6-rotation-recovery-uninstall) so a
-concurrent operator change returns `409 Conflict` instead of being overwritten.
+Set:
 
-## 3. Prove the exchange before adding a consumer
+```yaml
+config:
+  policyContract: github-oidc-exchange.apelogic.io/v5
+  policyConfigMapName: github-oidc-exchange-policy
+```
+
+### Opt in to v6 and `steward-task-v3`
+
+Copy `docs/policy-contract-v6.example.json`. The minimal v6 rule admits only
+the exact signed numeric owner/repository pair. Omitted actors, subjects,
+events, and refs mean Identity does not choose which actors, branches, tags,
+pull requests, events, or workflow subjects may submit from that repository.
+Signed provenance is still checked and preserved.
+
+Add a repository compatibility selector only when Identity must retain that
+exact restriction. Actor compatibility is an all-or-none bundle:
+`actors`, `allowed_email_domains`, and `acting_group_prefix` must either all be
+present or all be absent. When present, only mapped verified actors are
+accepted and Identity emits a complete v2-compatible email/group identity.
+When absent, `email`, `email_verified`, and `groups` are all omitted.
+
+```sh
+umask 077
+install -m 0600 docs/policy-contract-v6.example.json ./private/policy-v6.json
+jq empty ./private/policy-v6.json
+kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
+  -n "$IDENTITY_NAMESPACE" create configmap github-oidc-exchange-policy-v6 \
+  --from-file=policy.json=./private/policy-v6.json
+```
+
+Set both fields explicitly:
+
+```yaml
+config:
+  policyContract: github-oidc-exchange.apelogic.io/v6
+  policyConfigMapName: github-oidc-exchange-policy-v6
+rolloutRevisions:
+  githubPolicy: v6-rev-1
+```
+
+Do not modify or delete the v5 ConfigMap. Follow the
+[0.6.0 upgrade guide](upgrade-v0.6.0.md) for preflight and atomic rollback.
+
+## 4. Prove exchange behavior
 
 Copy [`github-oidc-exchange-smoke.yml`](examples/github-oidc-exchange-smoke.yml)
-to `.github/workflows/identity-exchange-smoke.yml` in the controlled reusable
-workflow repository, pin its commit in a caller, and run the admitted case:
+into the controlled reusable-workflow repository and pin its commit:
 
 ```yaml
 name: Verify Identity exchange
@@ -100,101 +140,79 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: CUSTOMER_ORG/IDENTITY_WORKFLOWS/.github/workflows/identity-exchange-smoke.yml@REVIEWED_40_HEX_COMMIT
+    uses: ORG/IDENTITY_WORKFLOWS/.github/workflows/identity-exchange-smoke.yml@REVIEWED_40_HEX_COMMIT
     with:
-      identity-exchange-url: https://identity.customer.example/v1/exchange
-      identity-exchange-audience: customer-github-identity-exchange
+      identity-exchange-url: https://identity.example.org/v1/exchange
+      identity-exchange-audience: EXACT_DISCOVERED_AUDIENCE
       expected-http-status: "200"
 ```
 
-The smoke workflow retains both tokens only in shell memory or a mode-0600
-runner file, checks the response contract, and emits only the HTTP status. It
-does not prove that a downstream consumer verifies the issued signature and
-claims.
+Use a fresh assertion for each negative case. Both policies must reject a
+wrong issuer, wrong audience, wrong numeric owner/repository pair, malformed
+provenance, invalid signature/key/algorithm, expired assertion, and replayed
+`jti`. For v5, also prove disallowed subject/event/ref and unmapped actor are
+rejected. For v6, test only the optional selectors actually configured; an
+omitted selector intentionally does not restrict that dimension.
 
-Run separate fresh jobs for each negative case; never edit a JWT:
+Treat 503 as dependency failure, not admission denial. Do not edit JWTs as a
+substitute for real signed test cases and never upload response bodies.
 
-- another repository or owner ID;
-- a disallowed ref;
-- an unmapped actor;
-- a different requested audience with `expected-http-status: "401"`.
+## 5. Connect Steward
 
-Replay the admitted source assertion once in a private derivative test and
-expect `401`. Treat `503` as dependency failure, not admission denial. Delete
-all temporary response files, and never upload tokens or response bodies as
-artifacts.
+Before selecting v6, verify the deployed Steward consumer accepts
+`steward-task-v3`, reads the bounded `actor_login` metadata field, and accepts
+either no compatibility identity claims or the complete validated set. Use
+the checked-in [v3 conformance fixture](steward-task-v3.example.json). Steward
+must validate:
 
-## 4. Connect steward-run and Steward
+- exact Identity issuer and `aud=["steward-task-api"]`;
+- ES256 signature from the issuer JWKS;
+- current `iat`, `nbf`, and `exp` within the two-minute lifetime;
+- the selected `identity_contract`; and
+- signed source provenance.
 
-Install Steward and steward-run using their own released installation guides.
-The customer-owned steward-run reusable workflow must be pinned to a reviewed
-40-character commit and supplied both Identity inputs. A minimal caller shape
-is:
+Identity authenticates the signed GitHub source. Steward owns any user binding
+and the decision that the authenticated source may create or operate a Task.
+Repository identity, actor login, and provenance are not sufficient Task
+authority by themselves. Identity has no runtime dependency on Steward and
+does not query Steward users, Tasks, or authorization policy.
+
+A minimal pinned steward-run caller is:
 
 ```yaml
 name: Governed Steward task
 on: workflow_dispatch
 permissions: {}
 jobs:
-  prepare:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: request
-          path: request/
-          if-no-files-found: error
-
   governed:
-    needs: prepare
     permissions:
       contents: read
       id-token: write
-    uses: CUSTOMER_ORG/steward-run/.github/workflows/steward-task-customer.yml@REVIEWED_40_HEX_COMMIT
+    uses: ORG/steward-run/.github/workflows/steward-task.yml@REVIEWED_40_HEX_COMMIT
     with:
       runner-label: steward-run
-      workflow: CUSTOMER_STEWARD_WORKFLOW_REFERENCE
+      workflow: REVIEWED_STEWARD_WORKFLOW_REFERENCE
       input-artifact: request
       output-artifact: result
-      steward-api-url: https://steward.customer.example
-      identity-exchange-url: https://identity.customer.example/v1/exchange
-      identity-exchange-audience: customer-github-identity-exchange
+      steward-api-url: https://steward.example.org
+      identity-exchange-url: https://identity.example.org/v1/exchange
+      identity-exchange-audience: EXACT_DISCOVERED_AUDIENCE
 ```
 
-Keep the endpoint and audience as reviewed literals in the checked-in workflow
-unless the customer's change-control system provides an equally strong pin.
-The reusable workflow requests GitHub OIDC, exchanges it for the fixed
-`steward-task-api` token, and sends that token to Steward. The ARC App Secret
-is not involved in this exchange.
-
-The integration owner must verify that Steward accepts only tokens with all of
-the following:
-
-- exact Identity issuer;
-- audience exactly `steward-task-api`;
-- ES256 signature from the issuer JWKS;
-- `identity_contract=steward-task-v2`;
-- required subject, groups, actor identity, and signed source provenance;
-- current `iat`, `nbf`, and `exp` within the two-minute lifetime.
-
-Run the governed task with known inputs and expected output hash. Then repeat
-with a wrong input audience, untrusted issuer/CA, and unauthorized
-repository/ref/actor. Record only source revisions, artifact digests, GitHub
-run ID, bounded Task UID/status, HTTP status, and public JWKS `kid`s—never
-tokens, authorization headers, policy mappings, or provider bodies.
+Keep the endpoint and audience as reviewed values. The reusable workflow
+requests GitHub OIDC, exchanges it for the fixed Steward token, and sends that
+token to Steward. An ARC registration secret is unrelated to this exchange.
 
 ## Completion checklist
 
-- Discovery and JWKS match the exact issuer and publish an ES256 key.
-- One real reusable-workflow assertion exchanges successfully; replay is
-  denied.
-- Wrong repository, ref, actor, and audience are each denied with a fresh real
-  assertion.
-- Steward verifies the issued token contract rather than merely decoding it.
-- One fork-pinned steward-run task succeeds and finalizes with expected output.
-- Wrong issuer/audience/CA tests fail before successful Task submission.
-- Evidence contains immutable source/workflow/image/chart coordinates and no
-  credential material.
+- Discovery returns the exact exchange endpoint/audience and both supported
+  contract versions.
+- One real assertion exchanges successfully and replay is denied.
+- Wrong issuer, audience, owner ID, and repository ID are denied.
+- Configured optional selectors are each proven exact; omitted selectors are
+  verified not to impose an Identity authorization decision.
+- Steward verifies the chosen v2 or v3 contract and source provenance.
+- v3 operation succeeds with `actor_login` and with `email`, `email_verified`,
+  and `groups` all absent when the actor compatibility bundle is absent.
+- Evidence contains immutable revisions and public key IDs, never tokens,
+  policy mappings, or authorization headers.

@@ -1,5 +1,5 @@
 # Copy this file to .github/workflows/identity-claim-probe.yml in a private,
-# access-restricted customer workflow repository. It is enrollment tooling,
+# access-restricted workflow repository. It is enrollment tooling,
 # not a permanent production workflow.
 name: Observe GitHub OIDC claims for Identity enrollment
 
@@ -40,7 +40,8 @@ jobs:
               const names = [
                 "iss", "aud", "sub", "repository", "repository_owner_id",
                 "repository_id", "actor", "actor_id", "ref", "event_name",
-                "workflow_ref", "job_workflow_ref", "job_workflow_sha"
+                "sha", "run_id", "run_attempt", "workflow_ref", "workflow_sha",
+                "job_workflow_ref", "job_workflow_sha"
               ];
               const selected = Object.fromEntries(names.map(name => [name, payload[name]]));
               process.stdout.write(JSON.stringify(selected, null, 2) + "\n");

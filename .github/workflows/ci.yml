@@ -34,7 +34,7 @@ jobs:
           bash scripts/validate-release.sh
       - name: Helm contract
         run: |
-          bash scripts/test-customer-chart.sh
+          bash scripts/test-chart.sh
           bash scripts/test-portable-release.sh
           bash scripts/test-install-inputs.sh
           bash scripts/test-kubectl-files.sh

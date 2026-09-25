@@ -64,6 +64,8 @@ spec:
               value: {{ required "config.issuerUrl is required" .Values.config.issuerUrl | quote }}
             - name: GITHUB_EXCHANGE_AUDIENCE
               value: {{ required "config.githubExchangeAudience is required" .Values.config.githubExchangeAudience | quote }}
+            - name: EXPECTED_POLICY_VERSION
+              value: {{ required "config.policyContract is required" .Values.config.policyContract | quote }}
             - name: OUTPUT_AUDIENCE
               value: {{ .Values.config.outputAudience | quote }}
             - name: REPLAY_LEASE_NAMESPACE

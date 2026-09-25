@@ -1,0 +1,10 @@
+{
+  "version": "github-oidc-exchange.apelogic.io/v6",
+  "service_group": "agents.apelogic.ai/service-principal:steward-run",
+  "repositories": [
+    {
+      "owner_id": "100001",
+      "repository_id": "200001"
+    }
+  ]
+}

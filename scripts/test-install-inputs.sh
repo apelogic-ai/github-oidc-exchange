@@ -7,7 +7,8 @@ kubectl() {
   [[ "$1" == get ]]
   local kind=$2 name=$3
   case "$kind/$name" in
-    ConfigMap/github-oidc-exchange-policy) printf 'ConfigMap identity %s - policy.json,\n' "$name" ;;
+    ConfigMap/github-oidc-exchange-policy|ConfigMap/github-oidc-exchange-policy-v6)
+      printf 'ConfigMap identity %s - policy.json,\n' "$name" ;;
     Secret/github-oidc-exchange-keyring) printf 'Secret identity %s Opaque keyring.json,\n' "$name" ;;
     ConfigMap/github-oidc-exchange-workload-policy) printf 'ConfigMap identity %s - workload-policy.json,\n' "$name" ;;
     Secret/github-oidc-exchange-workload-rsa-keyring) printf 'Secret identity %s Opaque rsa-keyring.json,\n' "$name" ;;
@@ -19,6 +20,13 @@ kubectl() {
 export -f kubectl
 
 bash scripts/check-install-inputs.sh Cargo.toml test-context identity >/dev/null
+bash scripts/check-install-inputs.sh Cargo.toml test-context identity \
+  --github-policy github-oidc-exchange-policy-v6 >/dev/null
+if bash scripts/check-install-inputs.sh Cargo.toml test-context identity \
+  --github-policy >/dev/null 2>&1; then
+  printf 'missing GitHub policy object name must fail\n' >&2
+  exit 1
+fi
 bash scripts/check-install-inputs.sh Cargo.toml test-context identity --workload \
   --public-tls identity-public-tls >/dev/null
 if bash scripts/check-install-inputs.sh Cargo.toml test-context wrong-namespace \

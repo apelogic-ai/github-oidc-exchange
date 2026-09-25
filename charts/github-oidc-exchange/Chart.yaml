@@ -3,8 +3,8 @@ name: github-oidc-exchange
 description: >-
   Platform OIDC exchange issuer for GitHub and Kubernetes workload identity
 type: application
-version: 0.5.1
-appVersion: "0.5.1"
+version: 0.6.0
+appVersion: "0.6.0"
 kubeVersion: ">=1.30.0-0"
 home: https://github.com/apelogic-ai/github-oidc-exchange
 sources:

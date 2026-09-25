@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
-    IDENTITY_CONTRACT, SOURCE_PROVENANCE_CONTRACT,
+    SOURCE_PROVENANCE_CONTRACT,
     github::{GitHubClaims, GitHubVerifier},
     keys::KeyRing,
     policy::Policy,
@@ -53,9 +53,14 @@ struct OutputClaims {
     iat: u64,
     nbf: u64,
     jti: String,
-    email: String,
-    email_verified: bool,
-    groups: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_login: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email_verified: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    groups: Option<Vec<String>>,
     identity_contract: &'static str,
     source_provenance: SourceProvenance,
 }
@@ -170,10 +175,11 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
                 iat: now,
                 nbf: now.saturating_sub(5),
                 jti: Uuid::new_v4().to_string(),
+                actor_login: identity.actor_login,
                 email: identity.email,
                 email_verified: identity.email_verified,
                 groups: identity.groups,
-                identity_contract: IDENTITY_CONTRACT,
+                identity_contract: identity.identity_contract,
                 source_provenance: SourceProvenance::from(&claims),
             })
             .map_err(|_| ExchangeError::Unavailable)?;

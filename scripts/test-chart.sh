@@ -11,6 +11,7 @@ if helm template unconfigured "$chart" >"$scratch/default.yaml" 2>"$scratch/defa
 fi
 
 released_digest=sha256:ef41cf1cf5d7f8b182e985f609884f6409d9d49ebc8a5164f7b76faf8f806dc1
+activation_digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 zero_digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
 
 for digit in 0 1 2 3 4 5 6 7 8 9 a b c d e f; do
@@ -68,6 +69,28 @@ helm template baseline "$chart" --namespace identity \
 helm template workload "$chart" --namespace identity \
   -f "$chart/ci/workload-values.yaml" >"$scratch/workload.yaml"
 
+grep -A1 -Fq 'name: EXPECTED_POLICY_VERSION
+              value: "github-oidc-exchange.apelogic.io/v5"' "$scratch/baseline.yaml"
+grep -Fq 'name: github-oidc-exchange-policy' "$scratch/baseline.yaml"
+
+helm template source-auth "$chart" --namespace identity \
+  -f "$chart/ci/test-values.yaml" \
+  --set-string config.policyContract=github-oidc-exchange.apelogic.io/v6 \
+  --set-string config.policyConfigMapName=github-oidc-exchange-policy-v6 \
+  --set-string "image.digest=$activation_digest" \
+  --set-string rolloutRevisions.githubPolicy=v6-rev-1 \
+  >"$scratch/source-auth.yaml"
+grep -A1 -Fq 'name: EXPECTED_POLICY_VERSION
+              value: "github-oidc-exchange.apelogic.io/v6"' "$scratch/source-auth.yaml"
+grep -Fq 'name: github-oidc-exchange-policy-v6' "$scratch/source-auth.yaml"
+grep -Fq "@$activation_digest" "$scratch/source-auth.yaml"
+! grep -Fq 'kind: ConfigMap' "$scratch/source-auth.yaml"
+
+helm template baseline "$chart" --namespace identity \
+  -f "$chart/ci/test-values.yaml" >"$scratch/rollback-v5.yaml"
+cmp "$scratch/baseline.yaml" "$scratch/rollback-v5.yaml"
+grep -Fq "@$released_digest" "$scratch/rollback-v5.yaml"
+
 helm template released "$chart" -f "$chart/ci/test-values.yaml" \
   --set-string image.repository=ghcr.io/apelogic-ai/github-oidc-exchange \
   --set-string image.tag=0.5.0 \
@@ -124,10 +147,10 @@ helm template certificate "$chart" --namespace identity \
   -f "$chart/ci/test-values.yaml" \
   --set ingress.tls.secretName=identity-public-tls \
   --set ingress.tls.certManager.enabled=true \
-  --set ingress.tls.certManager.issuerRef.name=customer-issuer \
+  --set ingress.tls.certManager.issuerRef.name=operator-issuer \
   >"$scratch/certificate.yaml"
 grep -Fq 'kind: Certificate' "$scratch/certificate.yaml"
-grep -Fq 'name: customer-issuer' "$scratch/certificate.yaml"
+grep -Fq 'name: operator-issuer' "$scratch/certificate.yaml"
 
 helm template workload-certificate "$chart" --namespace identity \
   -f "$chart/ci/workload-values.yaml" \
@@ -138,11 +161,25 @@ grep -Fq 'name: github-oidc-exchange-workload' "$scratch/workload-certificate.ya
 grep -Fq 'github-oidc-exchange.identity.svc.cluster.local' "$scratch/workload-certificate.yaml"
 
 for missing in image.repository image.digest config.issuerUrl \
-  config.githubExchangeAudience config.policyConfigMapName \
+  config.githubExchangeAudience config.policyContract config.policyConfigMapName \
   config.keyringSecretName networkPolicy.ingressCidrs; do
   if helm template missing "$chart" -f "$chart/ci/test-values.yaml" \
     --set "${missing}=" >/dev/null 2>&1; then
     printf 'chart must reject empty %s\n' "$missing" >&2
+    exit 1
+  fi
+done
+if helm template invalid-policy-contract "$chart" -f "$chart/ci/test-values.yaml" \
+  --set-string config.policyContract=github-oidc-exchange.apelogic.io/v7 \
+  >/dev/null 2>&1; then
+  printf 'chart must reject an unsupported policy contract\n' >&2
+  exit 1
+fi
+for invalid_audience in 'contains whitespace' "$(printf 'a%.0s' {1..256})"; do
+  if helm template invalid-audience "$chart" -f "$chart/ci/test-values.yaml" \
+    --set-string "config.githubExchangeAudience=$invalid_audience" \
+    >/dev/null 2>&1; then
+    printf 'chart must reject an invalid GitHub exchange audience\n' >&2
     exit 1
   fi
 done

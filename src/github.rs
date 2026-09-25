@@ -147,7 +147,7 @@ impl GitHubVerifier {
             || claims.sub.is_empty()
             || claims.jti.is_empty()
             || !numeric_identifier(&claims.actor_id)
-            || !bounded_ascii(&claims.actor, 255)
+            || !bounded_ascii(&claims.actor, 128)
             || !github_repository(&claims.repository)
             || !numeric_identifier(&claims.repository_id)
             || !numeric_identifier(&claims.repository_owner_id)
@@ -159,11 +159,16 @@ impl GitHubVerifier {
             || !bounded_ascii(&claims.job_workflow_ref, 2_048)
             || !git_sha1(&claims.job_workflow_sha)
             || !bounded_ascii(&claims.event_name, 255)
-            || !bounded_ascii(&claims.git_ref, 2_048)
+            || !valid_git_ref(&claims.git_ref)
+            || !provenance_consistent(&claims)
         {
             return Err(VerifyError::Invalid);
         }
         Ok(claims)
+    }
+
+    pub fn audience(&self) -> &str {
+        &self.audience
     }
 
     pub async fn warm_up(&self) -> Result<(), VerifyError> {
@@ -252,6 +257,8 @@ fn numeric_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 20
         && value.bytes().all(|character| character.is_ascii_digit())
+        && value != "0"
+        && !value.starts_with('0')
 }
 
 mod numeric_string {
@@ -283,10 +290,7 @@ mod numeric_string {
 }
 
 fn bounded_ascii(value: &str, maximum: usize) -> bool {
-    !value.is_empty()
-        && value.len() <= maximum
-        && value.is_ascii()
-        && !value.chars().any(char::is_whitespace)
+    !value.is_empty() && value.len() <= maximum && value.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
 fn github_repository(value: &str) -> bool {
@@ -315,6 +319,84 @@ fn git_sha1(value: &str) -> bool {
         && value
             .bytes()
             .all(|character| character.is_ascii_digit() || (b'a'..=b'f').contains(&character))
+}
+
+fn provenance_consistent(claims: &GitHubClaims) -> bool {
+    let Some((owner, repository)) = claims.repository.split_once('/') else {
+        return false;
+    };
+    let standard_prefix = format!("repo:{}:", claims.repository);
+    let numeric_prefix = format!(
+        "repo:{owner}@{}/{repository}@{}:",
+        claims.repository_owner_id, claims.repository_id
+    );
+    let suffix = claims
+        .sub
+        .strip_prefix(&standard_prefix)
+        .or_else(|| claims.sub.strip_prefix(&numeric_prefix));
+    let Some(suffix) = suffix.filter(|suffix| bounded_ascii(suffix, 1_024)) else {
+        return false;
+    };
+    let subject_matches_ref = suffix
+        .strip_prefix("ref:")
+        .is_none_or(|subject_ref| subject_ref == claims.git_ref);
+    let pull_request_matches_ref = suffix != "pull_request"
+        || claims.git_ref.starts_with("refs/pull/") && claims.git_ref.ends_with("/merge");
+    subject_matches_ref
+        && pull_request_matches_ref
+        && workflow_reference(
+            &claims.workflow_ref,
+            Some(&claims.repository),
+            &claims.workflow_sha,
+        )
+        && workflow_reference(&claims.job_workflow_ref, None, &claims.job_workflow_sha)
+}
+
+fn workflow_reference(value: &str, expected_repository: Option<&str>, resolved_sha: &str) -> bool {
+    if !bounded_ascii(value, 2_048) {
+        return false;
+    }
+    let Some((repository, workflow_and_ref)) = value.split_once("/.github/workflows/") else {
+        return false;
+    };
+    if !github_repository(repository)
+        || expected_repository.is_some_and(|expected| expected != repository)
+    {
+        return false;
+    }
+    let Some((workflow, git_ref)) = workflow_and_ref.rsplit_once('@') else {
+        return false;
+    };
+    !workflow.is_empty()
+        && workflow.len() <= 255
+        && (workflow.ends_with(".yml") || workflow.ends_with(".yaml"))
+        && workflow
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        && (valid_git_ref(git_ref) || git_sha1(git_ref) && git_ref == resolved_sha)
+}
+
+fn valid_git_ref(value: &str) -> bool {
+    bounded_ascii(value, 2_048)
+        && ["refs/heads/", "refs/tags/", "refs/pull/"]
+            .iter()
+            .any(|prefix| {
+                value
+                    .strip_prefix(prefix)
+                    .is_some_and(|rest| !rest.is_empty())
+            })
+        && !value.ends_with('/')
+        && !value.ends_with('.')
+        && !value.contains("..")
+        && !value.contains("@{")
+        && !value.contains("//")
+        && !value.contains('\\')
+        && !value
+            .bytes()
+            .any(|byte| matches!(byte, b'~' | b'^' | b':' | b'?' | b'*' | b'['))
+        && value
+            .split('/')
+            .all(|component| !component.starts_with('.') && !component.ends_with(".lock"))
 }
 
 #[cfg(all(test, feature = "test-support"))]
@@ -362,9 +444,12 @@ mod tests {
             sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
             run_id: "400001".to_owned(),
             run_attempt: 1,
-            workflow_ref: "local-fixture/workflow@refs/heads/main".to_owned(),
+            workflow_ref:
+                "local-fixture/steward-run/.github/workflows/workflow.yml@refs/heads/main"
+                    .to_owned(),
             workflow_sha: "123456789abcdef0123456789abcdef012345678".to_owned(),
-            job_workflow_ref: "local-fixture/job@refs/heads/main".to_owned(),
+            job_workflow_ref: "local-fixture/steward-run/.github/workflows/job.yml@refs/heads/main"
+                .to_owned(),
             job_workflow_sha: "23456789abcdef0123456789abcdef0123456789".to_owned(),
             event_name: "workflow_dispatch".to_owned(),
             git_ref: "refs/heads/main".to_owned(),

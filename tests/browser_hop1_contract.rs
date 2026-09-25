@@ -266,10 +266,10 @@ fn empty_policy() -> Policy {
     Policy {
         version: github_oidc_exchange::POLICY_VERSION.to_owned(),
         service_group: "agents.apelogic.ai/service-principal:unused".to_owned(),
-        acting_group_prefix: "agents.apelogic.ai/acting-user:".to_owned(),
-        allowed_email_domains: vec!["example.test".to_owned()],
+        acting_group_prefix: Some("agents.apelogic.ai/acting-user:".to_owned()),
+        allowed_email_domains: Some(vec!["example.test".to_owned()]),
         repositories: vec![],
-        actors: Default::default(),
+        actors: Some(Default::default()),
     }
 }
 

@@ -21,6 +21,9 @@ config:
   issuerUrl: ""
   githubExchangeAudience: ""
   outputAudience: steward-task-api
+  # The default preserves policy v5 and steward-task-v2. Select v6 only with
+  # a separately named v6 ConfigMap and a coordinated consumer rollout.
+  policyContract: github-oidc-exchange.apelogic.io/v5
   # These are Kubernetes object references, not policy or key material.
   policyConfigMapName: ""
   policyConfigMapKey: policy.json
@@ -77,7 +80,7 @@ ingress:
   annotations: {}
   host: ""
   tls:
-    # Existing customer-PKI Secret or a Certificate owned by this release.
+    # Existing operator-PKI Secret or a Certificate owned by this release.
     secretName: ""
     certManager:
       enabled: false

@@ -1,9 +1,15 @@
-use std::{collections::HashSet, fs::File, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    path::Path,
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::POLICY_VERSION;
+use crate::{
+    IDENTITY_CONTRACT, POLICY_VERSION, SOURCE_AUTH_IDENTITY_CONTRACT, SOURCE_AUTH_POLICY_VERSION,
+};
 
 const SERVICE_PREFIX: &str = "agents.apelogic.ai/service-principal:";
 const ACTING_PREFIX: &str = "agents.apelogic.ai/acting-user:";
@@ -14,10 +20,13 @@ const CANONICAL_USER_PREFIX: &str = "agents.apelogic.ai/canonical-user:";
 pub struct Policy {
     pub version: String,
     pub service_group: String,
-    pub acting_group_prefix: String,
-    pub allowed_email_domains: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acting_group_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_email_domains: Option<Vec<String>>,
     pub repositories: Vec<RepositoryPolicy>,
-    pub actors: std::collections::HashMap<String, Actor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actors: Option<HashMap<String, Actor>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -25,9 +34,12 @@ pub struct Policy {
 pub struct RepositoryPolicy {
     pub owner_id: String,
     pub repository_id: String,
-    pub subjects: Vec<String>,
-    pub events: Vec<String>,
-    pub refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subjects: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub events: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -41,10 +53,12 @@ pub struct Actor {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
     pub actor_id: String,
-    pub email: String,
-    pub email_verified: bool,
+    pub actor_login: Option<String>,
+    pub email: Option<String>,
+    pub email_verified: Option<bool>,
     pub subject: String,
-    pub groups: Vec<String>,
+    pub groups: Option<Vec<String>>,
+    pub identity_contract: &'static str,
     pub repository: String,
     pub workflow_ref: String,
     pub job_workflow_ref: String,
@@ -63,7 +77,8 @@ impl Policy {
         let file = File::open(path).map_err(|error| PolicyError::Invalid(error.to_string()))?;
         let value: serde_json::Value = serde_json::from_reader(file)
             .map_err(|error| PolicyError::Invalid(error.to_string()))?;
-        if value.get("version").and_then(serde_json::Value::as_str) != Some(POLICY_VERSION) {
+        let version = value.get("version").and_then(serde_json::Value::as_str);
+        if !matches!(version, Some(POLICY_VERSION | SOURCE_AUTH_POLICY_VERSION)) {
             return Err(invalid("unsupported policy version"));
         }
         let policy: Self = serde_json::from_value(value)
@@ -73,7 +88,10 @@ impl Policy {
     }
 
     pub fn validate(&self) -> Result<(), PolicyError> {
-        if self.version != POLICY_VERSION {
+        if !matches!(
+            self.version.as_str(),
+            POLICY_VERSION | SOURCE_AUTH_POLICY_VERSION
+        ) {
             return Err(invalid("unsupported policy version"));
         }
         if !self.service_group.starts_with(SERVICE_PREFIX) || self.service_group == SERVICE_PREFIX {
@@ -81,100 +99,144 @@ impl Policy {
                 "service_group must use the Steward service-principal prefix",
             ));
         }
-        if self.acting_group_prefix != ACTING_PREFIX {
+        if self.repositories.is_empty() {
+            return Err(invalid("repositories must be non-empty"));
+        }
+        if self.version == POLICY_VERSION {
+            self.validate_v5()
+        } else {
+            self.validate_v6()
+        }
+    }
+
+    pub fn authorize(&self, claims: &crate::github::GitHubClaims) -> Result<Identity, PolicyError> {
+        if self.version == POLICY_VERSION {
+            self.authorize_v5(claims)
+        } else if self.version == SOURCE_AUTH_POLICY_VERSION {
+            self.authorize_v6(claims)
+        } else {
+            Err(PolicyError::Unauthorized)
+        }
+    }
+
+    pub fn identity_contract(&self) -> &'static str {
+        if self.version == SOURCE_AUTH_POLICY_VERSION {
+            SOURCE_AUTH_IDENTITY_CONTRACT
+        } else {
+            IDENTITY_CONTRACT
+        }
+    }
+
+    fn validate_v5(&self) -> Result<(), PolicyError> {
+        let acting_group_prefix = self
+            .acting_group_prefix
+            .as_deref()
+            .ok_or_else(|| invalid("acting_group_prefix is required by policy v5"))?;
+        if acting_group_prefix != ACTING_PREFIX {
             return Err(invalid(
                 "acting_group_prefix does not match the Steward contract",
             ));
         }
-        if self.repositories.is_empty() || self.actors.is_empty() {
-            return Err(invalid("repositories and actors must be non-empty"));
-        }
-        require_values("allowed_email_domains", &self.allowed_email_domains)?;
-        if self.allowed_email_domains.iter().any(|domain| {
-            domain.starts_with('.')
-                || domain.ends_with('.')
-                || !domain.contains('.')
-                || domain != &domain.to_ascii_lowercase()
-        }) {
-            return Err(invalid(
-                "allowed_email_domains must contain canonical DNS domain names",
-            ));
-        }
+        let allowed_email_domains = self
+            .allowed_email_domains
+            .as_deref()
+            .ok_or_else(|| invalid("allowed_email_domains is required by policy v5"))?;
+        validate_domains(allowed_email_domains)?;
+        let actors = self
+            .actors
+            .as_ref()
+            .filter(|actors| !actors.is_empty())
+            .ok_or_else(|| invalid("actors must be non-empty in policy v5"))?;
+        validate_actors(actors, Some(allowed_email_domains), false)?;
+
         let mut repository_rules = HashSet::new();
         for repository in &self.repositories {
-            if repository.owner_id.is_empty()
-                || repository.repository_id.is_empty()
-                || !repository
-                    .owner_id
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit())
-                || !repository
-                    .repository_id
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit())
-            {
-                return Err(invalid("repository numeric IDs are required"));
-            }
-            require_values("subjects", &repository.subjects)?;
-            require_values("events", &repository.events)?;
-            require_values("refs", &repository.refs)?;
+            validate_repository_ids(repository, false)?;
+            let subjects = required_selector("subjects", &repository.subjects)?;
+            let events = required_selector("events", &repository.events)?;
+            let refs = required_selector("refs", &repository.refs)?;
             if !repository_rules.insert((
-                &repository.owner_id,
-                &repository.repository_id,
-                &repository.subjects,
-                &repository.events,
-                &repository.refs,
+                repository.owner_id.as_str(),
+                repository.repository_id.as_str(),
+                subjects,
+                events,
+                refs,
             )) {
                 return Err(invalid("duplicate repository authorization rule"));
             }
-            // GitHub's ordinary `sub` does not embed numeric IDs. Authorize it
-            // only alongside the independently signed owner/repository ID
-            // claims, compared exactly in `authorize` below.
-            if repository.subjects.iter().any(|subject| {
-                !subject.starts_with("repo:")
-                    || subject.len() > 2_048
-                    || !subject.bytes().all(|byte| byte.is_ascii_graphic())
-            }) {
-                return Err(invalid("subjects must be exact GitHub repo subjects"));
+            validate_subjects(subjects)?;
+        }
+        Ok(())
+    }
+
+    fn validate_v6(&self) -> Result<(), PolicyError> {
+        if self
+            .acting_group_prefix
+            .as_deref()
+            .is_some_and(|prefix| prefix != ACTING_PREFIX)
+        {
+            return Err(invalid(
+                "acting_group_prefix does not match the Steward contract",
+            ));
+        }
+        if let Some(domains) = self.allowed_email_domains.as_deref() {
+            validate_domains(domains)?;
+        }
+        match (
+            self.actors.as_ref(),
+            self.allowed_email_domains.as_deref(),
+            self.acting_group_prefix.as_deref(),
+        ) {
+            (None, None, None) => {}
+            (Some(actors), Some(domains), Some(ACTING_PREFIX)) => {
+                if actors.is_empty() {
+                    return Err(invalid("actors must be non-empty when configured"));
+                }
+                validate_actors(actors, Some(domains), true)?;
+            }
+            _ => {
+                return Err(invalid(
+                    "actors, allowed_email_domains, and acting_group_prefix must be configured together",
+                ));
             }
         }
-        let mut canonical_user_ids = HashSet::new();
-        for (actor_id, actor) in &self.actors {
-            if actor_id.is_empty()
-                || !actor_id.chars().all(|character| character.is_ascii_digit())
-                || !actor.verified
-                || !canonical_email(&actor.email)
-                || !canonical_user_id(&actor.canonical_user_id)
-                || !self
-                    .allowed_email_domains
-                    .iter()
-                    .any(|domain| actor.email.ends_with(&format!("@{domain}")))
-            {
-                return Err(invalid(
-                    "actor mappings require a numeric ID, verified canonical corporate email, and opaque canonical user ID",
-                ));
+
+        let mut repository_ids = HashSet::new();
+        for repository in &self.repositories {
+            validate_repository_ids(repository, true)?;
+            if !repository_ids.insert((
+                repository.owner_id.as_str(),
+                repository.repository_id.as_str(),
+            )) {
+                return Err(invalid("duplicate or ambiguous repository rule"));
             }
-            if !canonical_user_ids.insert(actor.canonical_user_id.as_str()) {
-                return Err(invalid(
-                    "canonical user IDs must be unique across actor mappings",
-                ));
+            if let Some(subjects) = repository.subjects.as_deref() {
+                require_values("subjects", subjects)?;
+                validate_subjects(subjects)?;
+            }
+            if let Some(events) = repository.events.as_deref() {
+                require_values("events", events)?;
+            }
+            if let Some(refs) = repository.refs.as_deref() {
+                require_values("refs", refs)?;
             }
         }
         Ok(())
     }
 
-    pub fn authorize(&self, claims: &crate::github::GitHubClaims) -> Result<Identity, PolicyError> {
+    fn authorize_v5(&self, claims: &crate::github::GitHubClaims) -> Result<Identity, PolicyError> {
         let actor = self
             .actors
-            .get(&claims.actor_id)
+            .as_ref()
+            .and_then(|actors| actors.get(&claims.actor_id))
             .filter(|actor| actor.verified)
             .ok_or(PolicyError::Unauthorized)?;
         let mut matching_rules = self.repositories.iter().filter(|repository| {
             repository.owner_id == claims.repository_owner_id
                 && repository.repository_id == claims.repository_id
-                && contains(&repository.subjects, &claims.sub)
-                && contains(&repository.events, &claims.event_name)
-                && contains(&repository.refs, &claims.git_ref)
+                && selector_matches(&repository.subjects, &claims.sub)
+                && selector_matches(&repository.events, &claims.event_name)
+                && selector_matches(&repository.refs, &claims.git_ref)
         });
         let repository = matching_rules.next().ok_or(PolicyError::Unauthorized)?;
         if matching_rules.next().is_some() {
@@ -182,21 +244,176 @@ impl Policy {
         }
         let mut groups = vec![
             self.service_group.clone(),
-            format!("{}{}", self.acting_group_prefix, actor.email),
+            format!(
+                "{}{}",
+                self.acting_group_prefix
+                    .as_deref()
+                    .ok_or(PolicyError::Unauthorized)?,
+                actor.email
+            ),
             format!("{CANONICAL_USER_PREFIX}{}", actor.canonical_user_id),
         ];
         groups.sort();
         Ok(Identity {
             actor_id: claims.actor_id.clone(),
-            email: actor.email.clone(),
-            email_verified: actor.verified,
+            actor_login: None,
+            email: Some(actor.email.clone()),
+            email_verified: Some(actor.verified),
             subject: format!("github-actions:actor:{}", claims.actor_id),
-            groups,
+            groups: Some(groups),
+            identity_contract: IDENTITY_CONTRACT,
             repository: format!("{}/{}", repository.owner_id, repository.repository_id),
             workflow_ref: claims.workflow_ref.clone(),
             job_workflow_ref: claims.job_workflow_ref.clone(),
         })
     }
+
+    fn authorize_v6(&self, claims: &crate::github::GitHubClaims) -> Result<Identity, PolicyError> {
+        if !numeric_identifier(&claims.actor_id) {
+            return Err(PolicyError::Unauthorized);
+        }
+        let mut matching_rules = self.repositories.iter().filter(|repository| {
+            repository.owner_id == claims.repository_owner_id
+                && repository.repository_id == claims.repository_id
+                && optional_selector_matches(&repository.subjects, &claims.sub)
+                && optional_selector_matches(&repository.events, &claims.event_name)
+                && optional_selector_matches(&repository.refs, &claims.git_ref)
+        });
+        let repository = matching_rules.next().ok_or(PolicyError::Unauthorized)?;
+        if matching_rules.next().is_some() {
+            return Err(PolicyError::Unauthorized);
+        }
+
+        let actor = match &self.actors {
+            Some(actors) => Some(
+                actors
+                    .get(&claims.actor_id)
+                    .filter(|actor| actor.verified)
+                    .ok_or(PolicyError::Unauthorized)?,
+            ),
+            None => None,
+        };
+        let (email, email_verified, groups) = if let Some(actor) = actor {
+            let acting_group_prefix = self
+                .acting_group_prefix
+                .as_deref()
+                .ok_or(PolicyError::Unauthorized)?;
+            let mut groups = vec![
+                self.service_group.clone(),
+                format!("{acting_group_prefix}{}", actor.email),
+            ];
+            groups.push(format!(
+                "{CANONICAL_USER_PREFIX}{}",
+                actor.canonical_user_id
+            ));
+            groups.sort();
+            (Some(actor.email.clone()), Some(true), Some(groups))
+        } else {
+            (None, None, None)
+        };
+        Ok(Identity {
+            actor_id: claims.actor_id.clone(),
+            actor_login: Some(claims.actor.clone()),
+            email,
+            email_verified,
+            subject: format!("github-actions:actor:{}", claims.actor_id),
+            groups,
+            identity_contract: SOURCE_AUTH_IDENTITY_CONTRACT,
+            repository: format!("{}/{}", repository.owner_id, repository.repository_id),
+            workflow_ref: claims.workflow_ref.clone(),
+            job_workflow_ref: claims.job_workflow_ref.clone(),
+        })
+    }
+}
+
+fn required_selector<'a>(
+    name: &str,
+    selector: &'a Option<Vec<String>>,
+) -> Result<&'a Vec<String>, PolicyError> {
+    let values = selector
+        .as_ref()
+        .ok_or_else(|| invalid(&format!("{name} is required by policy v5")))?;
+    require_values(name, values)?;
+    Ok(values)
+}
+
+fn validate_repository_ids(
+    repository: &RepositoryPolicy,
+    bounded: bool,
+) -> Result<(), PolicyError> {
+    let valid = |value: &str| {
+        if bounded {
+            numeric_identifier(value)
+        } else {
+            decimal_identifier(value)
+        }
+    };
+    if !valid(&repository.owner_id) || !valid(&repository.repository_id) {
+        return Err(invalid("repository numeric IDs are required"));
+    }
+    Ok(())
+}
+
+fn validate_domains(domains: &[String]) -> Result<(), PolicyError> {
+    require_values("allowed_email_domains", domains)?;
+    if domains.iter().any(|domain| {
+        domain.starts_with('.')
+            || domain.ends_with('.')
+            || !domain.contains('.')
+            || domain != &domain.to_ascii_lowercase()
+    }) {
+        return Err(invalid(
+            "allowed_email_domains must contain canonical DNS domain names",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_subjects(subjects: &[String]) -> Result<(), PolicyError> {
+    if subjects.iter().any(|subject| {
+        !subject.starts_with("repo:")
+            || subject.len() > 2_048
+            || !subject.bytes().all(|byte| byte.is_ascii_graphic())
+    }) {
+        return Err(invalid("subjects must be exact GitHub repo subjects"));
+    }
+    Ok(())
+}
+
+fn validate_actors(
+    actors: &HashMap<String, Actor>,
+    allowed_email_domains: Option<&[String]>,
+    bounded_ids: bool,
+) -> Result<(), PolicyError> {
+    let mut canonical_user_ids = HashSet::new();
+    for (actor_id, actor) in actors {
+        let domain_allowed = allowed_email_domains.is_none_or(|domains| {
+            domains
+                .iter()
+                .any(|domain| actor.email.ends_with(&format!("@{domain}")))
+        });
+        let actor_id_valid = if bounded_ids {
+            numeric_identifier(actor_id)
+        } else {
+            decimal_identifier(actor_id)
+        };
+        if !actor_id_valid
+            || !actor.verified
+            || !canonical_email(&actor.email)
+            || !canonical_user_id(&actor.canonical_user_id)
+            || !domain_allowed
+        {
+            return Err(invalid(
+                "actor mappings require a numeric ID, verified canonical email, and opaque canonical user ID",
+            ));
+        }
+        if !canonical_user_ids.insert(actor.canonical_user_id.as_str()) {
+            return Err(invalid(
+                "canonical user IDs must be unique across actor mappings",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn require_values(name: &str, values: &[String]) -> Result<(), PolicyError> {
@@ -212,8 +429,24 @@ fn require_values(name: &str, values: &[String]) -> Result<(), PolicyError> {
     Ok(())
 }
 
-fn contains(values: &[String], wanted: &str) -> bool {
-    values.iter().any(|value| value == wanted)
+fn selector_matches(selector: &Option<Vec<String>>, wanted: &str) -> bool {
+    selector
+        .as_ref()
+        .is_some_and(|values| values.iter().any(|value| value == wanted))
+}
+
+fn optional_selector_matches(selector: &Option<Vec<String>>, wanted: &str) -> bool {
+    selector
+        .as_ref()
+        .is_none_or(|values| values.iter().any(|value| value == wanted))
+}
+
+fn numeric_identifier(value: &str) -> bool {
+    value.len() <= 20 && decimal_identifier(value) && value != "0" && !value.starts_with('0')
+}
+
+fn decimal_identifier(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn canonical_email(value: &str) -> bool {
