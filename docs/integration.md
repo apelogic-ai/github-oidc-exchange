@@ -14,7 +14,7 @@ audience from discovery:
 export IDENTITY_ISSUER=https://identity.example.org
 discovery_file="$(mktemp)"
 chmod 0600 "$discovery_file"
-curl -fsS "$IDENTITY_ISSUER/.well-known/openid-configuration" >"$discovery_file"
+curl -fsS "$IDENTITY_ISSUER/.well-known/oauth-authorization-server" >"$discovery_file"
 jq -e --arg issuer "$IDENTITY_ISSUER" '
   .issuer == $issuer and
   .github_oidc_exchange_endpoint == ($issuer + "/v1/exchange") and
@@ -26,6 +26,10 @@ export IDENTITY_EXCHANGE_URL="$(jq -er .github_oidc_exchange_endpoint "$discover
 export IDENTITY_AUDIENCE="$(jq -er .github_oidc_audience "$discovery_file")"
 rm "$discovery_file"
 ```
+
+Identity requires `IDENTITY_ISSUER` to be an HTTPS origin without a path, query,
+or fragment. The retained `/.well-known/openid-configuration` endpoint returns
+the same metadata document for integrations that already use OpenID discovery.
 
 The GitHub input audience differs from the fixed output audience
 `steward-task-api`. Neither flow uses a GitHub OAuth App.
@@ -205,8 +209,8 @@ token to Steward. An ARC registration secret is unrelated to this exchange.
 
 ## Completion checklist
 
-- Discovery returns the exact exchange endpoint/audience and both supported
-  contract versions.
+- Both metadata endpoints return the same exact exchange endpoint/audience and
+  both supported contract versions.
 - One real assertion exchanges successfully and replay is denied.
 - Wrong issuer, audience, owner ID, and repository ID are denied.
 - Configured optional selectors are each proven exact; omitted selectors are

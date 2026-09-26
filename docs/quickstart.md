@@ -84,7 +84,8 @@ cp charts/github-oidc-exchange/values.example.yaml ./private/values.yaml
 Set:
 
 - `image.repository` and exact `image.digest` from the handoff;
-- `config.issuerUrl` to `IDENTITY_ISSUER`;
+- `config.issuerUrl` to the origin-only `IDENTITY_ISSUER` (no path, query, or
+  fragment);
 - `config.githubExchangeAudience` to a dedicated bounded value;
 - `config.policyContract: github-oidc-exchange.apelogic.io/v5`;
 - `config.policyConfigMapName: github-oidc-exchange-policy`;
@@ -117,20 +118,26 @@ kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
   deployment/github-oidc-exchange --timeout=5m
 ```
 
-Validate discovery without hard-coding the input audience:
+Validate both equivalent metadata endpoints without hard-coding the input
+audience:
 
 ```sh
-curl -fsS "$IDENTITY_ISSUER/.well-known/openid-configuration" | \
-  jq -e --arg issuer "$IDENTITY_ISSUER" '
-    .issuer == $issuer and
-    .jwks_uri == ($issuer + "/jwks.json") and
-    .github_oidc_exchange_endpoint == ($issuer + "/v1/exchange") and
-    (.github_oidc_audience | type == "string" and length > 0) and
-    (.identity_contracts_supported | index("steward-task-v2")) and
-    (.identity_contracts_supported | index("steward-task-v3")) and
-    (.policy_versions_supported | index("github-oidc-exchange.apelogic.io/v5")) and
-    (.policy_versions_supported | index("github-oidc-exchange.apelogic.io/v6"))
-  ' >/dev/null
+for metadata_path in \
+  /.well-known/oauth-authorization-server \
+  /.well-known/openid-configuration; do
+  metadata_url="$IDENTITY_ISSUER$metadata_path"
+  curl -fsS "$metadata_url" | \
+    jq -e --arg issuer "$IDENTITY_ISSUER" '
+      .issuer == $issuer and
+      .jwks_uri == ($issuer + "/jwks.json") and
+      .github_oidc_exchange_endpoint == ($issuer + "/v1/exchange") and
+      (.github_oidc_audience | type == "string" and length > 0) and
+      (.identity_contracts_supported | index("steward-task-v2")) and
+      (.identity_contracts_supported | index("steward-task-v3")) and
+      (.policy_versions_supported | index("github-oidc-exchange.apelogic.io/v5")) and
+      (.policy_versions_supported | index("github-oidc-exchange.apelogic.io/v6"))
+    ' >/dev/null
+done
 curl -fsS "$IDENTITY_ISSUER/jwks.json" | \
   jq -e '[.keys[] | select(.alg == "ES256" and .kty == "EC")] | length > 0' \
   >/dev/null

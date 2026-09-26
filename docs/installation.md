@@ -313,7 +313,7 @@ the existing `github-oidc-exchange-policy` v5 object.
 
 Copy [`values.example.yaml`](../charts/github-oidc-exchange/values.example.yaml)
 to a private deployment file, fill every mandatory empty field, and set
-`image.repository`, `image.digest`, exact `config.issuerUrl`, dedicated
+`image.repository`, `image.digest`, exact origin-only `config.issuerUrl`, dedicated
 `config.githubExchangeAudience`, `config.policyContract`, the matching
 `config.policyConfigMapName`, the keyring reference, and
 `networkPolicy.ingressCidrs` to the actual proxy/Gateway source CIDRs. The
@@ -325,13 +325,19 @@ domain, digest, CIDR, object, and Gateway reference in it is fake. Use only
 one exposure option:
 
 1. Service-only: leave `ingress.enabled=false`, `httpRoute.enabled=false`; an
-   operator-owned HTTPS proxy must expose exactly discovery, JWKS, and exchange.
+   operator-owned HTTPS proxy must expose exactly both metadata endpoints,
+   JWKS, and exchange.
 2. Ingress: set `ingress.enabled=true`, controller `className`, `host` matching
    issuer, and `tls.secretName`; optionally enable its cert-manager Certificate
-   with `issuerRef.name/kind`. The chart routes only three public paths.
+   with `issuerRef.name/kind`. The chart routes only four public paths.
 3. HTTPRoute: set `httpRoute.enabled=true`, `parentRefs` to an existing HTTPS
    Gateway listener, and `hostnames` containing the issuer DNS name. The
    Gateway owner controls TLS/certificate renewal and route acceptance.
+
+`config.issuerUrl` must be an HTTPS origin without a path, query, or fragment;
+both the chart schema and application startup reject path-bearing values. The
+RFC 8414 path is `/.well-known/oauth-authorization-server`, and the retained
+OpenID path is `/.well-known/openid-configuration`.
 
 For the behavior-preserving baseline, retain:
 
@@ -490,8 +496,8 @@ or raw authorization headers in evidence. Set `set +x` in token-handling jobs.
 | Test/action | Command or action | Expected non-secret result |
 | --- | --- | --- |
 | Pod/Service/RBAC | `kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" get pods,svc,deploy,role,rolebinding` | Two Ready replicas by default, ClusterIP ports 8080 (+8443 only with workload), namespaced Lease RBAC. No missing mounts/restarts. |
-| TLS/route | `curl -fsS -o /dev/null -w '%{http_code}\n' "$IDENTITY_ISSUER/.well-known/openid-configuration"`; `openssl s_client -connect HOST:443 -servername HOST </dev/null` (inspect summary only) | HTTP 200, valid trusted external chain/SAN; neither workload path nor health/metrics publicly routed. Ingress or Gateway reports accepted/ready; cert-manager Certificate `Ready=True` if used. |
-| Discovery/JWKS | Fetch discovery and require exact issuer/JWKS/exchange URLs, exact `github_oidc_audience`, both entries in `identity_contracts_supported`, and both entries in `policy_versions_supported`; fetch JWKS and require an ES256 EC key. | Predicates pass; discovery contains no policy contents, identity mappings, or key material. Record only public `kid` values. |
+| TLS/route | Probe `$IDENTITY_ISSUER/.well-known/oauth-authorization-server` and `$IDENTITY_ISSUER/.well-known/openid-configuration` with `curl -fsS -o /dev/null -w '%{http_code}\n'`; run `openssl s_client -connect HOST:443 -servername HOST </dev/null` (inspect summary only). | Both metadata routes return HTTP 200 with a valid trusted external chain/SAN; neither workload path nor health/metrics is publicly routed. Ingress or Gateway reports accepted/ready; cert-manager Certificate `Ready=True` if used. |
+| Discovery/JWKS | Fetch both metadata documents, require them to be equal, and require exact issuer/JWKS/exchange URLs, exact `github_oidc_audience`, both entries in `identity_contracts_supported`, and both entries in `policy_versions_supported`; fetch JWKS and require an ES256 EC key. | Predicates pass; metadata contains no policy contents, identity mappings, or key material. Record only public `kid` values. |
 | Real admitted GitHub OIDC | From an admitted repository job with `id-token: write`, request a fresh assertion using the discovered audience; POST it as Bearer to `/v1/exchange`, save the response mode 0600, and verify status 200, `token_type=Bearer`, `expires_in=120`, signature, issuer, audience, selected contract, and source provenance. | v5 yields unchanged `steward-task-v2`; minimal v6 yields `steward-task-v3` with `actor_login` and no `email`, `email_verified`, or `groups`. The optional complete compatibility bundle yields all three legacy identity claims together. Replay returns 401. |
 | Negative GitHub admission | With fresh signed assertions, test wrong issuer/audience/signature/algorithm/key ID, expired/not-yet-valid times, malformed actor ID, wrong numeric owner/repository IDs, inconsistent provenance, and replay. Under v5 also test subject/event/ref/actor. Under v6 test only optional selectors that are present. | Each applicable denial returns 401. A 503 is dependency failure, not denial evidence. Omitted v6 selectors deliberately do not reject that dimension. |
 | Key rotation | Perform add/activate/rollback/retire sequence above; compare only public JWKS `kid`s and new token header `kid` in private test tooling. | Overlap publishes both keys, activation changes signer, rollback can select old signer while both verify, retirement occurs only after token TTL plus skew and consumer refresh. |

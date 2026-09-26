@@ -30,6 +30,9 @@ spec:
                 name: {{ include "github-oidc-exchange.name" . }}
                 port:
                   name: http
+          - path: /.well-known/oauth-authorization-server
+            pathType: Exact
+            backend: *backend
           - path: /jwks.json
             pathType: Exact
             backend: *backend

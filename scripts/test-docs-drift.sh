@@ -78,6 +78,21 @@ jq -e '
   (has("groups") | not) and
   (has("github_actor") | not)
 ' docs/steward-task-v3.example.json >/dev/null
+jq -e '
+  .method == "GET" and
+  .url == "https://identity.example.invalid/.well-known/oauth-authorization-server" and
+  .headers.accept == "application/json" and
+  .redirect == "manual"
+' tests/fixtures/steward-run-authorization-server-request.json >/dev/null
+jq -e '
+  .properties.config.properties.issuerUrl.pattern == "^https://[^/?#]+/?$"
+' charts/github-oidc-exchange/values.schema.json >/dev/null
+grep -Fq "!authority.contains('/')" src/config.rs
+for document in README.md docs/installation.md docs/quickstart.md \
+  docs/integration.md docs/consumer-contract-v1.md \
+  charts/github-oidc-exchange/README.md; do
+  grep -Fqi 'origin' "$document"
+done
 
 for document in README.md docs/installation.md docs/integration.md \
   docs/consumer-contract-v1.md docs/upgrade-v0.6.0.md \
@@ -95,6 +110,14 @@ for expected in \
   'policy_versions_supported'; do
   grep -Fq "$expected" src/http.rs
   grep -Fq "$expected" docs/consumer-contract-v1.md
+done
+
+for route in /.well-known/oauth-authorization-server \
+  /.well-known/openid-configuration; do
+  grep -Fq "$route" src/http.rs
+  grep -Fq "$route" docs/consumer-contract-v1.md
+  grep -Fq "$route" charts/github-oidc-exchange/templates/ingress.yaml
+  grep -Fq "$route" charts/github-oidc-exchange/templates/httproute.yaml
 done
 
 for phrase in \
@@ -169,7 +192,8 @@ for name in github-oidc-exchange-keyring github-oidc-exchange-policy \
   github-oidc-exchange-workload-policy github-oidc-exchange-server-tls; do
   grep -Fq "$name" docs/installation.md
 done
-for route in /.well-known/openid-configuration /jwks.json /v1/exchange \
+for route in /.well-known/oauth-authorization-server \
+  /.well-known/openid-configuration /jwks.json /v1/exchange \
   /v1/workload/exchange; do
   grep -Fq "$route" docs/consumer-contract-v1.md
 done

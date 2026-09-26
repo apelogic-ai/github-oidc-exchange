@@ -9,6 +9,13 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ## [Unreleased]
 
+### Fixed
+
+- Exposed RFC 8414 authorization-server metadata at
+  `/.well-known/oauth-authorization-server` while retaining the equivalent
+  OpenID discovery endpoint, and enforced an origin-only issuer across runtime
+  and Helm validation so advertised exchange and JWKS URLs are routable.
+
 ## [0.6.0] - 2026-09-25
 
 ### Added

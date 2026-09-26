@@ -42,7 +42,7 @@ rolloutRevisions:
   githubKeyring: rev-1
 
 # Gateway API is preferred. The Gateway and its TLS policy are platform-owned;
-# this route owns only the three public Identity paths. Replace the parent ref
+# this route owns only the four public Identity paths. Replace the parent ref
 # with the platform Gateway listener that accepts this namespace and hostname.
 httpRoute:
   enabled: true

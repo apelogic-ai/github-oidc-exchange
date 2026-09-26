@@ -80,6 +80,10 @@ fn build_router<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 's
 ) -> Router {
     let application = Router::new()
         .route("/.well-known/openid-configuration", get(discovery::<L, R>))
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(discovery::<L, R>),
+        )
         .route("/jwks.json", get(jwks::<L, R>))
         .route("/v1/exchange", post(exchange::<L, R>))
         .route("/healthz", get(no_content))
