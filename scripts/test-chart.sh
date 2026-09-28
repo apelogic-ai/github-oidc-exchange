@@ -13,6 +13,22 @@ fi
 released_digest=sha256:15b23a90dbb6a42312f5d2f805b56750cf86c38ed80713ceeb36ffdd8e43ce3a
 activation_digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 zero_digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
+production_example="$chart/examples/production-values.yaml"
+stamped_production="$scratch/production-values.yaml"
+
+grep -Fq 'repository: replace-with-release-image-repository' "$production_example"
+grep -Fq 'digest: replace-with-release-image-digest' "$production_example"
+grep -Fq 'release-manifest.json' "$production_example"
+if bash scripts/validate-chart-values.sh "$production_example" \
+  >"$scratch/production-placeholder.err" 2>&1; then
+  printf 'packaged production example must reject unstamped image coordinates\n' >&2
+  exit 1
+fi
+grep -Fq 'image.digest' "$scratch/production-placeholder.err"
+sed \
+  -e 's#repository: replace-with-release-image-repository#repository: ghcr.io/apelogic-ai/github-oidc-exchange#' \
+  -e "s#digest: replace-with-release-image-digest#digest: $released_digest#" \
+  "$production_example" >"$stamped_production"
 
 for digit in 0 1 2 3 4 5 6 7 8 9 a b c d e f; do
   printf -v repeated '%*s' 64 ''
@@ -47,7 +63,7 @@ grep -Fq 'image.digest: placeholder/sentinel value' "$scratch/validator.err"
 # Cover both checked-in examples. values.example.yaml intentionally needs the
 # complete CI overlay because its mandatory deployment inputs are empty.
 for example_args in \
-  "$chart/examples/production-values.yaml" \
+  "$stamped_production" \
   "$chart/values.example.yaml $chart/ci/test-values.yaml"; do
   read -r -a example_files <<<"$example_args"
   helm_args=()
@@ -113,7 +129,7 @@ grep -Fq "image: registry.example.test/mirror/github-oidc-exchange:0.7.0@$releas
   "$scratch/mirrored.yaml"
 
 bash scripts/validate-chart-values.sh \
-  "$chart/examples/production-values.yaml" >"$scratch/validator-valid.out"
+  "$stamped_production" >"$scratch/validator-valid.out"
 
 grep -Fq 'secretName: github-oidc-exchange-keyring' "$scratch/baseline.yaml"
 grep -Fq 'name: github-oidc-exchange-policy' "$scratch/baseline.yaml"
@@ -154,10 +170,14 @@ if grep -Fq 'alb.ingress.kubernetes.io' "$scratch/ingress.yaml"; then
 fi
 
 helm template gateway "$chart" --namespace identity \
-  -f "$chart/examples/production-values.yaml" >"$scratch/gateway.yaml"
+  -f "$stamped_production" >"$scratch/gateway.yaml"
 grep -Fxq '            value: /.well-known/openid-configuration' "$scratch/gateway.yaml"
 grep -Fxq '            value: /.well-known/oauth-authorization-server' \
   "$scratch/gateway.yaml"
+grep -Fq 'name: acme-registry-pull' "$scratch/gateway.yaml"
+grep -Fq 'kind: HTTPRoute' "$scratch/gateway.yaml"
+! grep -Fq 'kind: Ingress' "$scratch/gateway.yaml"
+! grep -Fq 'path: /v1/workload/exchange' "$scratch/gateway.yaml"
 
 helm template certificate "$chart" --namespace identity \
   -f "$chart/ci/test-values.yaml" \

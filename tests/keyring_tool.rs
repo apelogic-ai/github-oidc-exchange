@@ -17,6 +17,40 @@ fn tool(args: &[&str]) -> std::process::Output {
 }
 
 #[test]
+fn generation_resolves_a_bare_filename_in_the_current_directory() {
+    let dir = tempfile::tempdir().expect("private tempdir");
+    let generated = Command::new(env!("CARGO_BIN_EXE_keyring-tool"))
+        .current_dir(dir.path())
+        .args(["generate-es256", "keyring.json", "initial"])
+        .output()
+        .expect("run keyring tool");
+    assert!(generated.status.success());
+
+    let path = dir.path().join("keyring.json");
+    assert_eq!(
+        fs::metadata(&path).expect("metadata").permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(KeyRing::load(&path, Utc::now()).is_ok());
+}
+
+#[test]
+fn generation_reports_a_missing_parent_directory_precisely() {
+    let dir = tempfile::tempdir().expect("private tempdir");
+    let path = dir.path().join("missing").join("keyring.json");
+    let generated = tool(&[
+        "generate-es256",
+        path.to_str().expect("utf8 path"),
+        "initial",
+    ]);
+    assert!(!generated.status.success());
+    assert!(
+        String::from_utf8_lossy(&generated.stderr)
+            .contains("keyring parent directory does not exist")
+    );
+}
+
+#[test]
 fn es256_generation_validation_and_rotation_are_private_and_loadable() {
     let dir = tempfile::tempdir().expect("private tempdir");
     let path = dir.path().join("issuer.json");
