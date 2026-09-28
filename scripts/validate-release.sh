@@ -195,7 +195,7 @@ helm template tagged "$render_dir/chart" \
   -f charts/github-oidc-exchange/examples/production-values.yaml \
   >"$render_dir/tagged.yaml"
 grep -Fq -- \
-  "image: ghcr.io/apelogic-ai/github-oidc-exchange:0.5.0@sha256:ef41cf1cf5d7f8b182e985f609884f6409d9d49ebc8a5164f7b76faf8f806dc1" \
+  "image: ghcr.io/apelogic-ai/github-oidc-exchange:0.7.0@sha256:15b23a90dbb6a42312f5d2f805b56750cf86c38ed80713ceeb36ffdd8e43ce3a" \
   "$render_dir/tagged.yaml"
 if helm template malformed-tag "$render_dir/chart" \
   -f charts/github-oidc-exchange/examples/production-values.yaml \

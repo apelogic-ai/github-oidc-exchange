@@ -2,13 +2,14 @@
 set -euo pipefail
 
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+released_version="0.7.0"
 lock_version="$(awk '
   /^name = "github-oidc-exchange"$/ { package = 1; next }
   package && /^version = "/ { gsub(/^version = "|"$/, ""); print; exit }
 ' Cargo.lock)"
 chart_version="$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)"
 app_version="$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc-exchange/Chart.yaml | head -1)"
-[[ "$version" == "0.7.0" ]]
+[[ "$version" == "0.7.1-dev" ]]
 [[ "$lock_version" == "$version" ]]
 [[ "$chart_version" == "$version" ]]
 [[ "$app_version" == "$version" ]]
@@ -27,9 +28,9 @@ current_docs=(
   charts/github-oidc-exchange/examples/production-values.yaml
 )
 for document in "${current_docs[@]}"; do
-  grep -Fq "$version" "$document"
+  grep -Fq "$released_version" "$document"
 done
-grep -Fq "## [$version]" CHANGELOG.md
+grep -Fq "## [$released_version]" CHANGELOG.md
 
 v5_policy="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
 v6_policy="$(sed -n 's/^pub const SOURCE_AUTH_POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
@@ -140,7 +141,7 @@ grep -Fq 'name: EXPECTED_POLICY_VERSION' \
 grep -Fq 'github-oidc-exchange-policy` (v5)' docs/upgrade-v0.7.0.md
 grep -Fq 'github-oidc-exchange-policy-v6' docs/upgrade-v0.7.0.md
 
-release_notes="docs/releases/v$version.md"
+release_notes="docs/releases/v$released_version.md"
 for expected in \
   'continues to issue the unchanged' \
   'Explicit values plus separate policy object' \

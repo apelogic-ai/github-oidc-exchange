@@ -9,6 +9,13 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ## [Unreleased]
 
+### Changed
+
+- Advanced the application and chart development version to `0.7.1-dev`
+  after tagging 0.7.0.
+- Updated the renderable example, CI fixtures, and chart/release validation to
+  use the published 0.7.0 multi-platform image digest.
+
 ## [0.7.0] - 2026-09-27
 
 ### Added
