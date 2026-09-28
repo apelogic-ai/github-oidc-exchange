@@ -13,6 +13,8 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 - Advanced the application and chart development version to `0.7.1-dev`
   after tagging 0.7.0.
+- Raised the chart and documented minimum supported Kubernetes version from
+  1.30 to 1.32.
 - Updated CI fixtures and chart/release validation to use the published 0.7.0
   multi-platform image digest.
 
