@@ -464,7 +464,7 @@ Validate discovery/JWKS and a fresh exchange again. There is no database
 migration; keep the same namespace to preserve replay Leases. A 0.7.2
 application upgrade that retains v5 is safe to roll back normally. After v6
 activation, an older binary cannot read v6: roll back the chart/application
-and `policyContract`/`policyConfigMapName` together to the retained v5 object.
+and all three policy-selection values together to the retained v5 object.
 Never perform an image-only rollback while v6 remains mounted. The exact
 preflight, activation, and rollback sequence is in the
 [0.7.2 upgrade guide](upgrade-v0.7.2.md).
@@ -519,8 +519,9 @@ restart and JWKS to publish both `kid`s. Then activate the new key, project
 again, bump the revision again, and verify new tokens use the new `kid` while
 old tokens still validate. If activation fails, `activate-es256 ... OLD_KID`
 and reproject/bump the revision; the overlap keeps both old and new tokens
-verifiable. Wait at least five minutes after the last old signing event and
-confirm all consumers have refreshed JWKS before retiring the old key.
+verifiable. Retire the old key only after the 120-second token lifetime,
+allowed clock skew, every verifier refresh or static reload, and the
+operational rollback window have all elapsed.
 
 ```sh
 set +x
@@ -530,7 +531,7 @@ cargo run --locked --bin keyring-tool -- add-es256 \
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
 cargo run --locked --bin keyring-tool -- export-jwks \
   ./private/issuer-keyring.json > ./private/issuer-jwks.json
-jq -e '.keys | length == 2' ./private/issuer-jwks.json >/dev/null
+jq -e '.keys | length >= 2' ./private/issuer-jwks.json >/dev/null
 identity_keyring_rv="$(kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
   -n "$IDENTITY_NAMESPACE" get secret github-oidc-exchange-keyring \
   -o jsonpath='{.metadata.resourceVersion}')"
@@ -544,7 +545,7 @@ kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$I
 # complete that verifier's documented reload/rollout mechanism.
 cargo run --locked --bin keyring-tool -- activate-es256 ./private/issuer-keyring.json issuer-next
 # Reproject, bump revision to rev-3, upgrade/wait; rollback activation by selecting OLD_KID if needed.
-# After the overlap/grace window only:
+# After the token, skew, verifier-refresh, and rollback windows only:
 cargo run --locked --bin keyring-tool -- retire-es256 ./private/issuer-keyring.json issuer-2026-09-a
 ```
 

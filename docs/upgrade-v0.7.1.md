@@ -118,8 +118,9 @@ accepts both `kid`s. Identity does not call, restart, or depend on Steward;
 the signed JWKS handoff is the boundary.
 
 After activation, verify a new token through every relying party. Retire the
-old key only after the 120-second token lifetime, clock skew, refresh, and
-rollback windows. Export and publish the retired public set again. The exact
+old key only after the 120-second token lifetime, allowed clock skew, every
+verifier refresh or static reload, and the operational rollback window have
+all elapsed. Export and publish the retired public set again. The exact
 Secret and ConfigMap replacement commands are in the
 [installation runbook](installation.md#6-rotation-recovery-uninstall).
 

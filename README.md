@@ -28,11 +28,12 @@ Release 0.7.2 supports two GitHub policy/token paths:
 
 The chart defaults to v5. Upgrading the 0.7.2 application while retaining the
 existing v5 ConfigMap therefore preserves the v5 authorization decisions and
-v2 token shape. Activating v6 requires both `config.policyContract` and
-`config.policyConfigMapName` to select a separately created v6 policy object.
-Never rewrite or delete the v5 object during activation. Rollback after v6
-activation switches the application/chart revision and policy reference back
-together. See the [0.7.2 upgrade guide](docs/upgrade-v0.7.2.md).
+v2 token shape. Activating v6 requires `config.policyContract`,
+`config.policyConfigMapName`, and `rolloutRevisions.githubPolicy` to select and
+roll out a separately created v6 policy object. Never rewrite or delete the v5
+object during activation. Rollback after v6 activation switches the
+application/chart revision and policy reference back together. See the
+[0.7.2 upgrade guide](docs/upgrade-v0.7.2.md).
 
 In v6, repository `subjects`, `events`, and `refs` are independent optional
 compatibility selectors. `actors`, `allowed_email_domains`, and

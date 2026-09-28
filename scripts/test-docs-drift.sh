@@ -185,8 +185,8 @@ release_notes="docs/releases/v$released_version.md"
 for expected in \
   'continues to issue the unchanged' \
   'Explicit values plus separate policy object' \
-  'supported_policy_contracts' \
-  'supported_identity_contracts' \
+  'policy_versions_supported' \
+  'identity_contracts_supported' \
   'github_oidc_audience' \
   'manifest-preserving mirror' \
   'release-manifest.json' \
@@ -202,6 +202,8 @@ for expected in \
   '../upgrade-v0.7.2.md)'; do
   grep -Fq "$expected" "$release_notes"
 done
+! grep -Fq 'supported_policy_contracts' "$release_notes"
+! grep -Fq 'supported_identity_contracts' "$release_notes"
 ! grep -Eq '"?ecr_(image|chart|image_digest|chart_digest)"?[[:space:]]*:' \
   "$release_notes"
 
@@ -274,6 +276,39 @@ done
 ! grep -Fq 'reusable workflow requires both exchange inputs' \
   docs/installation.md docs/integration.md docs/consumer-contract-v1.md
 
+grep -Fq 'IDENTITY_RELEASE=identity' docs/upgrade-v0.7.2.md
+! grep -Fq 'IDENTITY_RELEASE=github-oidc-exchange' docs/upgrade-v0.7.2.md
+grep -Fq 'IDENTITY_KUBECONFIG=/absolute/path/to/cluster-kubeconfig' \
+  docs/upgrade-v0.7.2.md
+grep -Fq 'IDENTITY_CONTEXT=platform-context' docs/upgrade-v0.7.2.md
+for expected in \
+  '## Optional v6 activation' \
+  '### Prepare the separate v6 policy' \
+  '### Activate all three values atomically' \
+  'policyContract: github-oidc-exchange.apelogic.io/v6' \
+  'policyConfigMapName: github-oidc-exchange-policy-v6' \
+  'githubPolicy: v6-rev-1' \
+  '### Roll back v6 activation atomically'; do
+  grep -Fq "$expected" docs/upgrade-v0.7.2.md
+done
+grep -Fq 'Set all three fields explicitly' docs/integration.md
+! grep -Fq 'requires both `config.policyContract`' README.md
+grep -Fq "jq -e '.keys | length >= 2'" docs/installation.md
+for document in docs/installation.md docs/upgrade-v0.7.1.md; do
+  for expected in '120-second token lifetime' 'allowed clock skew' \
+    'verifier refresh or static reload' 'operational rollback window'; do
+    grep -Fq "$expected" "$document"
+  done
+done
+
+workflow_path='.github/workflows/steward-task-customer.yml'
+grep -Fq "$workflow_path@REVIEWED_40_HEX_COMMIT" docs/integration.md
+jq -e --arg path "apelogic-ai/steward-run/$workflow_path@refs/heads/main" \
+  '.source_provenance.reusableWorkflow.ref == $path' \
+  docs/steward-task-v3.example.json >/dev/null
+! grep -Fq '.github/workflows/steward-task.yml@' \
+  docs/integration.md docs/steward-task-v3.example.json
+
 workload_pairing=docs/steward-openshell-workload-pairing.md
 for expected in \
   'apelogic-workload-exchange' \
@@ -283,6 +318,8 @@ for expected in \
   'openshell-admin' \
   'openshell-user' \
   'server.oidc.audience' \
+  'networkPolicy.identityExchangeNamespace' \
+  'identityExchangeNamespace: identity' \
   'rolloutRevisions.workloadPolicy'; do
   grep -Fq "$expected" "$workload_pairing"
 done

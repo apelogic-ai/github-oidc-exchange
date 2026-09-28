@@ -37,6 +37,9 @@ signatures, and public-registry attestations.
   and additional proxy-egress controls.
 - Added a Kubernetes 1.36 NetworkPolicy regression that proves Lease traffic
   reaches an API server after Service DNAT.
+- Corrected the pinned steward-run workflow, Steward workload-exchange
+  namespace pairing, v6 activation and rollback steps, discovery field names,
+  Helm release name, and signing-key rotation guidance.
 
 ## [0.7.2] - 2026-09-28
 
