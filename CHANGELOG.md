@@ -5,7 +5,7 @@ All notable changes to `github-oidc-exchange` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Release pages remain the source for immutable image/chart coordinates,
-signatures, attestations, SBOMs, and vulnerability evidence.
+signatures, and public-registry attestations.
 
 ## [Unreleased]
 
@@ -15,6 +15,14 @@ signatures, attestations, SBOMs, and vulnerability evidence.
   after tagging 0.7.1.
 - Updated CI fixtures and chart/release validation to use the published 0.7.1
   multi-platform image digest.
+
+### Fixed
+
+- Kept private registry descriptors, scan reports, and SBOM inputs out of the
+  public release handoff while retaining the internal security gates and
+  generating public SBOM attestations from the GHCR image reference.
+- Derived the OCI chart config's Kubernetes compatibility range from
+  `Chart.yaml` instead of maintaining a second hardcoded value.
 
 ## [0.7.1] - 2026-09-28
 
