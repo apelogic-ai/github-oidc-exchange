@@ -9,12 +9,28 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-27
+
+### Added
+
+- Added RFC 8414 authorization-server metadata at
+  `/.well-known/oauth-authorization-server`, returning the same exchange
+  endpoint, GitHub audience, issuer, and supported token-contract information
+  as the retained OpenID discovery endpoint.
+- Added a regression fixture matching steward-run's RFC 8414 discovery
+  request and chart routing coverage for both metadata endpoints.
+
 ### Fixed
 
-- Exposed RFC 8414 authorization-server metadata at
-  `/.well-known/oauth-authorization-server` while retaining the equivalent
-  OpenID discovery endpoint, and enforced an origin-only issuer across runtime
-  and Helm validation so advertised exchange and JWKS URLs are routable.
+- Enforced an HTTPS origin-only issuer across runtime and Helm validation so
+  every advertised exchange and JWKS URL is routed by the application and
+  chart. Path-, query-, and fragment-bearing issuers now fail validation.
+
+### Preserved
+
+- Policy v5 remains the chart default and continues to issue unchanged
+  `steward-task-v2` tokens; policy v6 remains an explicit opt-in and continues
+  to issue `steward-task-v3` tokens.
 
 ## [0.6.0] - 2026-09-25
 
@@ -215,7 +231,8 @@ signatures, attestations, SBOMs, and vulnerability evidence.
   short-lived EKS-compatible ES256 token issuance.
 - Added signed image/chart release validation with immutable artifact digests.
 
-[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.4.0...v0.5.0
