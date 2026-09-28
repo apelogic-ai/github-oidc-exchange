@@ -80,6 +80,14 @@ for example_args in \
 done
 
 helm lint "$chart" -f "$chart/ci/test-values.yaml" --strict >/dev/null
+if helm template kubernetes-floor "$chart" -f "$chart/ci/test-values.yaml" \
+  --kube-version 1.31.0 >"$scratch/kubernetes-1.31.err" 2>&1; then
+  printf 'chart must reject Kubernetes versions below 1.32\n' >&2
+  exit 1
+fi
+grep -Fq 'requires kubeVersion: >=1.32.0-0' "$scratch/kubernetes-1.31.err"
+helm template kubernetes-floor "$chart" -f "$chart/ci/test-values.yaml" \
+  --kube-version 1.32.0 >/dev/null
 if helm lint "$chart" -f "$chart/ci/test-values.yaml" --strict \
   --set-string config.issuerUrl=https://identity.test.invalid/tenant \
   >"$scratch/path-issuer.err" 2>&1; then

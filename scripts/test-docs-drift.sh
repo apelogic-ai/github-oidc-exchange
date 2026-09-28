@@ -13,6 +13,11 @@ app_version="$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc-excha
 [[ "$lock_version" == "$version" ]]
 [[ "$chart_version" == "$version" ]]
 [[ "$app_version" == "$version" ]]
+grep -Fq 'kubeVersion: ">=1.32.0-0"' charts/github-oidc-exchange/Chart.yaml
+grep -Fq 'Kubernetes >=1.32' README.md
+grep -Fq 'Kubernetes >=1.32' docs/installation.md
+! grep -Fq 'Kubernetes >=1.30' README.md docs/installation.md
+! grep -Fq 'Kubernetes >=1.31' README.md docs/installation.md
 
 current_docs=(
   README.md

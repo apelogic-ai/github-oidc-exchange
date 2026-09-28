@@ -58,7 +58,7 @@ provenance.
 
 | Surface | Current status |
 | --- | --- |
-| Application and OCI Helm chart | `0.7.0` together; Kubernetes >=1.30; `linux/amd64` and `linux/arm64`. |
+| Application and OCI Helm chart | `0.7.0` together; Kubernetes >=1.32; `linux/amd64` and `linux/arm64`. |
 | GitHub input | GitHub RS256 assertion; exact configured input audience; immutable numeric owner/repository boundary; short freshness; replay protection; internally consistent signed provenance. |
 | GitHub output | ES256; `aud=["steward-task-api"]`; 120-second TTL; `steward-task-v2` for v5 or `steward-task-v3` for v6. |
 | Workload exchange | Off by default; internal HTTPS port 8443; exact TokenReview audience and service-account policy; RS256 `openshell-workload-v1`. |
