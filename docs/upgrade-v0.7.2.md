@@ -1,5 +1,10 @@
 # Upgrade to 0.7.2 — release evidence and integration guidance
 
+> Historical guide for the 0.7.2 boundary. For current 0.7.3 installation,
+> integration guidance, and rollback, use the
+> [installation guide](installation.md) and
+> [0.7.3 upgrade guide](upgrade-v0.7.3.md).
+
 Application/chart 0.7.2 is a patch release. It does not change Identity's
 runtime routes, token claims, audiences, policy schemas, or supported
 Kubernetes floor. It removes private-registry details and raw internal scan

@@ -1,4 +1,4 @@
-# Integration guide — github-oidc-exchange 0.7.2
+# Integration guide — github-oidc-exchange 0.7.3
 
 This guide connects GitHub Actions to Identity and then to Steward through
 steward-run. It complements the [quickstart](quickstart.md),
@@ -128,7 +128,7 @@ rolloutRevisions:
 ```
 
 Do not modify or delete the v5 ConfigMap. Follow the
-[0.7.2 upgrade guide](upgrade-v0.7.2.md) for preflight and atomic rollback.
+[0.7.3 upgrade guide](upgrade-v0.7.3.md) for preflight and atomic rollback.
 
 ## 4. Prove exchange behavior
 

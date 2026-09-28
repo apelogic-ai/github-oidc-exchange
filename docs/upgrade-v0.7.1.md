@@ -1,9 +1,9 @@
 # Upgrade to 0.7.1 — key lifecycle and network policy
 
-> Historical guide for the 0.7.1 boundary. For current 0.7.2 installation,
+> Historical guide for the 0.7.1 boundary. For current 0.7.3 installation,
 > integration guidance, and rollback, use the
 > [installation guide](installation.md) and
-> [0.7.2 upgrade guide](upgrade-v0.7.2.md).
+> [0.7.3 upgrade guide](upgrade-v0.7.3.md).
 
 Application/chart 0.7.1 adds runtime signing-key expiry enforcement,
 pre-expiry readiness, public expiry metrics, `keyring-tool export-jwks`, and a

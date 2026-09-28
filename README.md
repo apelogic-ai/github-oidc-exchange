@@ -1,6 +1,6 @@
 # github-oidc-exchange
 
-`github-oidc-exchange` 0.7.2 is an MIT-licensed, fork-installable Kubernetes
+`github-oidc-exchange` 0.7.3 is an MIT-licensed, fork-installable Kubernetes
 identity service. It verifies short-lived GitHub Actions OIDC assertions and
 issues two-minute ES256 tokens for Steward. An optional internal workload
 profile uses Kubernetes TokenReview and issues separate RS256 tokens for
@@ -19,21 +19,21 @@ requirements.
 The signed OCI Helm chart is also listed on
 [Artifact Hub](https://artifacthub.io/packages/helm/github-oidc-exchange/github-oidc-exchange).
 
-Release 0.7.2 supports two GitHub policy/token paths:
+Release 0.7.3 supports two GitHub policy/token paths:
 
 | Policy | Activation | Identity decision | Issued contract |
 | --- | --- | --- | --- |
 | `github-oidc-exchange.apelogic.io/v5` | Default and upgrade-safe | Exact subject, event, ref, and mapped numeric actor, plus numeric owner/repository IDs | `steward-task-v2`, unchanged |
 | `github-oidc-exchange.apelogic.io/v6` | Explicit opt-in | Numeric owner/repository IDs plus only the optional selectors that are present | `steward-task-v3` |
 
-The chart defaults to v5. Upgrading the 0.7.2 application while retaining the
+The chart defaults to v5. Upgrading the 0.7.3 application while retaining the
 existing v5 ConfigMap therefore preserves the v5 authorization decisions and
 v2 token shape. Activating v6 requires `config.policyContract`,
 `config.policyConfigMapName`, and `rolloutRevisions.githubPolicy` to select and
 roll out a separately created v6 policy object. Never rewrite or delete the v5
 object during activation. Rollback after v6 activation switches the
 application/chart revision and policy reference back together. See the
-[0.7.2 upgrade guide](docs/upgrade-v0.7.2.md).
+[0.7.3 upgrade guide](docs/upgrade-v0.7.3.md).
 
 In v6, repository `subjects`, `events`, and `refs` are independent optional
 compatibility selectors. `actors`, `allowed_email_domains`, and
@@ -62,7 +62,7 @@ provenance.
 
 | Surface | Current status |
 | --- | --- |
-| Application and OCI Helm chart | `0.7.2` together; Kubernetes >=1.32; `linux/amd64` and `linux/arm64`. |
+| Application and OCI Helm chart | `0.7.3` together; Kubernetes >=1.32; `linux/amd64` and `linux/arm64`. |
 | GitHub input | GitHub RS256 assertion; exact configured input audience; immutable numeric owner/repository boundary; short freshness; replay protection; internally consistent signed provenance. |
 | GitHub output | ES256; `aud=["steward-task-api"]`; 120-second TTL; `steward-task-v2` for v5 or `steward-task-v3` for v6. |
 | Workload exchange | Off by default; internal HTTPS port 8443; exact TokenReview audience and service-account policy; RS256 `openshell-workload-v1`. |

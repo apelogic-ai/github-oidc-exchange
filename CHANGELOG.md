@@ -9,6 +9,8 @@ signatures, and public-registry attestations.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-28
+
 ### Added
 
 - Added opt-in named ConfigMap/Secret rollout automation for clusters with an
@@ -17,11 +19,6 @@ signatures, and public-registry attestations.
   policy schemas and examples to both release paths.
 - Added organization-maintained Artifact Hub chart metadata and automated
   publication of the repository verification artifact.
-
-### Fixed
-
-- Made the baseline rollout revision defaults schema-valid while preserving
-  explicit revisions as the controller-free configuration rollout mechanism.
 
 ### Changed
 
@@ -32,6 +29,8 @@ signatures, and public-registry attestations.
 
 ### Fixed
 
+- Made the baseline rollout revision defaults schema-valid while preserving
+  explicit revisions as the controller-free configuration rollout mechanism.
 - Made Kubernetes API-server egress ports and CIDRs configurable, allowing TCP
   443 and 6443 plus IPv4 and IPv6 by default, with explicit NodeLocal DNSCache
   and additional proxy-egress controls.
@@ -316,7 +315,8 @@ signatures, and public-registry attestations.
   short-lived EKS-compatible ES256 token issuance.
 - Added signed image/chart release validation with immutable artifact digests.
 
-[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.6.0...v0.7.0

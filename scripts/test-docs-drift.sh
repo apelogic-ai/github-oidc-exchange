@@ -2,14 +2,14 @@
 set -euo pipefail
 
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-released_version="0.7.2"
+released_version="0.7.3"
 lock_version="$(awk '
   /^name = "github-oidc-exchange"$/ { package = 1; next }
   package && /^version = "/ { gsub(/^version = "|"$/, ""); print; exit }
 ' Cargo.lock)"
 chart_version="$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)"
 app_version="$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc-exchange/Chart.yaml | head -1)"
-[[ "$version" == "0.7.3-dev" ]]
+[[ "$version" == "0.7.3" ]]
 [[ "$lock_version" == "$version" ]]
 [[ "$chart_version" == "$version" ]]
 [[ "$app_version" == "$version" ]]
@@ -27,9 +27,9 @@ current_docs=(
   docs/integration.md
   docs/consumer-contract-v1.md
   docs/steward-openshell-workload-pairing.md
-  docs/upgrade-v0.7.2.md
+  docs/upgrade-v0.7.3.md
   docs/source-authentication-documentation-inventory.md
-  docs/releases/v0.7.2.md
+  docs/releases/v0.7.3.md
   charts/github-oidc-exchange/README.md
 )
 for document in "${current_docs[@]}"; do
@@ -130,14 +130,17 @@ grep -Fq -- '--valid-for-days' docs/installation.md src/bin/keyring-tool.rs
 grep -Fq 'export-jwks' docs/installation.md src/bin/keyring-tool.rs
 grep -Fq '/usr/local/bin/keyring-tool' Dockerfile README.md docs/installation.md
 grep -Fq -- '--entrypoint /usr/local/bin/keyring-tool' docs/installation.md
+grep -Fq -- '--pattern policy-contract.example.json' docs/quickstart.md
+grep -Fq -- '--entrypoint /usr/local/bin/keyring-tool' docs/quickstart.md
+! grep -Fq 'cargo run --locked --bin keyring-tool' docs/quickstart.md
 for expected in 'static verifier' 'mounted JWKS' 'before Identity activates' \
   'Identity does not call'; do
   grep -Fq "$expected" docs/installation.md docs/consumer-contract-v1.md
 done
 
 for document in README.md docs/installation.md docs/integration.md \
-  docs/consumer-contract-v1.md docs/upgrade-v0.7.2.md \
-  docs/releases/v0.7.2.md charts/github-oidc-exchange/README.md; do
+  docs/consumer-contract-v1.md docs/upgrade-v0.7.3.md \
+  docs/releases/v0.7.3.md charts/github-oidc-exchange/README.md; do
   grep -Fq "$v5_policy" "$document"
   grep -Fq "$v6_policy" "$document"
   grep -Fq "$v2_identity" "$document"
@@ -169,7 +172,7 @@ for phrase in \
   'Steward performs any user binding' \
   'Task authority'; do
   grep -Fqi "$phrase" README.md docs/installation.md docs/integration.md \
-    docs/consumer-contract-v1.md docs/upgrade-v0.7.2.md
+    docs/consumer-contract-v1.md docs/upgrade-v0.7.3.md
 done
 
 grep -Fq 'policyContract: github-oidc-exchange.apelogic.io/v5' \
@@ -178,8 +181,9 @@ grep -Fq 'policyContract: github-oidc-exchange.apelogic.io/v5' \
   charts/github-oidc-exchange/values.example.yaml
 grep -Fq 'name: EXPECTED_POLICY_VERSION' \
   charts/github-oidc-exchange/templates/deployment.yaml
-grep -Fq 'github-oidc-exchange-policy` (v5)' docs/upgrade-v0.7.2.md
-grep -Fq 'github-oidc-exchange-policy-v6' docs/upgrade-v0.7.2.md
+grep -Fq 'github-oidc-exchange-policy` (`github-oidc-exchange.apelogic.io/v5`)' \
+  docs/upgrade-v0.7.3.md
+grep -Fq 'github-oidc-exchange-policy-v6' docs/upgrade-v0.7.3.md
 
 release_notes="docs/releases/v$released_version.md"
 for expected in \
@@ -199,7 +203,7 @@ for expected in \
   'It contains no `ecr_*` fields' \
   '/README.md)' \
   '/charts/github-oidc-exchange/values.schema.json)' \
-  '../upgrade-v0.7.2.md)'; do
+  '../upgrade-v0.7.3.md)'; do
   grep -Fq "$expected" "$release_notes"
 done
 ! grep -Fq 'supported_policy_contracts' "$release_notes"
@@ -210,12 +214,13 @@ done
 # Historical guides keep their historical contract and point to current docs.
 for document in docs/upgrade-v0.5.0.md docs/upgrade-v0.5.1.md \
   docs/upgrade-v0.6.0.md docs/upgrade-v0.7.0.md docs/upgrade-v0.7.1.md \
+  docs/upgrade-v0.7.2.md \
   docs/releases/v0.5.0.md docs/releases/v0.5.1.md \
   docs/releases/v0.6.0.md docs/releases/v0.7.0.md \
-  docs/releases/v0.7.1.md; do
+  docs/releases/v0.7.1.md docs/releases/v0.7.2.md; do
   grep -Fq 'Historical' "$document"
   grep -Fq 'consumer-contract-v1.md' "$document" || \
-    grep -Fq 'upgrade-v0.7.2.md' "$document"
+    grep -Fq 'upgrade-v0.7.3.md' "$document"
 done
 
 # Current relative Markdown links must resolve. URL, mail, and page-only links
@@ -276,11 +281,11 @@ done
 ! grep -Fq 'reusable workflow requires both exchange inputs' \
   docs/installation.md docs/integration.md docs/consumer-contract-v1.md
 
-grep -Fq 'IDENTITY_RELEASE=identity' docs/upgrade-v0.7.2.md
-! grep -Fq 'IDENTITY_RELEASE=github-oidc-exchange' docs/upgrade-v0.7.2.md
+grep -Fq 'IDENTITY_RELEASE=identity' docs/upgrade-v0.7.3.md
+! grep -Fq 'IDENTITY_RELEASE=github-oidc-exchange' docs/upgrade-v0.7.3.md
 grep -Fq 'IDENTITY_KUBECONFIG=/absolute/path/to/cluster-kubeconfig' \
-  docs/upgrade-v0.7.2.md
-grep -Fq 'IDENTITY_CONTEXT=platform-context' docs/upgrade-v0.7.2.md
+  docs/upgrade-v0.7.3.md
+grep -Fq 'IDENTITY_CONTEXT=platform-context' docs/upgrade-v0.7.3.md
 for expected in \
   '## Optional v6 activation' \
   '### Prepare the separate v6 policy' \
@@ -289,7 +294,7 @@ for expected in \
   'policyConfigMapName: github-oidc-exchange-policy-v6' \
   'githubPolicy: v6-rev-1' \
   '### Roll back v6 activation atomically'; do
-  grep -Fq "$expected" docs/upgrade-v0.7.2.md
+  grep -Fq "$expected" docs/upgrade-v0.7.3.md
 done
 grep -Fq 'Set all three fields explicitly' docs/integration.md
 ! grep -Fq 'requires both `config.policyContract`' README.md
