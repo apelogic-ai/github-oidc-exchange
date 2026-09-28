@@ -9,6 +9,10 @@ kubeVersion: ">=1.32.0-0"
 home: https://github.com/apelogic-ai/github-oidc-exchange
 sources:
   - https://github.com/apelogic-ai/github-oidc-exchange
+icon: https://avatars.githubusercontent.com/u/227278099?v=4
+maintainers:
+  - name: HyperShell
+    url: https://hypershell.ai
 keywords:
   - oidc
   - github-actions
@@ -16,3 +20,15 @@ keywords:
   - kubernetes
 annotations:
   artifacthub.io/license: MIT
+  artifacthub.io/links: |
+    - name: documentation
+      url: https://github.com/apelogic-ai/github-oidc-exchange/blob/main/docs/installation.md
+    - name: support
+      url: https://github.com/apelogic-ai/github-oidc-exchange/issues
+  # Release workflows replace this sentinel before packaging.
+  artifacthub.io/images: |
+    - name: github-oidc-exchange
+      image: replace-with-release-image
+      platforms:
+        - linux/amd64
+        - linux/arm64

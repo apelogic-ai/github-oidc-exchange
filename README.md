@@ -16,6 +16,9 @@ and steward-run examples. The [consumer contract](docs/consumer-contract-v1.md)
 defines the normative routes, audiences, token contracts, and verification
 requirements.
 
+The signed OCI Helm chart is also listed on
+[Artifact Hub](https://artifacthub.io/packages/helm/github-oidc-exchange/github-oidc-exchange).
+
 Release 0.7.2 supports two GitHub policy/token paths:
 
 | Policy | Activation | Identity decision | Issued contract |

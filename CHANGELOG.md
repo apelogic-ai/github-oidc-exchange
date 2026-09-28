@@ -15,6 +15,8 @@ signatures, and public-registry attestations.
   operator-managed Stakater Reloader controller.
 - Shipped the offline `keyring-tool` in the signed runtime image and attached
   policy schemas and examples to both release paths.
+- Added organization-maintained Artifact Hub chart metadata and automated
+  publication of the repository verification artifact.
 
 ### Fixed
 

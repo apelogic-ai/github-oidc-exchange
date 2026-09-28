@@ -300,6 +300,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          artifacthub_image="$PUBLIC_IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"
+          [[ "$artifacthub_image" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$ ]]
+          sed -i "s|image: replace-with-release-image|image: $artifacthub_image|" \
+            charts/github-oidc-exchange/Chart.yaml
+          if grep -Fq 'replace-with-release-image' charts/github-oidc-exchange/Chart.yaml; then
+            printf 'Artifact Hub image sentinel was not replaced\n' >&2
+            exit 1
+          fi
+          grep -Fq "image: $artifacthub_image" charts/github-oidc-exchange/Chart.yaml
           mkdir -p dist /tmp/chart-scan
           helm package charts/github-oidc-exchange --destination dist --version "$VERSION" --app-version "$VERSION"
           tar -xzf "dist/github-oidc-exchange-$VERSION.tgz" -C /tmp/chart-scan
@@ -493,6 +502,24 @@ jobs:
           printf 'image_digest=%s\n' "$image_digest" >> "$GITHUB_OUTPUT"
           printf 'chart_digest=%s\n' "$chart_digest" >> "$GITHUB_OUTPUT"
 
+      - name: Publish Artifact Hub repository metadata
+        id: artifacthub
+        shell: bash
+        run: |
+          set -euo pipefail
+          metadata_ref="$PUBLIC_CHART_REFERENCE:artifacthub.io"
+          metadata_file=charts/github-oidc-exchange/artifacthub-repo.yml
+          oras push "$metadata_ref" \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            "$metadata_file:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml"
+          metadata_digest="$(oras manifest fetch --descriptor "$metadata_ref" | jq -r '.digest')"
+          [[ "$metadata_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          oras manifest fetch "$metadata_ref" | jq -e '
+            .config.mediaType == "application/vnd.cncf.artifacthub.config.v1+yaml" and
+            ([.layers[] | select(.mediaType == "application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml")] | length) == 1
+          ' >/dev/null
+          printf 'digest=%s\n' "$metadata_digest" >> "$GITHUB_OUTPUT"
+
       - name: Verify mirrored GHCR packages remain public
         shell: bash
         env:
@@ -562,8 +589,13 @@ jobs:
           docker image inspect "$public_image" --format '{{json .RepoDigests}}' | jq -e --arg ref "$public_image" 'index($ref) != null' > /dev/null
           image_digest="$(oras manifest fetch --descriptor "$public_image" | jq -r '.digest')"
           chart_digest="$(oras manifest fetch --descriptor "$public_chart" | jq -r '.digest')"
+          artifacthub_digest="$(oras manifest fetch --descriptor "$PUBLIC_CHART_REFERENCE:artifacthub.io" | jq -r '.digest')"
           [[ "$image_digest" == "${{ steps.public.outputs.image_digest }}" ]]
           [[ "$chart_digest" == "${{ steps.public.outputs.chart_digest }}" ]]
+          [[ "$artifacthub_digest" == "${{ steps.artifacthub.outputs.digest }}" ]]
+          oras manifest fetch "$PUBLIC_CHART_REFERENCE:artifacthub.io" | jq -e '
+            ([.layers[] | select(.mediaType == "application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml")] | length) == 1
+          ' >/dev/null
           mkdir -p /tmp/public-chart
           helm pull "oci://$PUBLIC_CHART_REFERENCE" --version "$VERSION" --destination /tmp/public-chart
           cmp "dist/github-oidc-exchange-$VERSION.tgz" \

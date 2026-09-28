@@ -6,6 +6,27 @@ bash scripts/test-portable-release.sh
 bash scripts/test-docs-drift.sh
 bash scripts/test-release-contract-assets.sh
 
+artifacthub_metadata=charts/github-oidc-exchange/artifacthub-repo.yml
+[[ -f "$artifacthub_metadata" ]]
+grep -Fxq 'repositoryID: a17f530a-c2fc-49b7-a137-285b41c1dd68' \
+  "$artifacthub_metadata"
+! grep -Eq '^[[:space:]]*owners:' "$artifacthub_metadata"
+
+chart_metadata=charts/github-oidc-exchange/Chart.yaml
+for expected in \
+  'home: https://github.com/apelogic-ai/github-oidc-exchange' \
+  'https://github.com/apelogic-ai/github-oidc-exchange' \
+  'icon: https://avatars.githubusercontent.com/u/227278099?v=4' \
+  'name: HyperShell' \
+  'url: https://hypershell.ai' \
+  'artifacthub.io/license: MIT' \
+  'artifacthub.io/links: |' \
+  'artifacthub.io/images: |' \
+  'image: replace-with-release-image' \
+  'https://github.com/apelogic-ai/github-oidc-exchange/issues'; do
+  grep -Fq "$expected" "$chart_metadata"
+done
+
 # The published source, package, and chart must advertise the same license.
 [[ -f LICENSE ]]
 grep -Fq 'MIT License' LICENSE
@@ -69,6 +90,11 @@ required=(
   'PUBLIC_CHART_REFERENCE=ghcr.io/'
   'Authenticate to GitHub Container Registry'
   'Mirror verified immutable ECR artifacts to GHCR'
+  'Publish Artifact Hub repository metadata'
+  '$PUBLIC_CHART_REFERENCE:artifacthub.io'
+  'application/vnd.cncf.artifacthub.config.v1+yaml'
+  'application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml'
+  'steps.artifacthub.outputs.digest'
   'Verify mirrored GHCR packages remain public'
   'Sign, attest, and verify public GHCR artifacts'
   'output-file: ${{ runner.temp }}/public-image.spdx.json'
@@ -165,6 +191,15 @@ grep -Fq -- '.Chart.Version | replace "+" "_"' \
 render_dir="$(mktemp -d)"
 trap 'rm -rf "$render_dir"' EXIT
 cp -R charts/github-oidc-exchange "$render_dir/chart"
+artifacthub_test_digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+artifacthub_test_image="ghcr.io/apelogic-ai/github-oidc-exchange@$artifacthub_test_digest"
+[[ "$(grep -Fc 'image: replace-with-release-image' "$render_dir/chart/Chart.yaml")" == 1 ]]
+sed -i.bak \
+  "s|image: replace-with-release-image|image: $artifacthub_test_image|" \
+  "$render_dir/chart/Chart.yaml"
+! grep -Fq 'replace-with-release-image' "$render_dir/chart/Chart.yaml"
+grep -Fq "image: $artifacthub_test_image" "$render_dir/chart/Chart.yaml"
+helm show chart "$render_dir/chart" | grep -Fq "$artifacthub_test_image"
 sed -i.bak \
   "s/^version: .*/version: ${package_version}+flux.test/" \
   "$render_dir/chart/Chart.yaml"

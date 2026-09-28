@@ -10,6 +10,7 @@ fi
 for expected in 'workflow_dispatch:' 'packages: write' 'ubuntu-24.04-arm' \
   'linux/amd64' 'linux/arm64' 'scripts/smoke-release-container.sh' \
   'helm package' 'helm push' 'docker buildx imagetools create' \
+  'image: replace-with-release-image' 'artifacthub_image="$IMAGE@$image_digest"' \
   'gh release create' 'aquasecurity/trivy-action@' 'anchore/sbom-action@' \
   'cosign attest' 'cosign sign-blob' 'release-manifest.sigstore.json' \
   'scripts/stage-release-contract-assets.sh' '"$release_assets"/*' \
