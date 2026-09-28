@@ -106,8 +106,8 @@ networkPolicy:
     kubernetes.io/metadata.name: kube-system
   dnsPodSelector:
     k8s-app: kube-dns
-  metricsNamespaceSelector: {}
-  metricsPodSelector: {}
+  metricsNamespaceSelector: {} # mandatory nonempty when serviceMonitor.enabled=true
+  metricsPodSelector: {} # mandatory nonempty when serviceMonitor.enabled=true
 
 resources:
   requests:
