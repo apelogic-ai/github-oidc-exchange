@@ -408,6 +408,12 @@ Only after baseline passes, add the RSA/policy/TLS inputs and set
 `workloadExchange.enabled=true`, exact `inputAudience`, object references,
 nonempty caller namespace **and** pod selectors, and opaque
 `rolloutRevisions.workloadPolicy`, `workloadRsaKeyring`, `workloadTls`.
+For the standard Steward controller, `inputAudience` is exactly
+`apelogic-workload-exchange`; the admitted username is
+`system:serviceaccount:steward:steward-controller`, and the output audience and
+OpenShell audience are both `openshell-api`. Apply the complete paired values,
+policy, role, and TLS mapping from the
+[Steward/OpenShell workload guide](steward-openshell-workload-pairing.md).
 For the standard object names in `values.example.yaml`, the caller URL is
 `https://github-oidc-exchange.<namespace>.svc.cluster.local:8443/v1/workload/exchange`.
 If using cert-manager, set `workloadExchange.tls.certManager.enabled=true` and
@@ -606,22 +612,24 @@ claim that three-product acceptance.
 
 The [integration guide](integration.md) supplies copy-ready reusable workflows
 for observing bounded claims without printing a token, exercising both policy
-paths, and calling steward-run with the required exchange endpoint and audience.
-Pin both values in the consumer workflow. Before enabling v6, prove that the
-deployed Steward accepts `steward-task-v3`, reads `actor_login`, permits all
+paths, and calling steward-run through authentication discovery. Pin the
+reusable workflow commit and exact Steward API origin. Before enabling v6,
+prove that the deployed Steward accepts `steward-task-v3`, reads `actor_login`, permits all
 compatibility identity claims to be absent, consumes the required provenance
 actor, and performs Task authorization independently from Identity source
 authentication. The checked-in
 [`steward-task-v3` fixture](steward-task-v3.example.json) is the copy-ready
 consumer conformance shape.
 
-The steward-run reusable workflow requires both exchange inputs,
-`identity-exchange-url` and `identity-exchange-audience`, and passes both to
-the action. Only the direct-action fallback uses
-`apelogic-github-identity-exchange` when the audience is omitted; that fallback
-is not the supported handoff for a deployed issuer. The established endpoint
-and audience boundary is recorded in
-[steward-run #43](https://github.com/apelogic-ai/steward-run/issues/43).
+The steward-run reusable workflow defaults to discovery from
+`steward-api-url`: it reads Steward's RFC 9728 protected-resource metadata,
+then Identity's RFC 8414 metadata, and uses the advertised exchange endpoint
+and GitHub audience. Callers omit `identity-exchange-url` and
+`identity-exchange-audience` in the normal path.
+Both are deprecated compatibility inputs. A nonempty URL bypasses discovery,
+an audience without a URL is rejected, and an intentional rollback supplies
+both reviewed values.
+This creates no reverse runtime dependency: Identity never calls Steward.
 
 ## Release-document drift gate
 

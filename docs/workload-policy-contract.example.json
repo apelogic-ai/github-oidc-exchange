@@ -2,11 +2,11 @@
   "version": "github-oidc-exchange.apelogic.io/workload-policy-v1",
   "identities": [
     {
-      "username": "system:serviceaccount:example-namespace:example-controller",
-      "subject": "kubernetes:serviceaccount:example-namespace:example-controller",
+      "username": "system:serviceaccount:steward:steward-controller",
+      "subject": "kubernetes:serviceaccount:steward:steward-controller",
       "roles": [
-        "example-admin",
-        "example-user"
+        "openshell-admin",
+        "openshell-user"
       ]
     }
   ]

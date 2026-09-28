@@ -33,7 +33,9 @@ rolloutRevisions:
   browserHop1Jwks: ""
 workloadExchange:
   enabled: false
-  inputAudience: "" # exact projected service-account TokenReview audience
+  # Steward's controller projects apelogic-workload-exchange; keep empty when
+  # disabled and use the paired guide when enabling this profile.
+  inputAudience: ""
   outputAudience: openshell-api # protocol constant
   policyConfigMapName: github-oidc-exchange-workload-policy
   policyConfigMapKey: workload-policy.json

@@ -15,6 +15,11 @@ signatures, and public-registry attestations.
   after tagging 0.7.1.
 - Updated CI fixtures and chart/release validation to use the published 0.7.1
   multi-platform image digest.
+- Documented the exact Steward controller workload audience, ServiceAccount,
+  Identity policy, TLS, and OpenShell audience/role pairing.
+- Updated steward-run examples to use protected-resource and authorization-
+  server discovery by default, with explicit exchange inputs documented only
+  as deprecated compatibility controls.
 
 ### Fixed
 

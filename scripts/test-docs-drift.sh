@@ -26,6 +26,7 @@ current_docs=(
   docs/quickstart.md
   docs/integration.md
   docs/consumer-contract-v1.md
+  docs/steward-openshell-workload-pairing.md
   docs/upgrade-v0.7.1.md
   docs/source-authentication-documentation-inventory.md
   docs/releases/v0.7.1.md
@@ -244,16 +245,42 @@ for expected in 'id-token: write' 'delivery test checklist' \
 done
 grep -Fq 'resourceVersion' docs/installation.md
 grep -Fq 'test-install-rotation.sh' docs/installation.md
-grep -Fq 'steward-run/issues/43' docs/installation.md
 
-for document in docs/installation.md docs/consumer-contract-v1.md; do
-  grep -Fq 'reusable workflow requires both exchange inputs' "$document"
-  grep -Fq '`identity-exchange-url` and `identity-exchange-audience`' "$document"
-  grep -Fq 'direct-action fallback' "$document"
-  grep -Fq 'not the supported handoff' "$document"
+for document in docs/installation.md docs/integration.md \
+  docs/consumer-contract-v1.md; do
+  grep -Fq 'steward-api-url' "$document"
+  grep -Fqi 'discovery' "$document"
+  grep -Fq 'identity-exchange-url' "$document"
+  grep -Fq 'identity-exchange-audience' "$document"
+  grep -Fqi 'deprecated compatibility' "$document"
 done
-! grep -Fq 'binds its GitHub input audience to' \
-  docs/installation.md docs/consumer-contract-v1.md
+! grep -Fq 'reusable workflow requires both exchange inputs' \
+  docs/installation.md docs/integration.md docs/consumer-contract-v1.md
+
+workload_pairing=docs/steward-openshell-workload-pairing.md
+for expected in \
+  'apelogic-workload-exchange' \
+  'system:serviceaccount:steward:steward-controller' \
+  'kubernetes:serviceaccount:steward:steward-controller' \
+  'openshell-api' \
+  'openshell-admin' \
+  'openshell-user' \
+  'server.oidc.audience' \
+  'rolloutRevisions.workloadPolicy'; do
+  grep -Fq "$expected" "$workload_pairing"
+done
+jq -e '
+  .version == "github-oidc-exchange.apelogic.io/workload-policy-v1" and
+  .identities == [{
+    username: "system:serviceaccount:steward:steward-controller",
+    subject: "kubernetes:serviceaccount:steward:steward-controller",
+    roles: ["openshell-admin", "openshell-user"]
+  }]
+' docs/workload-policy-contract.example.json >/dev/null
+for document in docs/installation.md docs/integration.md \
+  docs/consumer-contract-v1.md charts/github-oidc-exchange/README.md; do
+  grep -Fq 'steward-openshell-workload-pairing.md' "$document"
+done
 
 # Negative source files in tests intentionally contain retired contract fields.
 current_surfaces=(
