@@ -9,6 +9,8 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-28
+
 ### Added
 
 - Added `keyring-tool export-jwks` and an explicit static-verifier rotation
@@ -260,7 +262,8 @@ signatures, attestations, SBOMs, and vulnerability evidence.
   short-lived EKS-compatible ES256 token issuance.
 - Added signed image/chart release validation with immutable artifact digests.
 
-[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.5.0...v0.5.1

@@ -1,5 +1,10 @@
 # Upgrade to 0.7.0 — RFC 8414 discovery
 
+> Historical guide for the 0.7.0 boundary. For current 0.7.1 installation,
+> key lifecycle, monitoring, and rollback, use the
+> [installation guide](installation.md) and
+> [0.7.1 upgrade guide](upgrade-v0.7.1.md).
+
 Application/chart 0.7.0 adds RFC 8414 authorization-server discovery for
 steward-run while retaining the existing OpenID discovery endpoint. It also
 requires `config.issuerUrl` to be an HTTPS origin without a path, query, or
