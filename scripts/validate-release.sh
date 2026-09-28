@@ -64,20 +64,18 @@ required=(
   'Mirror verified immutable ECR artifacts to GHCR'
   'Verify mirrored GHCR packages remain public'
   'Sign, attest, and verify public GHCR artifacts'
+  'output-file: ${{ runner.temp }}/public-image.spdx.json'
+  'output-file: ${{ runner.temp }}/public-chart.spdx.json'
   'Verify anonymous exact-digest GHCR pulls'
   'oras cp "$source_image" "$PUBLIC_IMAGE_REFERENCE:$VERSION"'
   'oras cp "$source_chart" "$PUBLIC_CHART_REFERENCE:$VERSION"'
   'docker logout ghcr.io || true'
   'helm registry logout ghcr.io || true'
   'oras logout ghcr.io || true'
-  'ecr_image:$ecr_image'
-  'ecr_chart:$ecr_chart'
   'public_image_digest:$public_image_digest'
   'public_chart_digest:$public_chart_digest'
-  'ecr_image_digest:$ecr_image_digest'
-  'ecr_chart_digest:$ecr_chart_digest'
   'anonymous_pull_verified:true'
-  'byte_identical_to_ecr:true'
+  'manifest_preserving_mirror:true'
   'image_platforms:$platforms[0]'
   'release_url:$release_url'
   'workflow_run_url:$workflow_run_url'
@@ -107,7 +105,44 @@ for architecture in amd64 arm64; do
   grep -Fq -- "image-platform-$architecture.digest" "$workflow"
   grep -Fq -- "architecture == \$architecture" "$workflow"
 done
-grep -Fq -- 'image.ecr-scan-$architecture.json' "$workflow"
+grep -Fq -- 'scan="$RUNNER_TEMP/image.ecr-scan-$architecture.json"' "$workflow"
+
+for private_output in \
+  'dist/image.ecr-scan-' \
+  'dist/image.trivy.json' \
+  'dist/chart.trivy.json' \
+  'dist/image.spdx.json' \
+  'dist/chart.spdx.json' \
+  'dist/chart-candidate.json' \
+  'dist/chart-config.json'; do
+  if grep -Fq -- "$private_output" "$workflow"; then
+    printf 'private release evidence must not be written to the public dist directory: %s\n' \
+      "$private_output" >&2
+    exit 1
+  fi
+done
+
+for private_manifest_field in \
+  '--arg ecr_' \
+  'ecr_image:' \
+  'ecr_chart:' \
+  'ecr_image_digest:' \
+  'ecr_chart_digest:' \
+  'byte_identical_to_ecr:'; do
+  if grep -Fq -- "$private_manifest_field" "$workflow"; then
+    printf 'public release manifest retains a private-registry field: %s\n' \
+      "$private_manifest_field" >&2
+    exit 1
+  fi
+done
+
+grep -Fq -- 'kube_version="$(sed -n' "$workflow"
+grep -Fq -- 'charts/github-oidc-exchange/Chart.yaml)' "$workflow"
+grep -Fq -- 'kubeVersion: $kube_version' "$workflow"
+if grep -Eq 'kubeVersion: *"?>=[0-9]' "$workflow"; then
+  printf 'release chart config must derive kubeVersion from Chart.yaml\n' >&2
+  exit 1
+fi
 
 package_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
 chart_version="$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)"

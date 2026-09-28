@@ -303,21 +303,23 @@ jobs:
           mkdir -p dist /tmp/chart-scan
           helm package charts/github-oidc-exchange --destination dist --version "$VERSION" --app-version "$VERSION"
           tar -xzf "dist/github-oidc-exchange-$VERSION.tgz" -C /tmp/chart-scan
-          jq -n --arg version "$VERSION" '{
+          kube_version="$(sed -n 's/^kubeVersion: *"\([^"]*\)"/\1/p' charts/github-oidc-exchange/Chart.yaml)"
+          [[ -n "$kube_version" ]]
+          jq -n --arg version "$VERSION" --arg kube_version "$kube_version" '{
             name: "github-oidc-exchange",
             version: $version,
             description: "Platform OIDC exchange issuer for GitHub and Kubernetes workload identity",
             apiVersion: "v2",
             appVersion: $version,
-            kubeVersion: ">=1.30.0-0",
+            kubeVersion: $kube_version,
             type: "application"
-          }' > dist/chart-config.json
+          }' > "$RUNNER_TEMP/chart-config.json"
 
       - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
         with:
           image-ref: ${{ env.IMAGE_REFERENCE }}@${{ steps.image.outputs.digest }}
           format: json
-          output: dist/image.trivy.json
+          output: ${{ runner.temp }}/image.trivy.json
           exit-code: "1"
           severity: CRITICAL
 
@@ -326,7 +328,7 @@ jobs:
           scan-type: fs
           scan-ref: /tmp/chart-scan
           format: json
-          output: dist/chart.trivy.json
+          output: ${{ runner.temp }}/chart.trivy.json
           exit-code: "1"
           severity: CRITICAL
 
@@ -334,7 +336,7 @@ jobs:
         with:
           image: ${{ env.IMAGE_REFERENCE }}@${{ steps.image.outputs.digest }}
           format: spdx-json
-          output-file: dist/image.spdx.json
+          output-file: ${{ runner.temp }}/image.spdx.json
           upload-artifact: false
           upload-release-assets: false
 
@@ -342,7 +344,7 @@ jobs:
         with:
           path: /tmp/chart-scan
           format: spdx-json
-          output-file: dist/chart.spdx.json
+          output-file: ${{ runner.temp }}/chart.spdx.json
           upload-artifact: false
           upload-release-assets: false
 
@@ -367,8 +369,9 @@ jobs:
             fi
             [[ "$platform_digest" == "$expected" ]]
             aws ecr wait image-scan-complete --repository-name "$IMAGE_REPOSITORY_NAME" --image-id imageDigest="$platform_digest"
-            aws ecr describe-image-scan-findings --repository-name "$IMAGE_REPOSITORY_NAME" --image-id imageDigest="$platform_digest" --output json > "dist/image.ecr-scan-$architecture.json"
-            [[ "$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' "dist/image.ecr-scan-$architecture.json")" == 0 ]]
+            scan="$RUNNER_TEMP/image.ecr-scan-$architecture.json"
+            aws ecr describe-image-scan-findings --repository-name "$IMAGE_REPOSITORY_NAME" --image-id imageDigest="$platform_digest" --output json > "$scan"
+            [[ "$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' "$scan")" == 0 ]]
             printf '%s\n' "$platform_digest" > "dist/image-platform-$architecture.digest"
           done
           jq -n \
@@ -384,7 +387,7 @@ jobs:
           set -euo pipefail
           created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           oras push --image-spec v1.0 \
-            --config dist/chart-config.json:application/vnd.cncf.helm.config.v1+json \
+            --config "$RUNNER_TEMP/chart-config.json":application/vnd.cncf.helm.config.v1+json \
             --annotation "org.opencontainers.image.created=$created" \
             --annotation "org.opencontainers.image.description=Platform OIDC exchange issuer for GitHub and Kubernetes workload identity" \
             --annotation "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
@@ -393,8 +396,8 @@ jobs:
             --format json \
             "$CHART_REFERENCE:$CHART_CANDIDATE_TAG" \
             "dist/github-oidc-exchange-$VERSION.tgz:application/vnd.cncf.helm.chart.content.v1.tar+gzip" \
-            > dist/chart-candidate.json
-          digest="$(jq -r '.digest' dist/chart-candidate.json)"
+            > "$RUNNER_TEMP/chart-candidate.json"
+          digest="$(jq -r '.digest' "$RUNNER_TEMP/chart-candidate.json")"
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           registry_digest="$(aws ecr describe-images \
             --repository-name "$CHART_REPOSITORY_NAME" \
@@ -434,8 +437,8 @@ jobs:
             else
               reference="$chart"
             fi
-            cosign sign --yes --bundle "dist/$artifact-signature.sigstore.json" --new-bundle-format=true --registry-referrers-mode=oci-1-1 "$reference"
-            cosign attest --yes --new-bundle-format=true --type spdxjson --predicate "dist/$artifact.spdx.json" "$reference"
+            cosign sign --yes --bundle "$RUNNER_TEMP/$artifact-signature.sigstore.json" --new-bundle-format=true --registry-referrers-mode=oci-1-1 "$reference"
+            cosign attest --yes --new-bundle-format=true --type spdxjson --predicate "$RUNNER_TEMP/$artifact.spdx.json" "$reference"
             cosign attest --yes --new-bundle-format=true --type slsaprovenance1 --predicate dist/release.slsa.json "$reference"
             cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true "$reference" > /dev/null
             cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type spdxjson "$reference" > /dev/null
@@ -502,6 +505,24 @@ jobs:
             [[ "$visibility" == public ]]
           done
 
+      - name: Generate public GHCR image SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.22.2
+        with:
+          image: ${{ env.PUBLIC_IMAGE_REFERENCE }}@${{ steps.public.outputs.image_digest }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/public-image.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate public chart SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.22.2
+        with:
+          path: /tmp/chart-scan
+          format: spdx-json
+          output-file: ${{ runner.temp }}/public-chart.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
       - name: Sign, attest, and verify public GHCR artifacts
         shell: bash
         run: |
@@ -513,10 +534,10 @@ jobs:
           for artifact in public-image public-chart; do
             if [[ "$artifact" == public-image ]]; then
               reference="$public_image"
-              sbom=dist/image.spdx.json
+              sbom="$RUNNER_TEMP/public-image.spdx.json"
             else
               reference="$public_chart"
-              sbom=dist/chart.spdx.json
+              sbom="$RUNNER_TEMP/public-chart.spdx.json"
             fi
             cosign sign --yes --bundle "dist/$artifact-signature.sigstore.json" --new-bundle-format=true --registry-referrers-mode=oci-1-1 "$reference"
             cosign attest --yes --new-bundle-format=true --type spdxjson --predicate "$sbom" "$reference"
@@ -572,18 +593,14 @@ jobs:
             --arg workflow_run_url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --arg image "$PUBLIC_IMAGE_REFERENCE@${{ steps.public.outputs.image_digest }}" \
             --arg chart "$PUBLIC_CHART_REFERENCE@${{ steps.public.outputs.chart_digest }}" \
-            --arg ecr_image "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}" \
-            --arg ecr_chart "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" \
             --arg public_image_digest "${{ steps.public.outputs.image_digest }}" \
             --arg public_chart_digest "${{ steps.public.outputs.chart_digest }}" \
-            --arg ecr_image_digest "${{ steps.image.outputs.digest }}" \
-            --arg ecr_chart_digest "${{ steps.chart.outputs.digest }}" \
             --arg policy_contract "$policy_contract" \
             --arg identity_contract "$identity_contract" \
             --arg source_auth_policy_contract "$source_auth_policy_contract" \
             --arg source_auth_identity_contract "$source_auth_identity_contract" \
             --slurpfile platforms dist/image-platforms.json \
-            '{version:$version,commit:$commit,release_url:$release_url,workflow_run_url:$workflow_run_url,image:$image,chart:$chart,ecr_image:$ecr_image,ecr_chart:$ecr_chart,public_image_digest:$public_image_digest,public_chart_digest:$public_chart_digest,ecr_image_digest:$ecr_image_digest,ecr_chart_digest:$ecr_chart_digest,image_platforms:$platforms[0],public_distribution:{registry:"ghcr.io",anonymous_pull_verified:true,byte_identical_to_ecr:true},policy_contract:$policy_contract,identity_contract:$identity_contract,supported_policy_contracts:[$policy_contract,$source_auth_policy_contract],supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]}' \
+            '{version:$version,commit:$commit,release_url:$release_url,workflow_run_url:$workflow_run_url,image:$image,chart:$chart,public_image_digest:$public_image_digest,public_chart_digest:$public_chart_digest,image_platforms:$platforms[0],public_distribution:{registry:"ghcr.io",anonymous_pull_verified:true,manifest_preserving_mirror:true},policy_contract:$policy_contract,identity_contract:$identity_contract,supported_policy_contracts:[$policy_contract,$source_auth_policy_contract],supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]}' \
             > dist/release-manifest.json
           identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
           cosign sign-blob --yes --bundle dist/release-manifest.sigstore.json dist/release-manifest.json

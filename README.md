@@ -100,7 +100,8 @@ Release identity is the exact source commit plus image/chart digests, never a
 mutable tag.
 
 The project license is [MIT](LICENSE). Review the
-[third-party notice inventory](THIRD_PARTY_NOTICES.md), release SBOM, and
+[third-party notice inventory](THIRD_PARTY_NOTICES.md), public OCI
+attestations, and
 [changelog](CHANGELOG.md).
 
 ## Development and release checks
