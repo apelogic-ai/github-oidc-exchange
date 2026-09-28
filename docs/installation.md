@@ -236,9 +236,11 @@ cargo run --locked --bin keyring-tool -- validate-rsa ./private/workload-keyring
 `generate-*` and `add-*` accept `--valid-for-days DAYS` from 1 through 3650;
 the default remains 90 days when the flag is omitted. Choose a lifetime that
 fits the rotation and recovery policy, then alert well before it ends. The
-tool rejects overwrite, symlinks, non-0600 files, wrong algorithms, duplicate
-IDs, invalid key windows, and RSA keys under 3072 bits. It writes private JSON
-atomically and prints no key material. Generated keys are not TLS certificates.
+`export-jwks FILE` command detects either supported keyring type and writes
+only public JWKS JSON to standard output for static verifiers. The tool rejects
+overwrite, symlinks, non-0600 files, wrong algorithms, duplicate IDs, invalid
+key windows, and RSA keys under 3072 bits. It writes private JSON atomically
+and prints no private key material. Generated keys are not TLS certificates.
 Back up private signing files through an encrypted, access-controlled recovery
 channel; a lost current key cannot re-sign or validate already issued tokens
 after its public key disappears from JWKS.
@@ -453,6 +455,9 @@ set -o pipefail
 cargo run --locked --bin keyring-tool -- add-es256 \
   ./private/issuer-keyring.json issuer-next --valid-for-days 90
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
+cargo run --locked --bin keyring-tool -- export-jwks \
+  ./private/issuer-keyring.json > ./private/issuer-jwks.json
+jq -e '.keys | length == 2' ./private/issuer-jwks.json >/dev/null
 identity_keyring_rv="$(kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
   -n "$IDENTITY_NAMESPACE" get secret github-oidc-exchange-keyring \
   -o jsonpath='{.metadata.resourceVersion}')"
@@ -462,11 +467,52 @@ kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$I
   jq --arg rv "$identity_keyring_rv" '.metadata.resourceVersion=$rv' | \
   kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" replace -f -
 # Edit rolloutRevisions.githubKeyring to rev-2; helm upgrade, wait, check both JWKS kids.
+# Before activation, publish issuer-jwks.json to every static verifier and
+# complete that verifier's documented reload/rollout mechanism.
 cargo run --locked --bin keyring-tool -- activate-es256 ./private/issuer-keyring.json issuer-next
 # Reproject, bump revision to rev-3, upgrade/wait; rollback activation by selecting OLD_KID if needed.
 # After the overlap/grace window only:
 cargo run --locked --bin keyring-tool -- retire-es256 ./private/issuer-keyring.json issuer-2026-09-a
 ```
+
+The exported file contains public keys only, but its provenance is a trust
+decision. Remote-fetching verifiers can observe the overlapping live JWKS and
+refresh on an unknown `kid`. Static verifiers—including a Steward deployment
+configured from a mounted JWKS ConfigMap—cannot. The operator of each static
+verifier must replace its `jwks.json` with the exported overlap set, bump that
+deployment's own JWKS rollout revision or use its documented reload mechanism,
+wait for every verifier replica, and confirm both `kid`s are loaded **before
+Identity activates** the new key. Identity does not call, restart, or otherwise
+depend on Steward; the signed JWKS handoff is the integration boundary. After
+activation, verify a new token succeeds through every relying party before
+starting the old-key grace window. Repeat the static JWKS publication after
+retirement so the old public key is removed only after all old tokens and
+rollback windows have ended.
+
+For each ConfigMap-backed verifier, use that deployment's documented object
+name, data key, kubeconfig, context, and rollout control. A version-checked
+public-key update has this shape:
+
+```sh
+export STATIC_JWKS_KUBECONFIG=/absolute/path/to/verifier-kubeconfig
+export STATIC_JWKS_CONTEXT=verifier-context
+export STATIC_JWKS_NAMESPACE=verifier-namespace
+export STATIC_JWKS_CONFIGMAP=verifier-identity-jwks
+static_jwks_rv="$(kubectl --kubeconfig "$STATIC_JWKS_KUBECONFIG" \
+  --context "$STATIC_JWKS_CONTEXT" -n "$STATIC_JWKS_NAMESPACE" \
+  get configmap "$STATIC_JWKS_CONFIGMAP" -o jsonpath='{.metadata.resourceVersion}')"
+kubectl --kubeconfig "$STATIC_JWKS_KUBECONFIG" --context "$STATIC_JWKS_CONTEXT" \
+  -n "$STATIC_JWKS_NAMESPACE" create configmap "$STATIC_JWKS_CONFIGMAP" \
+  --from-file=jwks.json=./private/issuer-jwks.json --dry-run=client -o json | \
+  jq --arg rv "$static_jwks_rv" '.metadata.resourceVersion=$rv' | \
+  kubectl --kubeconfig "$STATIC_JWKS_KUBECONFIG" --context "$STATIC_JWKS_CONTEXT" \
+    -n "$STATIC_JWKS_NAMESPACE" replace -f -
+# Now invoke the verifier deployment's documented JWKS reload or rollout.
+```
+
+Do not infer the object or rollout control from Identity; they are owned by
+the verifier deployment. A `409 Conflict` means another writer changed the
+ConfigMap: stop, re-read, and reconcile rather than forcing replacement.
 
 The default `config.keyExpiryReadinessThresholdSeconds` is 604800 (seven
 days). `/readyz` returns 503 when either enabled current signing key has that

@@ -124,6 +124,18 @@ fn es256_generation_validation_and_rotation_are_private_and_loadable() {
     );
     assert!(tool(&["validate-es256", path]).status.success());
     assert!(tool(&["add-es256", path, "next"]).status.success());
+    let exported = tool(&["export-jwks", path]);
+    assert!(exported.status.success());
+    let exported: serde_json::Value =
+        serde_json::from_slice(&exported.stdout).expect("public JWKS JSON");
+    let exported_keys = exported["keys"].as_array().expect("public keys");
+    assert_eq!(exported_keys.len(), 2);
+    assert!(exported_keys.iter().all(|key| {
+        key["kty"] == "EC"
+            && key["alg"] == "ES256"
+            && key.get("seed").is_none()
+            && key.get("private_key_pkcs8_pem").is_none()
+    }));
     assert!(
         KeyRing::load(path.as_ref(), Utc::now())
             .expect("overlap")
@@ -144,6 +156,7 @@ fn es256_generation_validation_and_rotation_are_private_and_loadable() {
     );
     fs::set_permissions(path, fs::Permissions::from_mode(0o644)).expect("change mode");
     assert!(!tool(&["validate-es256", path]).status.success());
+    assert!(!tool(&["export-jwks", path]).status.success());
 }
 
 #[test]
@@ -175,6 +188,14 @@ fn rsa_generation_is_3072_bit_and_never_prints_private_key() {
         0o600
     );
     assert!(RsaKeyRing::load(path.as_ref(), Utc::now()).is_ok());
+    let exported = tool(&["export-jwks", path]);
+    assert!(exported.status.success());
+    assert!(!String::from_utf8_lossy(&exported.stdout).contains("PRIVATE KEY"));
+    let exported: serde_json::Value =
+        serde_json::from_slice(&exported.stdout).expect("public JWKS JSON");
+    assert_eq!(exported["keys"][0]["kty"], "RSA");
+    assert_eq!(exported["keys"][0]["alg"], "RS256");
+    assert!(exported["keys"][0].get("private_key_pkcs8_pem").is_none());
     assert!(tool(&["validate-rsa", path]).status.success());
     assert!(!tool(&["validate-es256", path]).status.success());
 }

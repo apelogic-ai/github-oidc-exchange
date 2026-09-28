@@ -11,6 +11,8 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ### Added
 
+- Added `keyring-tool export-jwks` and an explicit static-verifier rotation
+  handoff that publishes overlapping public keys before signer activation.
 - Added configurable key lifetimes to `keyring-tool`, runtime signing-window
   enforcement, readiness failure ahead of ES256 or RSA key expiry, and
   seconds-to-expiry gauges with alerting guidance.

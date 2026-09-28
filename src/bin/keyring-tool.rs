@@ -3,7 +3,7 @@ use std::{
     env,
     error::Error,
     fs::{self, OpenOptions},
-    io::Write,
+    io::{self, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::Path,
 };
@@ -28,9 +28,16 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = env::args().skip(1).collect();
-    let usage = "usage: keyring-tool (generate|add)-(es256|rsa) FILE KID [--valid-for-days DAYS]\n       keyring-tool (validate)-(es256|rsa) FILE\n       keyring-tool (activate|retire)-(es256|rsa) FILE KID";
+    let usage = "usage: keyring-tool (generate|add)-(es256|rsa) FILE KID [--valid-for-days DAYS]\n       keyring-tool (validate)-(es256|rsa) FILE\n       keyring-tool (activate|retire)-(es256|rsa) FILE KID\n       keyring-tool export-jwks FILE";
     if args.len() < 2 {
         return Err(usage.into());
+    }
+    if args[0] == "export-jwks" {
+        if args.len() != 2 {
+            return Err(usage.into());
+        }
+        export_jwks(Path::new(&args[1]))?;
+        return Ok(());
     }
     let (action, algorithm) = args[0]
         .rsplit_once('-')
@@ -170,6 +177,16 @@ fn new_key(algorithm: &str, kid: &str, validity_days: u16) -> Result<Value, Box<
 }
 
 fn validate_private(path: &Path, algorithm: &str) -> Result<(), Box<dyn Error>> {
+    validate_private_metadata(path)?;
+    if algorithm == "es256" {
+        KeyRing::load(path, Utc::now())?;
+    } else {
+        RsaKeyRing::load(path, Utc::now())?;
+    }
+    Ok(())
+}
+
+fn validate_private_metadata(path: &Path) -> Result<(), Box<dyn Error>> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_file()
         || metadata.file_type().is_symlink()
@@ -177,11 +194,27 @@ fn validate_private(path: &Path, algorithm: &str) -> Result<(), Box<dyn Error>> 
     {
         return Err("keyring must be a regular mode-0600 file".into());
     }
-    if algorithm == "es256" {
-        KeyRing::load(path, Utc::now())?;
-    } else {
-        RsaKeyRing::load(path, Utc::now())?;
+    Ok(())
+}
+
+fn export_jwks(path: &Path) -> Result<(), Box<dyn Error>> {
+    validate_private_metadata(path)?;
+    let document: Value = serde_json::from_slice(&fs::read(path)?)?;
+    let version = document["version"]
+        .as_str()
+        .ok_or("keyring version is missing")?;
+    let output = io::stdout();
+    let mut output = output.lock();
+    match version {
+        KEYRING_VERSION => {
+            serde_json::to_writer_pretty(&mut output, &KeyRing::load(path, Utc::now())?.jwks())?
+        }
+        RSA_KEYRING_VERSION => {
+            serde_json::to_writer_pretty(&mut output, &RsaKeyRing::load(path, Utc::now())?.jwks())?
+        }
+        _ => return Err("unsupported keyring version".into()),
     }
+    output.write_all(b"\n")?;
     Ok(())
 }
 
