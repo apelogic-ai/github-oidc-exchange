@@ -9,7 +9,7 @@ lock_version="$(awk '
 ' Cargo.lock)"
 chart_version="$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)"
 app_version="$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc-exchange/Chart.yaml | head -1)"
-[[ "$version" == "0.7.1" ]]
+[[ "$version" == "0.7.2-dev" ]]
 [[ "$lock_version" == "$version" ]]
 [[ "$chart_version" == "$version" ]]
 [[ "$app_version" == "$version" ]]

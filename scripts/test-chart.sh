@@ -10,7 +10,7 @@ if helm template unconfigured "$chart" >"$scratch/default.yaml" 2>"$scratch/defa
   exit 1
 fi
 
-released_digest=sha256:15b23a90dbb6a42312f5d2f805b56750cf86c38ed80713ceeb36ffdd8e43ce3a
+released_digest=sha256:ab5636d7368e82d0040b0a981c330a6f2ab54447c38603008c735135aa3cda09
 activation_digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 zero_digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
 production_example="$chart/examples/production-values.yaml"
@@ -143,16 +143,16 @@ grep -Fq "@$released_digest" "$scratch/rollback-v5.yaml"
 
 helm template released "$chart" -f "$chart/ci/test-values.yaml" \
   --set-string image.repository=ghcr.io/apelogic-ai/github-oidc-exchange \
-  --set-string image.tag=0.7.0 \
+  --set-string image.tag=0.7.1 \
   --set-string "image.digest=$released_digest" >"$scratch/released.yaml"
-grep -Fq "image: ghcr.io/apelogic-ai/github-oidc-exchange:0.7.0@$released_digest" \
+grep -Fq "image: ghcr.io/apelogic-ai/github-oidc-exchange:0.7.1@$released_digest" \
   "$scratch/released.yaml"
 
 helm template mirrored "$chart" -f "$chart/ci/test-values.yaml" \
   --set-string image.repository=registry.example.test/mirror/github-oidc-exchange \
-  --set-string image.tag=0.7.0 \
+  --set-string image.tag=0.7.1 \
   --set-string "image.digest=$released_digest" >"$scratch/mirrored.yaml"
-grep -Fq "image: registry.example.test/mirror/github-oidc-exchange:0.7.0@$released_digest" \
+grep -Fq "image: registry.example.test/mirror/github-oidc-exchange:0.7.1@$released_digest" \
   "$scratch/mirrored.yaml"
 
 bash scripts/validate-chart-values.sh \
