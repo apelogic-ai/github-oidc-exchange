@@ -229,16 +229,16 @@ done
 helm template tagged "$render_dir/chart" \
   -f charts/github-oidc-exchange/examples/production-values.yaml \
   --set-string image.repository=ghcr.io/apelogic-ai/github-oidc-exchange \
-  --set-string image.tag=0.7.1 \
-  --set-string image.digest=sha256:ab5636d7368e82d0040b0a981c330a6f2ab54447c38603008c735135aa3cda09 \
+  --set-string image.tag=0.7.2 \
+  --set-string image.digest=sha256:74a09abba6206260aa4e4666f7a6447b95a5aba1b088f6770b134b1b813ab838 \
   >"$render_dir/tagged.yaml"
 grep -Fq -- \
-  "image: ghcr.io/apelogic-ai/github-oidc-exchange:0.7.1@sha256:ab5636d7368e82d0040b0a981c330a6f2ab54447c38603008c735135aa3cda09" \
+  "image: ghcr.io/apelogic-ai/github-oidc-exchange:0.7.2@sha256:74a09abba6206260aa4e4666f7a6447b95a5aba1b088f6770b134b1b813ab838" \
   "$render_dir/tagged.yaml"
 if helm template malformed-tag "$render_dir/chart" \
   -f charts/github-oidc-exchange/examples/production-values.yaml \
   --set-string image.repository=ghcr.io/apelogic-ai/github-oidc-exchange \
-  --set-string image.digest=sha256:ab5636d7368e82d0040b0a981c330a6f2ab54447c38603008c735135aa3cda09 \
+  --set-string image.digest=sha256:74a09abba6206260aa4e4666f7a6447b95a5aba1b088f6770b134b1b813ab838 \
   --set-string image.tag=not/a/tag \
   >/dev/null 2>&1; then
   printf 'image tag must remain a single registry tag component\n' >&2

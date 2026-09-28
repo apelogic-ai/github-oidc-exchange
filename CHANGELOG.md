@@ -9,6 +9,13 @@ signatures, and public-registry attestations.
 
 ## [Unreleased]
 
+### Changed
+
+- Advanced the application and chart development version to `0.7.3-dev`
+  after tagging 0.7.2.
+- Updated CI fixtures and chart/release validation to use the published 0.7.2
+  multi-platform image digest.
+
 ## [0.7.2] - 2026-09-28
 
 ### Changed
