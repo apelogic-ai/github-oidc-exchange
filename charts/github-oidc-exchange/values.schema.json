@@ -65,7 +65,7 @@
     },
     "config": {
       "type": "object",
-      "required": ["issuerUrl", "githubExchangeAudience", "outputAudience", "policyContract", "policyConfigMapName", "keyringSecretName"],
+      "required": ["issuerUrl", "githubExchangeAudience", "outputAudience", "policyContract", "policyConfigMapName", "keyringSecretName", "keyExpiryReadinessThresholdSeconds"],
       "properties": {
         "issuerUrl": {"type": "string", "description": "Exact HTTPS issuer origin. Paths, queries, and fragments are unsupported.", "maxLength": 2048, "pattern": "^https://[^/?#]+/?$", "not": {"pattern": "example\\.invalid"}},
         "githubExchangeAudience": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[!-~]+$", "not": {"pattern": "^(replace-|example-)"}},
@@ -74,7 +74,8 @@
         "policyConfigMapName": {"type": "string", "minLength": 1},
         "policyConfigMapKey": {"const": "policy.json"},
         "keyringSecretName": {"type": "string", "minLength": 1},
-        "keyringSecretKey": {"const": "keyring.json"}
+        "keyringSecretKey": {"const": "keyring.json"},
+        "keyExpiryReadinessThresholdSeconds": {"type": "integer", "minimum": 120, "maximum": 31536000}
       }
     },
     "rolloutRevisions": {

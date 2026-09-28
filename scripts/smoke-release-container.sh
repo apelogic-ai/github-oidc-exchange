@@ -282,6 +282,11 @@ for _ in $(seq 1 60); do
   if curl --fail --silent --show-error "http://127.0.0.1:$public_port/readyz" >/dev/null \
     && curl --fail --silent --show-error --cacert "$tmp/ca.crt" \
       "https://127.0.0.1:$workload_port/readyz" >/dev/null; then
+    metrics="$(curl --fail --silent --show-error \
+      "http://127.0.0.1:$public_port/metrics")"
+    grep -Eq '^github_oidc_exchange_signing_key_seconds_until_expiry [0-9]+$' <<<"$metrics"
+    grep -Eq '^github_oidc_exchange_workload_signing_key_seconds_until_expiry [0-9]+$' \
+      <<<"$metrics"
     if ! response="$(curl --fail --silent --show-error --cacert "$tmp/ca.crt" \
       --request POST \
       --header "$workload_auth_name: $workload_auth_scheme $workload_source_token" \

@@ -23,6 +23,7 @@ config:
   policyConfigMapKey: policy.json
   keyringSecretName: github-oidc-exchange-keyring
   keyringSecretKey: keyring.json
+  keyExpiryReadinessThresholdSeconds: 604800 # seven days; alert earlier
 rolloutRevisions:
   githubPolicy: rev-1
   githubKeyring: rev-1

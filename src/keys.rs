@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     path::Path,
+    time::Duration,
 };
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -38,6 +39,9 @@ struct KeySpec {
 
 pub struct KeyRing {
     current_kid: String,
+    current_not_before: DateTime<Utc>,
+    current_not_after: DateTime<Utc>,
+    readiness_threshold: Duration,
     keys: HashMap<String, SecretKey>,
 }
 
@@ -60,6 +64,9 @@ struct RsaKeySpec {
 
 pub struct RsaKeyRing {
     current_kid: String,
+    current_not_before: DateTime<Utc>,
+    current_not_after: DateTime<Utc>,
+    readiness_threshold: Duration,
     keys: HashMap<String, RsaPrivateKey>,
 }
 
@@ -108,6 +115,14 @@ struct RsaPublicJwk {
 
 impl KeyRing {
     pub fn load(path: &Path, now: DateTime<Utc>) -> Result<Self, KeyError> {
+        Self::load_with_readiness_threshold(path, now, Duration::ZERO)
+    }
+
+    pub fn load_with_readiness_threshold(
+        path: &Path,
+        now: DateTime<Utc>,
+        readiness_threshold: Duration,
+    ) -> Result<Self, KeyError> {
         let file = File::open(path).map_err(|error| KeyError::Invalid(error.to_string()))?;
         let input: KeyRingFile =
             serde_json::from_reader(file).map_err(|error| KeyError::Invalid(error.to_string()))?;
@@ -118,6 +133,7 @@ impl KeyRing {
         let mut keys = HashMap::new();
         let mut key_ids = HashSet::new();
         let mut current_valid = false;
+        let mut current_window = None;
         for spec in input.keys {
             if spec.kid.is_empty()
                 || spec.not_after <= spec.not_before
@@ -135,6 +151,7 @@ impl KeyRing {
                 .map_err(|_| invalid("P-256 private scalar is outside the valid range"))?;
             if spec.kid == input.current_kid {
                 current_valid = now >= spec.not_before && now < spec.not_after;
+                current_window = Some((spec.not_before, spec.not_after));
             }
             if now < spec.not_after {
                 keys.insert(spec.kid, key);
@@ -145,13 +162,31 @@ impl KeyRing {
                 "current signing key is missing or outside its validity window",
             ));
         }
+        let (current_not_before, current_not_after) = current_window
+            .ok_or_else(|| invalid("current signing key validity window is unavailable"))?;
         Ok(Self {
             current_kid: input.current_kid,
+            current_not_before,
+            current_not_after,
+            readiness_threshold,
             keys,
         })
     }
 
     pub fn sign<T: Serialize>(&self, claims: &T) -> Result<String, KeyError> {
+        self.sign_at(claims, Utc::now())
+    }
+
+    pub fn sign_at<T: Serialize>(
+        &self,
+        claims: &T,
+        now: DateTime<Utc>,
+    ) -> Result<String, KeyError> {
+        if now < self.current_not_before || now >= self.current_not_after {
+            return Err(invalid(
+                "current signing key is outside its validity window",
+            ));
+        }
         let signing_key = self
             .keys
             .get(&self.current_kid)
@@ -161,6 +196,19 @@ impl KeyRing {
         let mut header = Header::new(Algorithm::ES256);
         header.kid = Some(self.current_kid.clone());
         encode(&header, claims, &encoding_key).map_err(|_| KeyError::Signing)
+    }
+
+    pub fn current_key_seconds_until_expiry(&self, now: DateTime<Utc>) -> u64 {
+        self.current_not_after
+            .signed_duration_since(now)
+            .num_seconds()
+            .max(0) as u64
+    }
+
+    pub fn is_ready_at(&self, now: DateTime<Utc>) -> bool {
+        now >= self.current_not_before
+            && now < self.current_not_after
+            && self.current_key_seconds_until_expiry(now) > self.readiness_threshold.as_secs()
     }
 
     pub fn jwks(&self) -> JwkSet {
@@ -194,6 +242,14 @@ impl KeyRing {
 
 impl RsaKeyRing {
     pub fn load(path: &Path, now: DateTime<Utc>) -> Result<Self, KeyError> {
+        Self::load_with_readiness_threshold(path, now, Duration::ZERO)
+    }
+
+    pub fn load_with_readiness_threshold(
+        path: &Path,
+        now: DateTime<Utc>,
+        readiness_threshold: Duration,
+    ) -> Result<Self, KeyError> {
         let file = File::open(path).map_err(|error| KeyError::Invalid(error.to_string()))?;
         let input: RsaKeyRingFile =
             serde_json::from_reader(file).map_err(|error| KeyError::Invalid(error.to_string()))?;
@@ -206,6 +262,7 @@ impl RsaKeyRing {
         let mut keys = HashMap::new();
         let mut key_ids = HashSet::new();
         let mut current_valid = false;
+        let mut current_window = None;
         for spec in input.keys {
             if spec.kid.is_empty()
                 || spec.not_after <= spec.not_before
@@ -222,6 +279,7 @@ impl RsaKeyRing {
                 .map_err(|_| invalid("RSA private key failed validation"))?;
             if spec.kid == input.current_kid {
                 current_valid = now >= spec.not_before && now < spec.not_after;
+                current_window = Some((spec.not_before, spec.not_after));
             }
             if now < spec.not_after {
                 keys.insert(spec.kid, key);
@@ -232,13 +290,31 @@ impl RsaKeyRing {
                 "current RSA signing key is missing or outside its validity window",
             ));
         }
+        let (current_not_before, current_not_after) = current_window
+            .ok_or_else(|| invalid("current RSA signing key validity window is unavailable"))?;
         Ok(Self {
             current_kid: input.current_kid,
+            current_not_before,
+            current_not_after,
+            readiness_threshold,
             keys,
         })
     }
 
     pub fn sign<T: Serialize>(&self, claims: &T) -> Result<String, KeyError> {
+        self.sign_at(claims, Utc::now())
+    }
+
+    pub fn sign_at<T: Serialize>(
+        &self,
+        claims: &T,
+        now: DateTime<Utc>,
+    ) -> Result<String, KeyError> {
+        if now < self.current_not_before || now >= self.current_not_after {
+            return Err(invalid(
+                "current RSA signing key is outside its validity window",
+            ));
+        }
         let signing_key = self
             .keys
             .get(&self.current_kid)
@@ -248,6 +324,19 @@ impl RsaKeyRing {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some(self.current_kid.clone());
         encode(&header, claims, &encoding_key).map_err(|_| KeyError::Signing)
+    }
+
+    pub fn current_key_seconds_until_expiry(&self, now: DateTime<Utc>) -> u64 {
+        self.current_not_after
+            .signed_duration_since(now)
+            .num_seconds()
+            .max(0) as u64
+    }
+
+    pub fn is_ready_at(&self, now: DateTime<Utc>) -> bool {
+        now >= self.current_not_before
+            && now < self.current_not_after
+            && self.current_key_seconds_until_expiry(now) > self.readiness_threshold.as_secs()
     }
 
     pub fn jwks(&self) -> JwkSet {
