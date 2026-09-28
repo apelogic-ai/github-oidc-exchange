@@ -12,6 +12,7 @@ for expected in 'workflow_dispatch:' 'packages: write' 'ubuntu-24.04-arm' \
   'helm package' 'helm push' 'docker buildx imagetools create' \
   'gh release create' 'aquasecurity/trivy-action@' 'anchore/sbom-action@' \
   'cosign attest' 'cosign sign-blob' 'release-manifest.sigstore.json' \
+  'scripts/stage-release-contract-assets.sh' '"$release_assets"/*' \
   '--notes-file "docs/releases/v$VERSION.md"' 'image_platforms:' \
   '[[ -s "docs/releases/v$VERSION.md" ]]' 'policy_contract:' \
   'identity_contract:' 'supported_policy_contracts:' \

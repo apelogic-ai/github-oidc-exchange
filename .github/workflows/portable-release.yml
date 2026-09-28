@@ -251,6 +251,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          release_assets="$RUNNER_TEMP/release-contracts"
+          mkdir -p "$release_assets"
+          bash scripts/stage-release-contract-assets.sh "$release_assets"
           policy_contract="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
           identity_contract="$(sed -n 's/^pub const IDENTITY_CONTRACT: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
           source_auth_policy_contract="$(sed -n 's/^pub const SOURCE_AUTH_POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
@@ -278,4 +281,5 @@ jobs:
             --title "github-oidc-exchange v$VERSION" \
             --notes-file "docs/releases/v$VERSION.md" \
             "$RUNNER_TEMP/release-manifest.json" \
-            "$RUNNER_TEMP/release-manifest.sigstore.json"
+            "$RUNNER_TEMP/release-manifest.sigstore.json" \
+            "$release_assets"/*

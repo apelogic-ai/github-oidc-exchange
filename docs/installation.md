@@ -180,6 +180,13 @@ jq -e '.chart|contains("@sha256:")' ./dist/release-manifest.json >/dev/null
 GHCR image and chart packages public for anonymous cluster pulls, or create a
 registry pull Secret and reference only its name in values.
 
+The release also attaches `policy-contract.schema.json`,
+`policy-contract.example.json`, `policy-contract-v6.schema.json`,
+`policy-contract-v6.example.json`, and
+`workload-policy-contract.example.json`. The exact image reference contains
+the offline key administrator at `/usr/local/bin/keyring-tool`; it does not
+require a Rust toolchain or source checkout.
+
 ## 2. Prepare policy and signing files privately
 
 Create a private directory (`umask` also protects temporary editor files).
@@ -210,6 +217,28 @@ jq empty ./private/policy-v6.json
 cargo run --locked --bin keyring-tool -- generate-es256 \
   ./private/issuer-keyring.json issuer-2026-09-a --valid-for-days 90
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
+```
+
+When consuming the 0.7.3 or later release artifacts, download the policy files
+above and run the same operations from the verified image digest. Run as the
+invoking host user so atomic mode-0600 output on the private bind mount is not
+owned by a container-only UID:
+
+```sh
+export IDENTITY_IMAGE_REFERENCE="$(jq -er .image ./dist/release-manifest.json)"
+run_keyring_tool() {
+  docker run --rm --user "$(id -u):$(id -g)" \
+    --mount type=bind,src="$PWD/private",dst=/work \
+    --entrypoint /usr/local/bin/keyring-tool \
+    "$IDENTITY_IMAGE_REFERENCE" "$@"
+}
+run_keyring_tool generate-es256 \
+  /work/issuer-keyring.json issuer-2026-09-a --valid-for-days 90
+run_keyring_tool validate-es256 /work/issuer-keyring.json
+# When workload exchange is enabled:
+run_keyring_tool generate-rsa \
+  /work/workload-keyring.json workload-2026-09-a --valid-for-days 90
+run_keyring_tool validate-rsa /work/workload-keyring.json
 ```
 
 GitHub's ordinary `sub` is `repo:ORG/REPO:ref:refs/heads/BRANCH` for a branch

@@ -4,6 +4,7 @@ set -euo pipefail
 bash scripts/validate-ci-tools.sh
 bash scripts/test-portable-release.sh
 bash scripts/test-docs-drift.sh
+bash scripts/test-release-contract-assets.sh
 
 # The published source, package, and chart must advertise the same license.
 [[ -f LICENSE ]]
@@ -11,8 +12,14 @@ grep -Fq 'MIT License' LICENSE
 grep -Fq 'license = "MIT"' Cargo.toml
 grep -Fq 'artifacthub.io/license: MIT' charts/github-oidc-exchange/Chart.yaml
 
-grep -Fq -- \
-  'cargo build --locked --release --bin github-oidc-exchange' Dockerfile
+for expected in \
+  'cargo build --locked --release' \
+  '--bin github-oidc-exchange' \
+  '--bin keyring-tool' \
+  'target/release/github-oidc-exchange target/release/keyring-tool' \
+  'target/release/keyring-tool /usr/local/bin/keyring-tool'; do
+  grep -Fq -- "$expected" Dockerfile
+done
 if grep -Fq -- 'test-support' Dockerfile ||
   grep -R -n -E 'integration-fixture|MemoryReplayLedger' Cargo.toml src Dockerfile; then
   printf 'release image must exclude fixture-only replay implementations\n' >&2
@@ -81,6 +88,7 @@ required=(
   'workflow_run_url:$workflow_run_url'
   '[[ -s "docs/releases/v$REQUESTED_VERSION.md" ]]'
   'gh release create "v$VERSION"'
+  'bash scripts/stage-release-contract-assets.sh dist'
   '--notes-file "docs/releases/v$VERSION.md"'
   '--arg policy_contract "$policy_contract"'
   '--arg identity_contract "$identity_contract"'

@@ -13,6 +13,8 @@ signatures, and public-registry attestations.
 
 - Added opt-in named ConfigMap/Secret rollout automation for clusters with an
   operator-managed Stakater Reloader controller.
+- Shipped the offline `keyring-tool` in the signed runtime image and attached
+  policy schemas and examples to both release paths.
 
 ### Fixed
 

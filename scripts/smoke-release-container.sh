@@ -26,6 +26,38 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The released image is also the supported keyring administration artifact.
+# Run it as the invoking host user so generated mode-0600 files remain usable
+# without root-owned output on the bind mount.
+keyring_dir="$tmp/keyring-tool"
+mkdir -p "$keyring_dir"
+docker run --rm \
+  --platform "${smoke_platform}" \
+  --user "$(id -u):$(id -g)" \
+  --volume "$keyring_dir:/work" \
+  --entrypoint /usr/local/bin/keyring-tool \
+  "$image" generate-es256 /work/issuer-keyring.json smoke-key --valid-for-days 1 \
+  >"$tmp/keyring-generate.log"
+grep -Fxq 'generate es256: ok' "$tmp/keyring-generate.log"
+[[ "$(python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "$keyring_dir/issuer-keyring.json")" == 600 ]]
+docker run --rm \
+  --platform "${smoke_platform}" \
+  --user "$(id -u):$(id -g)" \
+  --volume "$keyring_dir:/work" \
+  --entrypoint /usr/local/bin/keyring-tool \
+  "$image" validate-es256 /work/issuer-keyring.json \
+  >"$tmp/keyring-validate.log"
+grep -Fxq 'validate es256: ok' "$tmp/keyring-validate.log"
+docker run --rm \
+  --platform "${smoke_platform}" \
+  --user "$(id -u):$(id -g)" \
+  --volume "$keyring_dir:/work:ro" \
+  --entrypoint /usr/local/bin/keyring-tool \
+  "$image" export-jwks /work/issuer-keyring.json \
+  >"$tmp/issuer-jwks.json"
+jq -e '(.keys | length == 1) and (.keys[0].kid == "smoke-key")' \
+  "$tmp/issuer-jwks.json" >/dev/null
+
 diagnose() {
   printf '%s\n' 'mock diagnostics:' >&2
   if [[ -f "$tmp/mock-events" ]]; then

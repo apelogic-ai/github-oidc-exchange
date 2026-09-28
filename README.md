@@ -95,6 +95,10 @@ RSA keys appear only when that profile is enabled.
 The AWS-independent
 [portable release workflow](.github/workflows/portable-release.yml) publishes
 signed native amd64/arm64 image and chart artifacts from a fork to its GHCR.
+The same immutable image contains the offline administration binary at
+`/usr/local/bin/keyring-tool`; invoke it with an explicit entrypoint and a
+private bind mount. Each GitHub release also attaches the v5/v6 policy schemas
+and examples plus the workload-policy example.
 Operators may instead use another OCI registry with equivalent release gates.
 Release identity is the exact source commit plus image/chart digests, never a
 mutable tag.

@@ -128,6 +128,8 @@ for expected in \
 done
 grep -Fq -- '--valid-for-days' docs/installation.md src/bin/keyring-tool.rs
 grep -Fq 'export-jwks' docs/installation.md src/bin/keyring-tool.rs
+grep -Fq '/usr/local/bin/keyring-tool' Dockerfile README.md docs/installation.md
+grep -Fq -- '--entrypoint /usr/local/bin/keyring-tool' docs/installation.md
 for expected in 'static verifier' 'mounted JWKS' 'before Identity activates' \
   'Identity does not call'; do
   grep -Fq "$expected" docs/installation.md docs/consumer-contract-v1.md
