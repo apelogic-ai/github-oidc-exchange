@@ -1,5 +1,10 @@
 # Upgrade to 0.7.1 — key lifecycle and network policy
 
+> Historical guide for the 0.7.1 boundary. For current 0.7.2 installation,
+> integration guidance, and rollback, use the
+> [installation guide](installation.md) and
+> [0.7.2 upgrade guide](upgrade-v0.7.2.md).
+
 Application/chart 0.7.1 adds runtime signing-key expiry enforcement,
 pre-expiry readiness, public expiry metrics, `keyring-tool export-jwks`, and a
 static-verifier rotation handoff. The chart raises its Kubernetes floor to

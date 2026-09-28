@@ -4,7 +4,7 @@ This guide pairs Identity's optional Kubernetes workload exchange with the
 Steward controller and OpenShell. It is a cross-product configuration map, not
 a runtime dependency from Identity to Steward: Steward presents a Kubernetes
 credential to Identity, Identity validates it with TokenReview and issues a
-bounded token, and OpenShell verifies that token. Identity 0.7.1 and later
+bounded token, and OpenShell verifies that token. Identity 0.7.2 and later
 support this contract.
 
 The standard contract has these exact joins:
