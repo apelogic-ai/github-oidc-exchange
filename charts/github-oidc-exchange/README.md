@@ -53,6 +53,12 @@ nonempty caller namespace/pod selectors. Its internal HTTPS route is never
 public. Browser HOP-1 additionally requires workload exchange and a public
 Steward JWKS ConfigMap.
 
+`serviceMonitor.enabled=true` requires both
+`networkPolicy.metricsNamespaceSelector` and
+`networkPolicy.metricsPodSelector` to be nonempty. Metrics share port 8080
+with the public exchange handler, so select only the trusted monitoring Pods;
+the chart rejects selectors that would admit every namespace or Pod.
+
 Chart values contain object references only, never private key, policy, TLS,
 or registry credential contents. Projected inputs do not hot-reload. After a
 verified object change, bump only its corresponding `rolloutRevisions` value

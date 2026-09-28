@@ -36,6 +36,12 @@ Existing older installations must first follow their version-specific guides.
 | Private material | Offline mode-0600 ES256 keyring; private policy file and object RBAC; TLS key controlled by the chosen certificate owner. | Offline mode-0600 RSA-3072 keyring; workload TLS private key and caller public CA trust. |
 | Optional CRDs | Gateway API `gateway.networking.k8s.io/v1` for HTTPRoute, cert-manager `cert-manager.io/v1` for chart-created Certificate, Prometheus Operator for ServiceMonitor — only if selected. | cert-manager optional for internal serving Certificate too. |
 
+When enabling `serviceMonitor`, set both
+`networkPolicy.metricsNamespaceSelector` and
+`networkPolicy.metricsPodSelector` to nonempty label maps that select only the
+trusted monitoring Pods. Metrics share port 8080 with the GitHub exchange, so
+the chart rejects empty selectors that would admit every namespace or Pod.
+
 Use an explicit kubeconfig and context for **every** command; do not use an
 ambient context. In the examples below choose a real, isolated target:
 

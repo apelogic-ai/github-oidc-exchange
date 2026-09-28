@@ -88,6 +88,25 @@ fi
 grep -Fq 'requires kubeVersion: >=1.32.0-0' "$scratch/kubernetes-1.31.err"
 helm template kubernetes-floor "$chart" -f "$chart/ci/test-values.yaml" \
   --kube-version 1.32.0 >/dev/null
+for selector in metricsNamespaceSelector metricsPodSelector; do
+  if helm lint "$chart" -f "$chart/ci/workload-values.yaml" --strict \
+    --set-json "networkPolicy.${selector}={}" \
+    >"$scratch/empty-metrics-selector.err" 2>&1; then
+    printf 'ServiceMonitor must reject an empty %s\n' "$selector" >&2
+    exit 1
+  fi
+  grep -Fq "networkPolicy.${selector}" "$scratch/empty-metrics-selector.err"
+  if helm template empty-metrics-selector "$chart" \
+    -f "$chart/ci/workload-values.yaml" --skip-schema-validation \
+    --set-json "networkPolicy.${selector}={}" \
+    >"$scratch/empty-metrics-selector.yaml" \
+    2>"$scratch/empty-metrics-selector-preflight.err"; then
+    printf 'template preflight must reject an empty %s\n' "$selector" >&2
+    exit 1
+  fi
+  grep -Fq 'serviceMonitor.enabled requires nonempty' \
+    "$scratch/empty-metrics-selector-preflight.err"
+done
 if helm lint "$chart" -f "$chart/ci/test-values.yaml" --strict \
   --set-string config.issuerUrl=https://identity.test.invalid/tenant \
   >"$scratch/path-issuer.err" 2>&1; then
@@ -164,6 +183,8 @@ grep -Fq 'value: /etc/github-oidc-exchange/rsa-keyring/rsa-keyring.json' "$scrat
 grep -Fq 'value: /etc/github-oidc-exchange/tls/tls.crt' "$scratch/workload.yaml"
 grep -Fq 'value: /etc/github-oidc-exchange/tls/tls.key' "$scratch/workload.yaml"
 grep -Fq 'resources: ["tokenreviews"]' "$scratch/workload.yaml"
+grep -Fq 'kubernetes.io/metadata.name: monitoring' "$scratch/workload.yaml"
+grep -Fq 'app.kubernetes.io/name: prometheus' "$scratch/workload.yaml"
 
 helm template ingress "$chart" --namespace identity \
   -f "$chart/ci/test-values.yaml" \

@@ -20,6 +20,9 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ### Fixed
 
+- Required nonempty namespace and Pod selectors when ServiceMonitor is enabled,
+  preventing its NetworkPolicy rule from admitting every Pod to the shared
+  exchange and metrics port.
 - Made the packaged production-values shape version-neutral and fail closed
   until its image coordinates are populated from the verified release
   manifest, preventing a release package from carrying a stale runnable image.

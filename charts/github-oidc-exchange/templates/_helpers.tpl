@@ -2,6 +2,12 @@
 github-oidc-exchange
 {{- end }}
 
+{{- define "github-oidc-exchange.validateMetricsSelectors" -}}
+{{- if and .Values.serviceMonitor.enabled (or (empty .Values.networkPolicy.metricsNamespaceSelector) (empty .Values.networkPolicy.metricsPodSelector)) -}}
+{{- fail "serviceMonitor.enabled requires nonempty networkPolicy.metricsNamespaceSelector and networkPolicy.metricsPodSelector so metrics access cannot select every pod" -}}
+{{- end -}}
+{{- end }}
+
 {{- define "github-oidc-exchange.labels" -}}
 app.kubernetes.io/name: {{ include "github-oidc-exchange.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
