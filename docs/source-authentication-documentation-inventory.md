@@ -17,7 +17,7 @@ This inventory records the documentation currency review for policy v6 and
 | `charts/github-oidc-exchange/values.yaml` | Updated | New `config.policyContract`; v5 is the default. |
 | `charts/github-oidc-exchange/values.example.yaml` | Updated | Copy-ready v5 default with explicit v6 activation comment. |
 | `charts/github-oidc-exchange/values.schema.json` | Updated | Requires and enumerates the two supported policy contracts. |
-| `charts/github-oidc-exchange/examples/production-values.yaml` | Updated | Current version and explicit v5 contract/reference. |
+| `charts/github-oidc-exchange/examples/production-values.yaml` | Updated | Version-neutral copyable shape with rejected image placeholders and a release-manifest handoff. |
 | `CHANGELOG.md` | Updated | Unchanged default, v6 activation, discovery, compatibility, and rollback. |
 | `docs/releases/v0.7.0.md` | Added | RFC 8414 discovery behavior, compatibility, rollback, and artifact evidence. |
 | `docs/upgrade-v0.7.0.md` | Added | Origin-only issuer preflight plus the existing v5/v6 activation and atomic rollback procedure. |

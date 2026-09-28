@@ -13,8 +13,17 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 - Advanced the application and chart development version to `0.7.1-dev`
   after tagging 0.7.0.
-- Updated the renderable example, CI fixtures, and chart/release validation to
-  use the published 0.7.0 multi-platform image digest.
+- Updated CI fixtures and chart/release validation to use the published 0.7.0
+  multi-platform image digest.
+
+### Fixed
+
+- Made the packaged production-values shape version-neutral and fail closed
+  until its image coordinates are populated from the verified release
+  manifest, preventing a release package from carrying a stale runnable image.
+- Made `keyring-tool generate-*` resolve bare output filenames in the current
+  directory and report missing parent directories separately from existing
+  targets.
 
 ## [0.7.0] - 2026-09-27
 

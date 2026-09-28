@@ -110,7 +110,6 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
 bash scripts/validate-release.sh
 bash scripts/test-chart.sh
-bash scripts/validate-chart-values.sh charts/github-oidc-exchange/examples/production-values.yaml
 bash scripts/test-install-inputs.sh
 bash scripts/test-kubectl-files.sh
 helm lint charts/github-oidc-exchange -f charts/github-oidc-exchange/ci/test-values.yaml --strict

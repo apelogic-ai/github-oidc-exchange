@@ -318,11 +318,13 @@ to a private deployment file, fill every mandatory empty field, and set
 `config.policyConfigMapName`, the keyring reference, and
 `networkPolicy.ingressCidrs` to the actual proxy/Gateway source CIDRs. The
 chart's default values intentionally **fail**. It never substitutes dummy
-credentials. The renderable
+credentials. The version-neutral
 [`examples/production-values.yaml`](../charts/github-oidc-exchange/examples/production-values.yaml)
-demonstrates a complete values shape but is not an install profile: every
-domain, digest, CIDR, object, and Gateway reference in it is fake. Use only
-one exposure option:
+demonstrates a complete values shape but is not an install profile. Its image
+repository and digest are deliberately rejected placeholders: populate both
+from the verified `release-manifest.json` (or verified mirror descriptor)
+before validation or rendering. Every domain, CIDR, object, and Gateway
+reference in it is also fake. Use only one exposure option:
 
 1. Service-only: leave `ingress.enabled=false`, `httpRoute.enabled=false`; an
    operator-owned HTTPS proxy must expose exactly both metadata endpoints,

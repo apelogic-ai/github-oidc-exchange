@@ -168,9 +168,13 @@ fn validate_private(path: &Path, algorithm: &str) -> Result<(), Box<dyn Error>> 
 fn write_private(path: &Path, document: &Value, replace: bool) -> Result<(), Box<dyn Error>> {
     let parent = path
         .parent()
-        .ok_or("keyring path needs a parent directory")?;
-    if !parent.is_dir() || (!replace && fs::symlink_metadata(path).is_ok()) {
-        return Err("parent directory missing or target already exists".into());
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    if !parent.is_dir() {
+        return Err("keyring parent directory does not exist".into());
+    }
+    if !replace && fs::symlink_metadata(path).is_ok() {
+        return Err("target keyring already exists; refusing overwrite".into());
     }
     let temp = parent.join(format!(".keyring-{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| -> Result<(), Box<dyn Error>> {

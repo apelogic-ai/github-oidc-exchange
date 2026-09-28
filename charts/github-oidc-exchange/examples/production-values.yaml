@@ -1,18 +1,16 @@
-# This is a renderable shape example, not an install profile. For a real
+# This is a copyable values shape, not an install profile. It intentionally
+# fails validation until image.repository and image.digest are populated from
+# a verified release-manifest.json or a verified mirror descriptor. For a real
 # deployment, start with values.example.yaml and the baseline quickstart.
-# It pins the released 0.7.0 application and is validated against the current
-# chart contract.
-# If you copy this file into a deployment-owned repository, replace every
-# example.invalid value, object reference, digest, CIDR, revision, pull Secret,
-# and Gateway reference. It cannot be a working issuer as-is.
+# Replace every example.invalid value, object reference, CIDR, revision, pull
+# Secret, and Gateway reference. It cannot be a working issuer as-is.
 
 image:
-  # This is the real public v0.7.0 image coordinate so the shape example uses
-  # a released, non-sentinel digest. Replace repository, tag, and digest
-  # together from the selected release handoff or verified mirror.
-  repository: ghcr.io/apelogic-ai/github-oidc-exchange
-  tag: 0.7.0
-  digest: sha256:15b23a90dbb6a42312f5d2f805b56750cf86c38ed80713ceeb36ffdd8e43ce3a
+  # Replace these rejected placeholders together from the selected release
+  # handoff or verified mirror. A tag is optional when the digest is pinned.
+  repository: replace-with-release-image-repository
+  tag: ""
+  digest: replace-with-release-image-digest
   pullPolicy: IfNotPresent
   # For a private registry, reference a pre-created image-pull secret. Do not
   # place credentials in Helm values.

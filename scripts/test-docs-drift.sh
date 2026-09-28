@@ -25,12 +25,15 @@ current_docs=(
   docs/source-authentication-documentation-inventory.md
   docs/releases/v0.7.0.md
   charts/github-oidc-exchange/README.md
-  charts/github-oidc-exchange/examples/production-values.yaml
 )
 for document in "${current_docs[@]}"; do
   grep -Fq "$released_version" "$document"
 done
 grep -Fq "## [$released_version]" CHANGELOG.md
+production_example=charts/github-oidc-exchange/examples/production-values.yaml
+grep -Fq 'repository: replace-with-release-image-repository' "$production_example"
+grep -Fq 'digest: replace-with-release-image-digest' "$production_example"
+grep -Fq 'release-manifest.json' "$production_example"
 
 v5_policy="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
 v6_policy="$(sed -n 's/^pub const SOURCE_AUTH_POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
