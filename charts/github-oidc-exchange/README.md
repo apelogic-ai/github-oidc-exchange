@@ -55,7 +55,9 @@ helm lint charts/github-oidc-exchange \
 requires a dedicated RSA-3072 keyring Secret, workload policy ConfigMap,
 server-authenticated TLS Secret, TokenReview RBAC, exact input audience, and
 nonempty caller namespace/pod selectors. Its internal HTTPS route is never
-public. Browser HOP-1 additionally requires workload exchange and a public
+public. The standard Steward controller and OpenShell values are paired in the
+[workload-exchange guide](../../docs/steward-openshell-workload-pairing.md).
+Browser HOP-1 additionally requires workload exchange and a public
 Steward JWKS ConfigMap.
 
 `serviceMonitor.enabled=true` requires both

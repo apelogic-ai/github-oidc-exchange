@@ -106,18 +106,22 @@ The internal workload endpoint is
 `POST https://{service}.{namespace}.svc.cluster.local:8443/v1/workload/exchange`.
 It uses Kubernetes TokenReview with an exact configured input audience and
 issues RS256 `openshell-workload-v1` tokens. It is never routed publicly and
-is unchanged in 0.7.1.
+is unchanged in 0.7.1. The standard Steward/OpenShell values and exact
+cross-product joins are documented in the
+[workload-exchange pairing guide](steward-openshell-workload-pairing.md).
 
 The optional browser HOP-1 profile requires workload exchange and follows its
 separate [v1 contract](browser-hop1-contract-v1.md). Neither optional profile
 changes the GitHub v5/v6 selection.
 
-The steward-run reusable workflow requires both exchange inputs,
-`identity-exchange-url` and `identity-exchange-audience`, and passes both to
-the action. Only the direct-action fallback uses
-`apelogic-github-identity-exchange` when the audience is omitted; that fallback
-is not the supported handoff for a deployed issuer. Pin the discovered endpoint
-and audience explicitly.
+The steward-run reusable workflow defaults to discovery from the exact
+`steward-api-url`. It reads that server's RFC 9728 protected-resource metadata,
+requires one Identity issuer, then reads Identity's RFC 8414 metadata and uses
+the advertised `token_endpoint` and `github_oidc_audience`. Callers omit
+`identity-exchange-url` and `identity-exchange-audience` in the normal path.
+Those two inputs remain deprecated compatibility controls: a nonempty URL
+bypasses discovery, the audience is valid only with that URL, and both reviewed
+values should be supplied together for an intentional rollback.
 
 During key rotation, consumers accept all published overlapping JWKS `kid`s
 until the old 120-second token lifetime plus clock skew has elapsed. A

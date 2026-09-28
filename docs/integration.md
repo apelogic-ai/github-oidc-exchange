@@ -199,13 +199,26 @@ jobs:
       input-artifact: request
       output-artifact: result
       steward-api-url: https://steward.example.org
-      identity-exchange-url: https://identity.example.org/v1/exchange
-      identity-exchange-audience: EXACT_DISCOVERED_AUDIENCE
 ```
 
-Keep the endpoint and audience as reviewed values. The reusable workflow
+Authentication discovery is the default. steward-run starts from the exact
+`steward-api-url`, reads its RFC 9728 protected-resource metadata, requires one
+Identity authorization server, then reads Identity's RFC 8414 metadata and
+uses its `token_endpoint` and `github_oidc_audience`. The reusable workflow
 requests GitHub OIDC, exchanges it for the fixed Steward token, and sends that
-token to Steward. An ARC registration secret is unrelated to this exchange.
+token to Steward. The caller therefore does not pass Identity's endpoint or
+input audience in the normal path.
+
+The optional `identity-exchange-url` and `identity-exchange-audience` inputs
+are deprecated compatibility controls. A nonempty URL bypasses discovery; if
+used for rollback, supply both reviewed values. An audience without the URL is
+rejected. Pin the reusable workflow commit and Steward API origin in either
+path. An ARC registration secret is unrelated to this exchange, and Identity
+does not call Steward during discovery or exchange.
+
+For Steward's separate controller-to-OpenShell path, use the exact audience,
+ServiceAccount, policy, TLS, and role joins in the
+[workload-exchange pairing guide](steward-openshell-workload-pairing.md).
 
 ## Completion checklist
 
@@ -216,6 +229,10 @@ token to Steward. An ARC registration secret is unrelated to this exchange.
 - Configured optional selectors are each proven exact; omitted selectors are
   verified not to impose an Identity authorization decision.
 - Steward verifies the chosen v2 or v3 contract and source provenance.
+- steward-run discovers Identity from the exact Steward API origin without
+  explicit exchange inputs in the normal path.
+- The Steward workload audience, controller ServiceAccount, Identity policy,
+  and OpenShell issuer/audience/role settings match exactly.
 - v3 operation succeeds with `actor_login` and with `email`, `email_verified`,
   and `groups` all absent when the actor compatibility bundle is absent.
 - Evidence contains immutable revisions and public key IDs, never tokens,
