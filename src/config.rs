@@ -15,6 +15,7 @@ pub struct Config {
     pub replay_lease_namespace: String,
     pub listen_address: SocketAddr,
     pub token_ttl: Duration,
+    pub key_expiry_readiness_threshold: Duration,
     pub workload: Option<WorkloadConfig>,
     pub browser_hop1: Option<BrowserHop1Config>,
 }
@@ -55,6 +56,8 @@ pub enum ConfigError {
     InvalidExpectedPolicyVersion,
     #[error("LISTEN_ADDRESS is invalid")]
     InvalidListenAddress,
+    #[error("KEY_EXPIRY_READINESS_THRESHOLD_SECONDS must be between 120 and 31536000")]
+    InvalidKeyExpiryReadinessThreshold,
     #[error("WORKLOAD_LISTEN_ADDRESS is invalid")]
     InvalidWorkloadListenAddress,
     #[error("public and workload listeners must use different addresses")]
@@ -106,6 +109,13 @@ impl Config {
         if !supported_policy_version(&expected_policy_version) {
             return Err(ConfigError::InvalidExpectedPolicyVersion);
         }
+        let key_expiry_readiness_threshold = env::var("KEY_EXPIRY_READINESS_THRESHOLD_SECONDS")
+            .unwrap_or_else(|_| "604800".to_owned())
+            .parse::<u64>()
+            .ok()
+            .filter(|seconds| (120..=31_536_000).contains(seconds))
+            .map(Duration::from_secs)
+            .ok_or(ConfigError::InvalidKeyExpiryReadinessThreshold)?;
         Ok(Self {
             issuer_url,
             github_exchange_audience,
@@ -116,6 +126,7 @@ impl Config {
             replay_lease_namespace: required("REPLAY_LEASE_NAMESPACE")?,
             listen_address,
             token_ttl: Duration::from_secs(120),
+            key_expiry_readiness_threshold,
             workload,
             browser_hop1,
         })

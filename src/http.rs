@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use chrono::Utc;
 use serde::Serialize;
 use tower_http::set_header::SetResponseHeaderLayer;
 
@@ -87,7 +88,7 @@ fn build_router<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 's
         .route("/jwks.json", get(jwks::<L, R>))
         .route("/v1/exchange", post(exchange::<L, R>))
         .route("/healthz", get(no_content))
-        .route("/readyz", get(no_content))
+        .route("/readyz", get(readiness::<L, R>))
         .route("/metrics", get(metrics::<L, R>))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
@@ -112,7 +113,7 @@ fn build_workload_router<R: TokenReviewer + Clone + 'static, B: ReplayLedger + C
     let routes = Router::new()
         .route("/v1/workload/exchange", post(workload_exchange::<R, B>))
         .route("/healthz", get(no_content))
-        .route("/readyz", get(no_content))
+        .route("/readyz", get(workload_readiness::<R, B>))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
             header::HeaderValue::from_static("nosniff"),
@@ -240,32 +241,70 @@ async fn no_content() -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
+async fn readiness<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 'static>(
+    State(state): State<AppState<L, R>>,
+) -> StatusCode {
+    let now = Utc::now();
+    if !state.service.keys.is_ready_at(now)
+        || state
+            .workload
+            .as_ref()
+            .is_some_and(|workload| !workload.keys.is_ready_at(now))
+    {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
+    StatusCode::NO_CONTENT
+}
+
+async fn workload_readiness<
+    R: TokenReviewer + Clone + 'static,
+    B: ReplayLedger + Clone + 'static,
+>(
+    State(state): State<WorkloadAppState<R, B>>,
+) -> StatusCode {
+    let now = Utc::now();
+    if !state.workload.keys.is_ready_at(now)
+        || state
+            .browser_hop1
+            .as_ref()
+            .is_some_and(|browser| !browser.keys.is_ready_at(now))
+    {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
+    StatusCode::NO_CONTENT
+}
+
 async fn metrics<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 'static>(
     State(state): State<AppState<L, R>>,
 ) -> String {
     let metrics = &state.service.metrics;
+    let now = Utc::now();
     let mut output = format!(
         "github_oidc_exchange_requests_total {}\n\
          github_oidc_exchange_issued_total {}\n\
          github_oidc_exchange_denied_total {}\n\
          github_oidc_exchange_replayed_total {}\n\
-         github_oidc_exchange_errors_total {}\n",
+         github_oidc_exchange_errors_total {}\n\
+         github_oidc_exchange_signing_key_seconds_until_expiry {}\n",
         metrics.requests.load(Ordering::Relaxed),
         metrics.issued.load(Ordering::Relaxed),
         metrics.denied.load(Ordering::Relaxed),
         metrics.replayed.load(Ordering::Relaxed),
         metrics.errors.load(Ordering::Relaxed),
+        state.service.keys.current_key_seconds_until_expiry(now),
     );
     if let Some(workload) = state.workload {
         output.push_str(&format!(
             "github_oidc_exchange_workload_requests_total {}\n\
              github_oidc_exchange_workload_issued_total {}\n\
              github_oidc_exchange_workload_denied_total {}\n\
-             github_oidc_exchange_workload_errors_total {}\n",
+             github_oidc_exchange_workload_errors_total {}\n\
+             github_oidc_exchange_workload_signing_key_seconds_until_expiry {}\n",
             workload.metrics.requests.load(Ordering::Relaxed),
             workload.metrics.issued.load(Ordering::Relaxed),
             workload.metrics.denied.load(Ordering::Relaxed),
             workload.metrics.errors.load(Ordering::Relaxed),
+            workload.keys.current_key_seconds_until_expiry(now),
         ));
     }
     output

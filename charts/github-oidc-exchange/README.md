@@ -36,6 +36,11 @@ Each exposure mode publishes `/.well-known/oauth-authorization-server`, the
 retained `/.well-known/openid-configuration`, `/jwks.json`, and `/v1/exchange`.
 Both metadata paths return the same discovery contract.
 
+`config.keyExpiryReadinessThresholdSeconds` defaults to seven days. The Pod
+becomes unready when either enabled active signing key enters that window and
+runtime signing stops at key expiry. Alert earlier using the public metrics
+gauges documented in the installation guide.
+
 `image.digest` must come from the release handoff or a verified
 manifest-preserving mirror. Placeholder and homogeneous digests are rejected;
 tag-only deployment is unsupported. Validate before mutation:

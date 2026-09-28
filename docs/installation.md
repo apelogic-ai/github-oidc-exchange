@@ -199,7 +199,7 @@ install -m 0600 docs/policy-contract-v6.example.json ./private/policy-v6.json
 jq empty ./private/policy-v5.json
 jq empty ./private/policy-v6.json
 cargo run --locked --bin keyring-tool -- generate-es256 \
-  ./private/issuer-keyring.json issuer-2026-09-a
+  ./private/issuer-keyring.json issuer-2026-09-a --valid-for-days 90
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
 ```
 
@@ -229,16 +229,19 @@ install -m 0600 docs/workload-policy-contract.example.json ./private/workload-po
 # kubernetes:serviceaccount:NAMESPACE:NAME subject/roles. Never use wildcards.
 jq empty ./private/workload-policy.json
 cargo run --locked --bin keyring-tool -- generate-rsa \
-  ./private/workload-keyring.json workload-2026-09-a
+  ./private/workload-keyring.json workload-2026-09-a --valid-for-days 90
 cargo run --locked --bin keyring-tool -- validate-rsa ./private/workload-keyring.json
 ```
 
-The tool rejects overwrite, symlinks, non-0600 files, wrong algorithms,
-duplicate IDs, invalid key windows, and RSA keys under 3072 bits. It writes
-private JSON atomically and prints no key material. Generated keys are not TLS
-certificates. Back up private signing files through an encrypted, access-
-controlled recovery channel; a lost current key cannot re-sign or validate
-already issued tokens after its public key disappears from JWKS.
+`generate-*` and `add-*` accept `--valid-for-days DAYS` from 1 through 3650;
+the default remains 90 days when the flag is omitted. Choose a lifetime that
+fits the rotation and recovery policy, then alert well before it ends. The
+tool rejects overwrite, symlinks, non-0600 files, wrong algorithms, duplicate
+IDs, invalid key windows, and RSA keys under 3072 bits. It writes private JSON
+atomically and prints no key material. Generated keys are not TLS certificates.
+Back up private signing files through an encrypted, access-controlled recovery
+channel; a lost current key cannot re-sign or validate already issued tokens
+after its public key disappears from JWKS.
 
 ## 3. Install file-based Kubernetes inputs
 
@@ -434,7 +437,7 @@ audiences; see [its separate contract](browser-hop1-contract-v1.md).
 
 Signing files are loaded on process startup, not hot-reloaded. For ES256 or
 RSA, run the matching command suffix (`es256` or `rsa`) below on the **private
-file**. Before expiry (tool-created keys last 90 days), add a new key, publish
+file**. Before expiry, add a new key with the selected validity period, publish
 the overlapping file to the **same** Kubernetes Secret, bump only that
 `rolloutRevisions` field to an opaque new value, and wait for every Pod to
 restart and JWKS to publish both `kid`s. Then activate the new key, project
@@ -447,7 +450,8 @@ confirm all consumers have refreshed JWKS before retiring the old key.
 ```sh
 set +x
 set -o pipefail
-cargo run --locked --bin keyring-tool -- add-es256 ./private/issuer-keyring.json issuer-next
+cargo run --locked --bin keyring-tool -- add-es256 \
+  ./private/issuer-keyring.json issuer-next --valid-for-days 90
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
 identity_keyring_rv="$(kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
   -n "$IDENTITY_NAMESPACE" get secret github-oidc-exchange-keyring \
@@ -463,6 +467,22 @@ cargo run --locked --bin keyring-tool -- activate-es256 ./private/issuer-keyring
 # After the overlap/grace window only:
 cargo run --locked --bin keyring-tool -- retire-es256 ./private/issuer-keyring.json issuer-2026-09-a
 ```
+
+The default `config.keyExpiryReadinessThresholdSeconds` is 604800 (seven
+days). `/readyz` returns 503 when either enabled current signing key has that
+much lifetime or less; `/healthz` remains a process-liveness check. Signing is
+also rejected at runtime once the current key reaches `not_after`, even when a
+Pod has not restarted. Scrape and alert on these gauges:
+
+- `github_oidc_exchange_signing_key_seconds_until_expiry`
+- `github_oidc_exchange_workload_signing_key_seconds_until_expiry` (only when
+  workload exchange is enabled)
+
+Alert before the readiness window—for example, warning below 14 days and
+critical below seven days with the default threshold—and treat an absent
+expected gauge as a monitoring failure. Choose a smaller readiness threshold
+only when the configured key lifetime and a tested rotation process require
+it; the chart accepts 120 through 31536000 seconds.
 
 Repeat the **version-checked** file replacement after activate/retire (and for
 the RSA keyring or a policy ConfigMap), fetching a fresh metadata-only

@@ -28,11 +28,9 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = env::args().skip(1).collect();
-    if !(2..=3).contains(&args.len()) {
-        return Err(
-            "usage: keyring-tool (generate|validate|add|activate|retire)-(es256|rsa) FILE [KID]"
-                .into(),
-        );
+    let usage = "usage: keyring-tool (generate|add)-(es256|rsa) FILE KID [--valid-for-days DAYS]\n       keyring-tool (validate)-(es256|rsa) FILE\n       keyring-tool (activate|retire)-(es256|rsa) FILE KID";
+    if args.len() < 2 {
+        return Err(usage.into());
     }
     let (action, algorithm) = args[0]
         .rsplit_once('-')
@@ -40,13 +38,26 @@ fn run() -> Result<(), Box<dyn Error>> {
     if algorithm != "es256" && algorithm != "rsa" {
         return Err("algorithm must be es256 or rsa".into());
     }
-    let needs_kid = action != "validate";
-    if args.len() != if needs_kid { 3 } else { 2 } {
-        return Err("this command has the wrong number of arguments".into());
-    }
+    let (kid, validity_days) = match action {
+        "validate" if args.len() == 2 => (None, None),
+        "activate" | "retire" if args.len() == 3 => (Some(args[2].as_str()), None),
+        "generate" | "add" if args.len() == 3 => (Some(args[2].as_str()), Some(90)),
+        "generate" | "add" if args.len() == 5 && args[3] == "--valid-for-days" => {
+            let days = args[4]
+                .parse::<u16>()
+                .ok()
+                .filter(|days| (1..=3_650).contains(days))
+                .ok_or("--valid-for-days must be an integer from 1 through 3650")?;
+            (Some(args[2].as_str()), Some(days))
+        }
+        "generate" | "validate" | "add" | "activate" | "retire" => {
+            return Err(usage.into());
+        }
+        _ => return Err("unknown command".into()),
+    };
     let path = Path::new(&args[1]);
-    if needs_kid {
-        validate_kid(&args[2])?;
+    if let Some(kid) = kid {
+        validate_kid(kid)?;
     }
     match action {
         "generate" => {
@@ -55,8 +66,12 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             let document = json!({
                 "version": version(algorithm),
-                "current_kid": args[2],
-                "keys": [new_key(algorithm, &args[2])?],
+                "current_kid": kid.ok_or("generate requires a key ID")?,
+                "keys": [new_key(
+                    algorithm,
+                    kid.ok_or("generate requires a key ID")?,
+                    validity_days.ok_or("generate requires a validity period")?,
+                )?],
             });
             write_private(path, &document, false)?;
         }
@@ -69,22 +84,27 @@ fn run() -> Result<(), Box<dyn Error>> {
             let keys = document["keys"]
                 .as_array_mut()
                 .ok_or("keys must be an array")?;
-            let exists = keys.iter().any(|key| key["kid"] == args[2]);
+            let kid = kid.ok_or("key operation requires a key ID")?;
+            let exists = keys.iter().any(|key| key["kid"] == kid);
             match action {
                 "add" => {
                     if exists {
                         return Err("key ID already exists".into());
                     }
-                    keys.push(new_key(algorithm, &args[2])?);
+                    keys.push(new_key(
+                        algorithm,
+                        kid,
+                        validity_days.ok_or("add requires a validity period")?,
+                    )?);
                 }
                 "activate" => {
                     if !exists {
                         return Err("key ID is not present".into());
                     }
-                    document["current_kid"] = Value::String(args[2].clone());
+                    document["current_kid"] = Value::String(kid.to_owned());
                 }
                 "retire" => {
-                    if document["current_kid"] == args[2] {
+                    if document["current_kid"] == kid {
                         return Err("cannot retire the current signing key".into());
                     }
                     if !exists {
@@ -93,7 +113,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     document["keys"]
                         .as_array_mut()
                         .ok_or("keys must be an array")?
-                        .retain(|key| key["kid"] != args[2]);
+                        .retain(|key| key["kid"] != kid);
                 }
                 _ => unreachable!(),
             }
@@ -125,10 +145,10 @@ fn validate_kid(kid: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn new_key(algorithm: &str, kid: &str) -> Result<Value, Box<dyn Error>> {
+fn new_key(algorithm: &str, kid: &str, validity_days: u16) -> Result<Value, Box<dyn Error>> {
     let now = Utc::now();
     let before = now - Duration::minutes(5);
-    let after = now + Duration::days(90);
+    let after = now + Duration::days(i64::from(validity_days));
     if algorithm == "es256" {
         let key = SecretKey::random(&mut OsRng);
         Ok(json!({

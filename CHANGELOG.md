@@ -9,6 +9,12 @@ signatures, attestations, SBOMs, and vulnerability evidence.
 
 ## [Unreleased]
 
+### Added
+
+- Added configurable key lifetimes to `keyring-tool`, runtime signing-window
+  enforcement, readiness failure ahead of ES256 or RSA key expiry, and
+  seconds-to-expiry gauges with alerting guidance.
+
 ### Changed
 
 - Advanced the application and chart development version to `0.7.1-dev`

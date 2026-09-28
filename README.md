@@ -64,6 +64,7 @@ provenance.
 | Workload exchange | Off by default; internal HTTPS port 8443; exact TokenReview audience and service-account policy; RS256 `openshell-workload-v1`. |
 | Browser HOP-1 | Off by default; requires workload exchange and a public Steward JWKS; see its [v1 contract](docs/browser-hop1-contract-v1.md). |
 | Public routes | `/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`, `/jwks.json`, and `/v1/exchange` only. The workload route is never public. |
+| Key expiry | Signing validity is checked on every use; readiness fails before expiry using a configurable threshold, with seconds-to-expiry gauges for ES256 and optional RSA keys. |
 
 The RFC 8414 and OpenID metadata endpoints return the same discovery contract:
 the exact issuer, JWKS URI, GitHub exchange endpoint, exact GitHub OIDC input

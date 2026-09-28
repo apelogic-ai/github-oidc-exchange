@@ -106,6 +106,14 @@ for document in README.md docs/installation.md docs/quickstart.md \
   charts/github-oidc-exchange/README.md; do
   grep -Fqi 'origin' "$document"
 done
+for expected in \
+  'KEY_EXPIRY_READINESS_THRESHOLD_SECONDS' \
+  'github_oidc_exchange_signing_key_seconds_until_expiry' \
+  'github_oidc_exchange_workload_signing_key_seconds_until_expiry'; do
+  grep -Fq "$expected" src/http.rs src/config.rs docs/installation.md \
+    charts/github-oidc-exchange/templates/deployment.yaml
+done
+grep -Fq -- '--valid-for-days' docs/installation.md src/bin/keyring-tool.rs
 
 for document in README.md docs/installation.md docs/integration.md \
   docs/consumer-contract-v1.md docs/upgrade-v0.7.0.md \

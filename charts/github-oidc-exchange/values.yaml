@@ -29,6 +29,8 @@ config:
   policyConfigMapKey: policy.json
   keyringSecretName: ""
   keyringSecretKey: keyring.json
+  # Readiness fails this many seconds before either active signing key expires.
+  keyExpiryReadinessThresholdSeconds: 604800
 
 rolloutRevisions:
   githubPolicy: ""

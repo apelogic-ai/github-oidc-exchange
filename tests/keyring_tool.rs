@@ -6,7 +6,7 @@ use std::{
     process::Command,
 };
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use github_oidc_exchange::keys::{KeyRing, RsaKeyRing};
 
 fn tool(args: &[&str]) -> std::process::Output {
@@ -48,6 +48,61 @@ fn generation_reports_a_missing_parent_directory_precisely() {
         String::from_utf8_lossy(&generated.stderr)
             .contains("keyring parent directory does not exist")
     );
+}
+
+#[test]
+fn generation_and_add_accept_a_bounded_validity_period() {
+    let dir = tempfile::tempdir().expect("private tempdir");
+    let path = dir.path().join("issuer.json");
+    let path = path.to_str().expect("utf8 path");
+
+    assert!(
+        tool(&["generate-es256", path, "initial", "--valid-for-days", "30",])
+            .status
+            .success()
+    );
+    assert!(
+        tool(&["add-es256", path, "next", "--valid-for-days", "45",])
+            .status
+            .success()
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&fs::read(path).expect("keyring file")).expect("keyring JSON");
+    for (kid, expected_days) in [("initial", 30), ("next", 45)] {
+        let key = document["keys"]
+            .as_array()
+            .expect("key array")
+            .iter()
+            .find(|key| key["kid"] == kid)
+            .expect("generated key");
+        let not_before = key["not_before"]
+            .as_str()
+            .expect("not_before")
+            .parse::<DateTime<Utc>>()
+            .expect("not_before timestamp");
+        let not_after = key["not_after"]
+            .as_str()
+            .expect("not_after")
+            .parse::<DateTime<Utc>>()
+            .expect("not_after timestamp");
+        let validity_days = (not_after - not_before).num_days();
+        assert!((i64::from(expected_days)..=i64::from(expected_days) + 1).contains(&validity_days));
+    }
+
+    for invalid_days in ["0", "3651", "not-a-number"] {
+        let invalid_path = dir.path().join(format!("invalid-{invalid_days}.json"));
+        assert!(
+            !tool(&[
+                "generate-es256",
+                invalid_path.to_str().expect("utf8 path"),
+                "invalid",
+                "--valid-for-days",
+                invalid_days,
+            ])
+            .status
+            .success()
+        );
+    }
 }
 
 #[test]

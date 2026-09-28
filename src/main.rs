@@ -36,7 +36,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
     let policy = Arc::new(policy);
-    let keys = Arc::new(KeyRing::load(&config.keyring_file, Utc::now())?);
+    let keys = Arc::new(KeyRing::load_with_readiness_threshold(
+        &config.keyring_file,
+        Utc::now(),
+        config.key_expiry_readiness_threshold,
+    )?);
     let ledger = Arc::new(KubernetesLeaseReplayLedger::in_cluster(
         config.replay_lease_namespace.clone(),
     )?);
@@ -53,9 +57,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         metrics: Arc::new(Metrics::default()),
     };
     if let Some(workload_config) = config.workload {
-        let workload_keys = Arc::new(RsaKeyRing::load(
+        let workload_keys = Arc::new(RsaKeyRing::load_with_readiness_threshold(
             &workload_config.rsa_keyring_file,
             Utc::now(),
+            config.key_expiry_readiness_threshold,
         )?);
         workload_keys.ensure_disjoint_from(&keys)?;
         let workload = WorkloadExchangeService {

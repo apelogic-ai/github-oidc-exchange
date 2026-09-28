@@ -656,6 +656,29 @@ fn keyring() -> Result<KeyRing, Box<dyn std::error::Error>> {
     Ok(KeyRing::load(file.path(), now)?)
 }
 
+fn keyring_near_expiry(
+    now: chrono::DateTime<Utc>,
+    readiness_threshold: Duration,
+) -> Result<KeyRing, Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let content = serde_json::json!({
+        "version": KEYRING_VERSION,
+        "current_kid": "expiring",
+        "keys": [{
+            "kid": "expiring",
+            "seed": STANDARD.encode([11_u8; 32]),
+            "not_before": (now - ChronoDuration::minutes(1)).to_rfc3339(),
+            "not_after": (now + ChronoDuration::minutes(10)).to_rfc3339()
+        }]
+    });
+    fs::write(file.path(), serde_json::to_vec(&content)?)?;
+    Ok(KeyRing::load_with_readiness_threshold(
+        file.path(),
+        now,
+        readiness_threshold,
+    )?)
+}
+
 fn workload_policy() -> WorkloadPolicy {
     WorkloadPolicy {
         version: WORKLOAD_POLICY_VERSION.to_owned(),
@@ -692,6 +715,31 @@ fn rsa_keyring_with_bits(bits: usize) -> Result<RsaKeyRing, Box<dyn std::error::
     });
     fs::write(file.path(), serde_json::to_vec(&content)?)?;
     Ok(RsaKeyRing::load(file.path(), now)?)
+}
+
+fn rsa_keyring_near_expiry(
+    now: chrono::DateTime<Utc>,
+    readiness_threshold: Duration,
+) -> Result<RsaKeyRing, Box<dyn std::error::Error>> {
+    let private = RsaPrivateKey::new(&mut thread_rng(), 3072)?;
+    let pem = private.to_pkcs8_pem(LineEnding::LF)?.to_string();
+    let file = NamedTempFile::new()?;
+    let content = serde_json::json!({
+        "version": RSA_KEYRING_VERSION,
+        "current_kid": "expiring-rsa",
+        "keys": [{
+            "kid": "expiring-rsa",
+            "private_key_pkcs8_pem": pem,
+            "not_before": (now - ChronoDuration::minutes(1)).to_rfc3339(),
+            "not_after": (now + ChronoDuration::minutes(10)).to_rfc3339()
+        }]
+    });
+    fs::write(file.path(), serde_json::to_vec(&content)?)?;
+    Ok(RsaKeyRing::load_with_readiness_threshold(
+        file.path(),
+        now,
+        readiness_threshold,
+    )?)
 }
 
 #[derive(Clone)]
@@ -1510,6 +1558,77 @@ fn keyring_requires_exact_seed_length_and_rejects_unknown_fields()
 }
 
 #[test]
+fn signing_key_expiry_is_checked_after_load_and_drives_readiness()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let now = Utc::now();
+    let keyring = keyring_near_expiry(now, Duration::from_secs(15 * 60))?;
+    assert_eq!(keyring.current_key_seconds_until_expiry(now), 10 * 60);
+    assert!(!keyring.is_ready_at(now));
+    assert!(
+        keyring
+            .sign_at(&serde_json::json!({"sub": "test"}), now)
+            .is_ok()
+    );
+    assert!(
+        keyring
+            .sign_at(
+                &serde_json::json!({"sub": "test"}),
+                now + ChronoDuration::minutes(10),
+            )
+            .is_err()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn readiness_and_metrics_expose_the_active_signing_key_expiry()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (_, decoding) = rsa_key()?;
+    let now = Utc::now();
+    let application = github_oidc_exchange::http::router(ExchangeService {
+        verifier: GitHubVerifier::with_test_key(
+            AUDIENCE.to_owned(),
+            "github-test-key".to_owned(),
+            decoding,
+        )
+        .await?,
+        policy: Arc::new(policy()),
+        ledger: Arc::new(TestReplayLedger::default()),
+        keys: Arc::new(keyring_near_expiry(now, Duration::from_secs(15 * 60))?),
+        issuer: "https://identity.example.invalid".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    });
+    let readiness = application
+        .clone()
+        .oneshot(Request::get("/readyz").body(Body::empty())?)
+        .await?;
+    assert_eq!(readiness.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let liveness = application
+        .clone()
+        .oneshot(Request::get("/healthz").body(Body::empty())?)
+        .await?;
+    assert_eq!(liveness.status(), StatusCode::NO_CONTENT);
+    let metrics = application
+        .oneshot(Request::get("/metrics").body(Body::empty())?)
+        .await?;
+    assert_eq!(metrics.status(), StatusCode::OK);
+    let body = String::from_utf8(metrics.into_body().collect().await?.to_bytes().to_vec())?;
+    let seconds = body
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("github_oidc_exchange_signing_key_seconds_until_expiry ")
+        })
+        .ok_or("missing key-expiry gauge")?
+        .parse::<u64>()?;
+    assert!((1..=600).contains(&seconds));
+    Ok(())
+}
+
+#[test]
 fn policy_file_rejects_unknown_fields() -> Result<(), Box<dyn std::error::Error>> {
     let mut content = serde_json::to_value(policy())?;
     content
@@ -1777,6 +1896,7 @@ fn workload_policy_is_exact_and_default_deny() -> Result<(), Box<dyn std::error:
 #[test]
 fn workload_rsa_keyring_requires_rsa_3072_and_publishes_overlap()
 -> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
     assert!(rsa_keyring_with_bits(2048).is_err());
     let keyring = rsa_keyring_with_bits(3072)?;
     let jwks: JwkSet = serde_json::from_value(serde_json::to_value(keyring.jwks())?)?;
@@ -1786,6 +1906,79 @@ fn workload_rsa_keyring_requires_rsa_3072_and_publishes_overlap()
             key.common.key_algorithm == Some(jsonwebtoken::jwk::KeyAlgorithm::RS256)
         })
     );
+    let now = Utc::now();
+    let expiring = rsa_keyring_near_expiry(now, Duration::from_secs(15 * 60))?;
+    assert_eq!(expiring.current_key_seconds_until_expiry(now), 10 * 60);
+    assert!(!expiring.is_ready_at(now));
+    assert!(
+        expiring
+            .sign_at(&serde_json::json!({"sub": "test"}), now)
+            .is_ok()
+    );
+    assert!(
+        expiring
+            .sign_at(
+                &serde_json::json!({"sub": "test"}),
+                now + ChronoDuration::minutes(10),
+            )
+            .is_err()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn workload_key_expiry_fails_both_readiness_surfaces_and_has_a_gauge()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (_, decoding) = rsa_key()?;
+    let github_service = ExchangeService {
+        verifier: GitHubVerifier::with_test_key(
+            AUDIENCE.to_owned(),
+            "github-test-key".to_owned(),
+            decoding,
+        )
+        .await?,
+        policy: Arc::new(policy()),
+        ledger: Arc::new(TestReplayLedger::default()),
+        keys: Arc::new(keyring()?),
+        issuer: "https://identity.example.invalid".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    };
+    let now = Utc::now();
+    let workload_service = WorkloadExchangeService {
+        reviewer: MockReviewer {
+            outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
+        },
+        policy: Arc::new(workload_policy()),
+        keys: Arc::new(rsa_keyring_near_expiry(now, Duration::from_secs(15 * 60))?),
+        issuer: "https://identity.example.invalid".to_owned(),
+        input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
+        output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(WorkloadMetrics::default()),
+    };
+    let (public_application, workload_application) =
+        separated_routers_with_workload(github_service, workload_service);
+    for application in [public_application.clone(), workload_application] {
+        let readiness = application
+            .oneshot(Request::get("/readyz").body(Body::empty())?)
+            .await?;
+        assert_eq!(readiness.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let metrics = public_application
+        .oneshot(Request::get("/metrics").body(Body::empty())?)
+        .await?;
+    let body = String::from_utf8(metrics.into_body().collect().await?.to_bytes().to_vec())?;
+    let seconds = body
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("github_oidc_exchange_workload_signing_key_seconds_until_expiry ")
+        })
+        .ok_or("missing workload key-expiry gauge")?
+        .parse::<u64>()?;
+    assert!((1..=600).contains(&seconds));
     Ok(())
 }
 
