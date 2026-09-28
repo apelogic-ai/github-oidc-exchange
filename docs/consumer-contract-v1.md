@@ -118,6 +118,9 @@ is not the supported handoff for a deployed issuer. Pin the discovered endpoint
 and audience explicitly.
 
 During key rotation, consumers accept all published overlapping JWKS `kid`s
-until the old 120-second token lifetime plus clock skew has elapsed. Refresh
-JWKS on an unknown `kid`; never disable signature, issuer, audience,
-algorithm, or contract-version verification.
+until the old 120-second token lifetime plus clock skew has elapsed. A
+consumer that fetches the issuer JWKS may refresh on an unknown `kid`. A
+consumer that reads a mounted or otherwise static JWKS cannot do that: its
+operator must publish the exported overlap set and reload every verifier
+before Identity activates the new signing key. Never disable signature,
+issuer, audience, algorithm, or contract-version verification.

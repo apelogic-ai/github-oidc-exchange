@@ -114,6 +114,11 @@ for expected in \
     charts/github-oidc-exchange/templates/deployment.yaml
 done
 grep -Fq -- '--valid-for-days' docs/installation.md src/bin/keyring-tool.rs
+grep -Fq 'export-jwks' docs/installation.md src/bin/keyring-tool.rs
+for expected in 'static verifier' 'mounted JWKS' 'before Identity activates' \
+  'Identity does not call'; do
+  grep -Fq "$expected" docs/installation.md docs/consumer-contract-v1.md
+done
 
 for document in README.md docs/installation.md docs/integration.md \
   docs/consumer-contract-v1.md docs/upgrade-v0.7.0.md \
