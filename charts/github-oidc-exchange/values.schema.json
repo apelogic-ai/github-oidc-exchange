@@ -3,7 +3,7 @@
   "title": "github-oidc-exchange chart values",
   "description": "Values for a fail-closed GitHub and Kubernetes workload OIDC exchange issuer.",
   "type": "object",
-  "required": ["replicaCount", "image", "serviceAccount", "config", "rolloutRevisions", "workloadExchange", "service", "networkPolicy", "resources"],
+  "required": ["replicaCount", "image", "serviceAccount", "config", "rolloutRevisions", "rolloutAutomation", "workloadExchange", "service", "networkPolicy", "resources"],
   "properties": {
     "replicaCount": {"type": "integer", "minimum": 2},
     "image": {
@@ -89,6 +89,21 @@
         "workloadTls": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"},
         "browserHop1Jwks": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"}
       }
+    },
+    "rolloutAutomation": {
+      "type": "object",
+      "required": ["reloader"],
+      "properties": {
+        "reloader": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": {"type": "boolean"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     },
     "workloadExchange": {
       "type": "object",

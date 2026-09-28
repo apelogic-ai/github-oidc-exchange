@@ -76,7 +76,18 @@ NodeLocal DNSCache CIDRs to `networkPolicy.dnsIpBlocks`. Use
 HTTPS proxy on a nonstandard port.
 
 Chart values contain object references only, never private key, policy, TLS,
-or registry credential contents. Projected inputs do not hot-reload. After a
-verified object change, bump only its corresponding `rolloutRevisions` value
-and wait for rollout. Preserve key overlap and both versioned policy objects
-through the rollback window.
+or registry credential contents. Projected inputs do not hot-reload. The
+controller-free default requires changing the corresponding
+`rolloutRevisions` value after a verified object update and waiting for the
+Deployment rollout.
+
+Clusters with an operator-managed
+[Stakater Reloader](https://github.com/stakater/Reloader) may instead set
+`rolloutAutomation.reloader.enabled=true`. The chart then annotates the
+Deployment with `configmap.reloader.stakater.com/reload` and
+`secret.reloader.stakater.com/reload`, listing the exact referenced object
+names. Changes to policy, signing keys, workload TLS, or optional browser JWKS
+then trigger a rolling restart. The chart does not install or grant RBAC to
+Reloader. Keep the explicit revisions for reviewed object-name or
+policy-contract switches, and preserve key overlap and both versioned policy
+objects through rollback.

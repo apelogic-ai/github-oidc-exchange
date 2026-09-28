@@ -31,6 +31,10 @@ rolloutRevisions:
   workloadRsaKeyring: ""
   workloadTls: ""
   browserHop1Jwks: ""
+rolloutAutomation:
+  reloader:
+    # Set true only when an operator-managed Stakater Reloader is installed.
+    enabled: false
 workloadExchange:
   enabled: false
   # Steward's controller projects apelogic-workload-exchange; keep empty when

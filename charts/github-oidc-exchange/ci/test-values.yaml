@@ -13,6 +13,10 @@ rolloutRevisions:
   githubKeyring: rev-1
   browserHop1Jwks: ""
 
+rolloutAutomation:
+  reloader:
+    enabled: false
+
 networkPolicy:
   ingressCidrs:
     - 10.0.0.0/16

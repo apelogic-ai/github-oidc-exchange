@@ -41,6 +41,11 @@ rolloutRevisions:
   githubPolicy: rev-1
   githubKeyring: rev-1
 
+rolloutAutomation:
+  reloader:
+    # Enable only after installing and governing Stakater Reloader cluster-wide.
+    enabled: false
+
 # Gateway API is preferred. The Gateway and its TLS policy are platform-owned;
 # this route owns only the four public Identity paths. Replace the parent ref
 # with the platform Gateway listener that accepts this namespace and hostname.

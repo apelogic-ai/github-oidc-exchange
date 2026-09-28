@@ -116,8 +116,36 @@ fi
 grep -Fq 'config.issuerUrl' "$scratch/path-issuer.err"
 helm template baseline "$chart" --namespace identity \
   -f "$chart/ci/test-values.yaml" >"$scratch/baseline.yaml"
+! grep -Fq 'reloader.stakater.com/reload' "$scratch/baseline.yaml"
+helm template reloader-baseline "$chart" --namespace identity \
+  -f "$chart/ci/test-values.yaml" \
+  --set rolloutAutomation.reloader.enabled=true >"$scratch/reloader-baseline.yaml"
+grep -Fq 'configmap.reloader.stakater.com/reload: "github-oidc-exchange-policy"' \
+  "$scratch/reloader-baseline.yaml"
+grep -Fq 'secret.reloader.stakater.com/reload: "github-oidc-exchange-keyring"' \
+  "$scratch/reloader-baseline.yaml"
 helm template workload "$chart" --namespace identity \
   -f "$chart/ci/workload-values.yaml" >"$scratch/workload.yaml"
+helm template reloader-workload "$chart" --namespace identity \
+  -f "$chart/ci/workload-values.yaml" \
+  --set rolloutAutomation.reloader.enabled=true >"$scratch/reloader-workload.yaml"
+grep -Fq 'configmap.reloader.stakater.com/reload: "github-oidc-exchange-policy,github-oidc-exchange-workload-policy"' \
+  "$scratch/reloader-workload.yaml"
+grep -Fq 'secret.reloader.stakater.com/reload: "github-oidc-exchange-keyring,github-oidc-exchange-workload-rsa-keyring,github-oidc-exchange-server-tls"' \
+  "$scratch/reloader-workload.yaml"
+
+helm template reloader-browser "$chart" --namespace identity \
+  -f "$chart/ci/workload-values.yaml" \
+  --set rolloutAutomation.reloader.enabled=true \
+  --set browserHop1.enabled=true \
+  --set-string browserHop1.stewardIssuer=https://steward.test.invalid \
+  --set-string browserHop1.assertionAudience=browser-hop1 \
+  --set-string browserHop1.outputAudience=https://mcp-gw.test.invalid \
+  --set-string browserHop1.stewardJwksConfigMapName=steward-public-jwks \
+  --set-string rolloutRevisions.browserHop1Jwks=rev-1 \
+  >"$scratch/reloader-browser.yaml"
+grep -Fq 'configmap.reloader.stakater.com/reload: "github-oidc-exchange-policy,github-oidc-exchange-workload-policy,steward-public-jwks"' \
+  "$scratch/reloader-browser.yaml"
 
 grep -Fq 'cidr: 0.0.0.0/0' "$scratch/baseline.yaml"
 grep -Fq 'cidr: ::/0' "$scratch/baseline.yaml"

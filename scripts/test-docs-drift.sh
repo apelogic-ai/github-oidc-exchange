@@ -48,6 +48,14 @@ for document in docs/installation.md charts/github-oidc-exchange/README.md; do
   grep -Fq 'networkPolicy.dnsIpBlocks' "$document"
   grep -Fq 'networkPolicy.extraEgress' "$document"
 done
+for expected in 'rolloutAutomation.reloader.enabled' \
+  'configmap.reloader.stakater.com/reload' \
+  'secret.reloader.stakater.com/reload'; do
+  grep -Fq "$expected" charts/github-oidc-exchange/templates/deployment.yaml \
+    docs/installation.md charts/github-oidc-exchange/README.md
+done
+grep -Fq 'githubPolicy: rev-1' charts/github-oidc-exchange/values.yaml
+grep -Fq 'githubKeyring: rev-1' charts/github-oidc-exchange/values.yaml
 
 v5_policy="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
 v6_policy="$(sed -n 's/^pub const SOURCE_AUTH_POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"

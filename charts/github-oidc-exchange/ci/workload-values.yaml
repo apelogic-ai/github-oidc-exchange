@@ -15,6 +15,10 @@ rolloutRevisions:
   workloadRsaKeyring: rev-1
   workloadTls: rev-1
 
+rolloutAutomation:
+  reloader:
+    enabled: false
+
 workloadExchange:
   enabled: true
   inputAudience: example-workload-exchange

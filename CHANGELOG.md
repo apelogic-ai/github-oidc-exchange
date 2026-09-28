@@ -9,6 +9,16 @@ signatures, and public-registry attestations.
 
 ## [Unreleased]
 
+### Added
+
+- Added opt-in named ConfigMap/Secret rollout automation for clusters with an
+  operator-managed Stakater Reloader controller.
+
+### Fixed
+
+- Made the baseline rollout revision defaults schema-valid while preserving
+  explicit revisions as the controller-free configuration rollout mechanism.
+
 ### Changed
 
 - Advanced the application and chart development version to `0.7.3-dev`

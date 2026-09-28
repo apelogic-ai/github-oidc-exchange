@@ -33,12 +33,20 @@ config:
   keyExpiryReadinessThresholdSeconds: 604800
 
 rolloutRevisions:
-  githubPolicy: ""
-  githubKeyring: ""
+  # Required controller-free rollout triggers. Change only the entry whose
+  # referenced object changed, unless rolloutAutomation.reloader is enabled.
+  githubPolicy: rev-1
+  githubKeyring: rev-1
   workloadPolicy: ""
   workloadRsaKeyring: ""
   workloadTls: ""
   browserHop1Jwks: ""
+
+rolloutAutomation:
+  reloader:
+    # Requires an operator-managed Stakater Reloader controller that recognizes
+    # the standard named ConfigMap and Secret annotations.
+    enabled: false
 
 workloadExchange:
   enabled: false

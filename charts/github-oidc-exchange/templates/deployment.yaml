@@ -1,10 +1,25 @@
 {{- include "github-oidc-exchange.validateImageDigest" . -}}
+{{- $reloaderConfigMaps := list .Values.config.policyConfigMapName -}}
+{{- $reloaderSecrets := list .Values.config.keyringSecretName -}}
+{{- if .Values.workloadExchange.enabled -}}
+{{- $reloaderConfigMaps = append $reloaderConfigMaps .Values.workloadExchange.policyConfigMapName -}}
+{{- $reloaderSecrets = append $reloaderSecrets .Values.workloadExchange.rsaKeyringSecretName -}}
+{{- $reloaderSecrets = append $reloaderSecrets .Values.workloadExchange.tls.secretName -}}
+{{- end -}}
+{{- if .Values.browserHop1.enabled -}}
+{{- $reloaderConfigMaps = append $reloaderConfigMaps .Values.browserHop1.stewardJwksConfigMapName -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "github-oidc-exchange.name" . }}
   labels:
     {{- include "github-oidc-exchange.labels" . | nindent 4 }}
+  {{- if .Values.rolloutAutomation.reloader.enabled }}
+  annotations:
+    configmap.reloader.stakater.com/reload: {{ join "," $reloaderConfigMaps | quote }}
+    secret.reloader.stakater.com/reload: {{ join "," $reloaderSecrets | quote }}
+  {{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
   strategy:

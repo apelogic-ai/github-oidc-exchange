@@ -372,6 +372,35 @@ config:
 The chart passes the selected contract through `EXPECTED_POLICY_VERSION` and
 the process refuses to start if the mounted document has another version.
 
+### Choose one projected-input rollout mechanism
+
+Identity validates policy, keyring, TLS, and optional verifier files only at
+process startup. Kubernetes updates projected files in existing Pods without
+restarting the process, so changing an external ConfigMap or Secret must also
+trigger a complete Deployment rollout. Choose one mechanism:
+
+- Controller-free default: keep `rolloutAutomation.reloader.enabled=false`,
+  change only the matching `rolloutRevisions` value in the same reviewed
+  change as the external object, apply the Helm release, and wait for every
+  replica.
+- Operator-managed automation: install and govern
+  [Stakater Reloader](https://github.com/stakater/Reloader), configure its
+  annotation keys to their standard names, and set
+  `rolloutAutomation.reloader.enabled=true`. The chart adds named watch
+  annotations `configmap.reloader.stakater.com/reload` and
+  `secret.reloader.stakater.com/reload` for exactly the mounted policy
+  ConfigMaps, keyring/TLS Secrets, and optional browser JWKS ConfigMap.
+  Reloader then initiates the rolling restart when one changes.
+
+The chart does not install Reloader or grant it cluster RBAC. In GitOps
+environments, use Reloader's annotations rollout strategy and verify that the
+controller mutation is not reverted before new Pods become ready. Helm
+`lookup` content hashes are intentionally not used: these objects are
+externally owned, and cluster-dependent rendering would make offline and Flux
+output disagree. Even with automation enabled, retain explicit revision
+values for reviewed object-name or policy-contract switches and always wait
+for `kubectl rollout status` before acceptance.
+
 ```sh
 umask 077
 cp charts/github-oidc-exchange/values.example.yaml ./private/values.yaml

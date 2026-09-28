@@ -204,6 +204,17 @@ for annotation in github-policy github-keyring workload-policy workload-tls; do
   [[ "$original" == "$changed" ]]
 done
 
+helm template reloader "$render_dir/chart" \
+  --namespace github-oidc-exchange \
+  -f charts/github-oidc-exchange/ci/workload-values.yaml \
+  --set rolloutAutomation.reloader.enabled=true \
+  >"$render_dir/reloader.yaml"
+for expected in \
+  'configmap.reloader.stakater.com/reload: "github-oidc-exchange-policy,github-oidc-exchange-workload-policy"' \
+  'secret.reloader.stakater.com/reload: "github-oidc-exchange-keyring,github-oidc-exchange-workload-rsa-keyring,github-oidc-exchange-server-tls"'; do
+  grep -Fq -- "$expected" "$render_dir/reloader.yaml"
+done
+
 if helm template missing-workload-checksum "$render_dir/chart" \
   --namespace github-oidc-exchange \
   -f charts/github-oidc-exchange/ci/workload-values.yaml \
