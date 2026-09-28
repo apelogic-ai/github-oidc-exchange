@@ -1,7 +1,7 @@
-# Installation guide — github-oidc-exchange 0.6.0
+# Installation guide — github-oidc-exchange 0.7.0
 
-This is the canonical operator guide for application **0.6.0**, Helm chart
-**0.6.0**, and the [Identity consumer contracts](consumer-contract-v1.md).
+This is the canonical operator guide for application **0.7.0**, Helm chart
+**0.7.0**, and the [Identity consumer contracts](consumer-contract-v1.md).
 It installs Identity in an operator-owned Kubernetes cluster from fork-owned
 artifacts. No ApeLogic account, cloud credential, external secret controller,
 GitHub OAuth App, or database is required. The baseline exchanges GitHub
@@ -17,11 +17,11 @@ the [baseline quickstart](quickstart.md), then return here for operations and
 optional features. Use the [integration guide](integration.md) for claim
 observation, exchange smoke, and Steward integration.
 
-Application 0.6.0 supports `github-oidc-exchange.apelogic.io/v5` and
+Application 0.7.0 supports `github-oidc-exchange.apelogic.io/v5` and
 `github-oidc-exchange.apelogic.io/v6`. The chart defaults to v5 and an existing
 v5 ConfigMap, preserving `steward-task-v2` behavior. Policy v6 is an explicit
 opt-in that issues `steward-task-v3`; activate it with a separately named
-ConfigMap using the [0.6.0 upgrade procedure](upgrade-v0.6.0.md).
+ConfigMap using the [0.7.0 upgrade procedure](upgrade-v0.7.0.md).
 Existing older installations must first follow their version-specific guides.
 
 ## Prerequisites and decisions
@@ -98,7 +98,7 @@ pulls are intended; verify visibility separately. For another operator-owned
 OCI registry, authenticate with that registry's own account and run:
 
 ```sh
-export IDENTITY_VERSION=0.6.0
+export IDENTITY_VERSION=0.7.0
 export IDENTITY_IMAGE_REPO=registry.example.org/team/github-oidc-exchange
 export IDENTITY_CHART_REPO=registry.example.org/team/charts/github-oidc-exchange
 cargo fmt --all -- --check
@@ -381,13 +381,13 @@ helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
 ```
 
 Validate discovery/JWKS and a fresh exchange again. There is no database
-migration; keep the same namespace to preserve replay Leases. A 0.6.0
+migration; keep the same namespace to preserve replay Leases. A 0.7.0
 application upgrade that retains v5 is safe to roll back normally. After v6
 activation, an older binary cannot read v6: roll back the chart/application
 and `policyContract`/`policyConfigMapName` together to the retained v5 object.
 Never perform an image-only rollback while v6 remains mounted. The exact
 preflight, activation, and rollback sequence is in the
-[0.6.0 upgrade guide](upgrade-v0.6.0.md).
+[0.7.0 upgrade guide](upgrade-v0.7.0.md).
 
 ## 5. Enable optional workload exchange
 

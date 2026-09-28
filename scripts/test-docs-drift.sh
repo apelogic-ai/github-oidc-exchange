@@ -8,7 +8,7 @@ lock_version="$(awk '
 ' Cargo.lock)"
 chart_version="$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)"
 app_version="$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc-exchange/Chart.yaml | head -1)"
-[[ "$version" == "0.6.0" ]]
+[[ "$version" == "0.7.0" ]]
 [[ "$lock_version" == "$version" ]]
 [[ "$chart_version" == "$version" ]]
 [[ "$app_version" == "$version" ]]
@@ -20,9 +20,9 @@ current_docs=(
   docs/quickstart.md
   docs/integration.md
   docs/consumer-contract-v1.md
-  docs/upgrade-v0.6.0.md
+  docs/upgrade-v0.7.0.md
   docs/source-authentication-documentation-inventory.md
-  docs/releases/v0.6.0.md
+  docs/releases/v0.7.0.md
   charts/github-oidc-exchange/README.md
   charts/github-oidc-exchange/examples/production-values.yaml
 )
@@ -95,8 +95,8 @@ for document in README.md docs/installation.md docs/quickstart.md \
 done
 
 for document in README.md docs/installation.md docs/integration.md \
-  docs/consumer-contract-v1.md docs/upgrade-v0.6.0.md \
-  docs/releases/v0.6.0.md charts/github-oidc-exchange/README.md; do
+  docs/consumer-contract-v1.md docs/upgrade-v0.7.0.md \
+  docs/releases/v0.7.0.md charts/github-oidc-exchange/README.md; do
   grep -Fq "$v5_policy" "$document"
   grep -Fq "$v6_policy" "$document"
   grep -Fq "$v2_identity" "$document"
@@ -128,7 +128,7 @@ for phrase in \
   'Steward performs any user binding' \
   'Task authority'; do
   grep -Fqi "$phrase" README.md docs/installation.md docs/integration.md \
-    docs/consumer-contract-v1.md docs/upgrade-v0.6.0.md
+    docs/consumer-contract-v1.md docs/upgrade-v0.7.0.md
 done
 
 grep -Fq 'policyContract: github-oidc-exchange.apelogic.io/v5' \
@@ -137,8 +137,8 @@ grep -Fq 'policyContract: github-oidc-exchange.apelogic.io/v5' \
   charts/github-oidc-exchange/values.example.yaml
 grep -Fq 'name: EXPECTED_POLICY_VERSION' \
   charts/github-oidc-exchange/templates/deployment.yaml
-grep -Fq 'github-oidc-exchange-policy` (v5)' docs/upgrade-v0.6.0.md
-grep -Fq 'github-oidc-exchange-policy-v6' docs/upgrade-v0.6.0.md
+grep -Fq 'github-oidc-exchange-policy` (v5)' docs/upgrade-v0.7.0.md
+grep -Fq 'github-oidc-exchange-policy-v6' docs/upgrade-v0.7.0.md
 
 release_notes="docs/releases/v$version.md"
 for expected in \
@@ -158,16 +158,17 @@ for expected in \
   'ecr_chart' \
   '/README.md)' \
   '/charts/github-oidc-exchange/values.schema.json)' \
-  '../upgrade-v0.6.0.md)'; do
+  '../upgrade-v0.7.0.md)'; do
   grep -Fq "$expected" "$release_notes"
 done
 
 # Historical guides keep their historical contract and point to current docs.
 for document in docs/upgrade-v0.5.0.md docs/upgrade-v0.5.1.md \
-  docs/releases/v0.5.0.md docs/releases/v0.5.1.md; do
+  docs/upgrade-v0.6.0.md docs/releases/v0.5.0.md \
+  docs/releases/v0.5.1.md docs/releases/v0.6.0.md; do
   grep -Fq 'Historical' "$document"
   grep -Fq 'consumer-contract-v1.md' "$document" || \
-    grep -Fq 'upgrade-v0.6.0.md' "$document"
+    grep -Fq 'upgrade-v0.7.0.md' "$document"
 done
 
 # Current relative Markdown links must resolve. URL, mail, and page-only links

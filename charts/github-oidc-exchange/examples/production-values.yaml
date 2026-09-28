@@ -1,6 +1,6 @@
 # This is a renderable shape example, not an install profile. For a real
 # deployment, start with values.example.yaml and the baseline quickstart.
-# It is validated against chart/application 0.6.0.
+# It is validated against chart/application 0.7.0.
 # If you copy this file into a deployment-owned repository, replace every
 # example.invalid value, object reference, digest, CIDR, revision, pull Secret,
 # and Gateway reference. It cannot be a working issuer as-is.

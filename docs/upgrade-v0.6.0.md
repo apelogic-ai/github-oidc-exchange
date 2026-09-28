@@ -1,5 +1,10 @@
 # Upgrade and v6 activation — 0.6.0
 
+> Historical guide for the 0.6.0 boundary. For current 0.7.0 installation,
+> policy selection, discovery, and rollback, use the
+> [installation guide](installation.md) and
+> [0.7.0 upgrade guide](upgrade-v0.7.0.md).
+
 Application/chart 0.6.0 adds an opt-in source-authentication policy v6 and
 `steward-task-v3` while preserving policy v5 and `steward-task-v2` unchanged.
 This guide separates the behavior-preserving application upgrade from the
