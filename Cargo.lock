@@ -640,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "github-oidc-exchange"
-version = "0.7.2-dev"
+version = "0.7.2"
 dependencies = [
  "axum",
  "axum-server",

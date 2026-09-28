@@ -1,6 +1,6 @@
 # Identity consumer contracts
 
-Status: released with application/chart **0.7.1**. This document defines the
+Status: released with application/chart **0.7.2**. This document defines the
 normative GitHub exchange protocol and the two supported Steward token
 contracts. It does not deploy a consumer. See the
 [integration guide](integration.md) for end-to-end examples.
@@ -9,8 +9,10 @@ contracts. It does not deploy a consumer. See the
 
 | Application/chart | Selected policy | Output contract | Status |
 | --- | --- | --- | --- |
-| 0.7.1 / 0.7.1 | `github-oidc-exchange.apelogic.io/v5` | `steward-task-v2` | Default; behavior and token claims preserved |
-| 0.7.1 / 0.7.1 | `github-oidc-exchange.apelogic.io/v6` | `steward-task-v3` | Explicit opt-in |
+| 0.7.2 / 0.7.2 | `github-oidc-exchange.apelogic.io/v5` | `steward-task-v2` | Default; behavior and token claims preserved |
+| 0.7.2 / 0.7.2 | `github-oidc-exchange.apelogic.io/v6` | `steward-task-v3` | Explicit opt-in |
+| 0.7.1 / 0.7.1 | v5 | v2 | Historical pair; same runtime token contracts |
+| 0.7.1 / 0.7.1 | v6 | v3 | Historical pair; same runtime token contracts |
 | 0.7.0 / 0.7.0 | v5 | v2 | Historical pair; RFC 8414 and OpenID discovery |
 | 0.7.0 / 0.7.0 | v6 | v3 | Historical pair; RFC 8414 and OpenID discovery |
 | 0.6.0 / 0.6.0 | v5 | v2 | Historical pair; OpenID discovery only |
@@ -19,7 +21,7 @@ contracts. It does not deploy a consumer. See the
 
 Do not combine an older application with v6. Activation and rollback use the
 application/chart revision and policy reference as one unit, with distinct v5
-and v6 ConfigMaps. See the [0.7.1 upgrade guide](upgrade-v0.7.1.md).
+and v6 ConfigMaps. See the [0.7.2 upgrade guide](upgrade-v0.7.2.md).
 
 ## Common protocol
 
@@ -106,7 +108,7 @@ The internal workload endpoint is
 `POST https://{service}.{namespace}.svc.cluster.local:8443/v1/workload/exchange`.
 It uses Kubernetes TokenReview with an exact configured input audience and
 issues RS256 `openshell-workload-v1` tokens. It is never routed publicly and
-is unchanged in 0.7.1. The standard Steward/OpenShell values and exact
+is unchanged in 0.7.2. The standard Steward/OpenShell values and exact
 cross-product joins are documented in the
 [workload-exchange pairing guide](steward-openshell-workload-pairing.md).
 
