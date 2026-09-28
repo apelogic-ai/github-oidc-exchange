@@ -60,6 +60,11 @@ networkPolicy:
   # cluster. Do not use 0.0.0.0/0 for an identity issuer.
   ingressCidrs:
     - 10.0.0.0/16
+  # Keep both ports unless the cluster API endpoint contract proves a narrower
+  # set. Include pre- and post-DNAT endpoint CIDRs when narrowing the defaults.
+  apiServerPorts:
+    - 443
+    - 6443
 
 resources:
   requests:

@@ -16,6 +16,14 @@ signatures, and public-registry attestations.
 - Updated CI fixtures and chart/release validation to use the published 0.7.2
   multi-platform image digest.
 
+### Fixed
+
+- Made Kubernetes API-server egress ports and CIDRs configurable, allowing TCP
+  443 and 6443 plus IPv4 and IPv6 by default, with explicit NodeLocal DNSCache
+  and additional proxy-egress controls.
+- Added a Kubernetes 1.36 NetworkPolicy regression that proves Lease traffic
+  reaches an API server after Service DNAT.
+
 ## [0.7.2] - 2026-09-28
 
 ### Changed

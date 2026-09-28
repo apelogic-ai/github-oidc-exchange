@@ -43,6 +43,10 @@ grep -Fq 'release-manifest.json' "$production_example"
 for document in docs/installation.md charts/github-oidc-exchange/README.md; do
   grep -Fq 'networkPolicy.metricsNamespaceSelector' "$document"
   grep -Fq 'networkPolicy.metricsPodSelector' "$document"
+  grep -Fq 'networkPolicy.apiServerCidrs' "$document"
+  grep -Fq 'networkPolicy.apiServerPorts' "$document"
+  grep -Fq 'networkPolicy.dnsIpBlocks' "$document"
+  grep -Fq 'networkPolicy.extraEgress' "$document"
 done
 
 v5_policy="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"

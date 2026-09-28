@@ -66,6 +66,15 @@ Steward JWKS ConfigMap.
 with the public exchange handler, so select only the trusted monitoring Pods;
 the chart rejects selectors that would admit every namespace or Pod.
 
+The default egress policy is dual-stack. It permits HTTPS on TCP 443 and
+Kubernetes API access on TCP 443 and 6443 through
+`networkPolicy.httpsEgressCidrs`, `networkPolicy.apiServerCidrs`, and
+`networkPolicy.apiServerPorts`. Keep both API-server ports unless the cluster's
+pre- and post-DNAT endpoint contract proves a narrower set. Add literal
+NodeLocal DNSCache CIDRs to `networkPolicy.dnsIpBlocks`. Use
+`networkPolicy.extraEgress` for complete, narrowly scoped rules such as an
+HTTPS proxy on a nonstandard port.
+
 Chart values contain object references only, never private key, policy, TLS,
 or registry credential contents. Projected inputs do not hot-reload. After a
 verified object change, bump only its corresponding `rolloutRevisions` value

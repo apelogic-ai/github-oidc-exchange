@@ -42,6 +42,15 @@ When enabling `serviceMonitor`, set both
 trusted monitoring Pods. Metrics share port 8080 with the GitHub exchange, so
 the chart rejects empty selectors that would admit every namespace or Pod.
 
+The default egress policy permits dual-stack HTTPS on TCP 443 and Kubernetes
+API access on TCP 443 and 6443. Some CNIs enforce policy before Service DNAT;
+others enforce it against the translated API-server endpoint. When tightening
+`networkPolicy.apiServerCidrs`, include every address visible in both cases and
+retain every endpoint port in `networkPolicy.apiServerPorts`. Configure
+literal NodeLocal DNSCache addresses through `networkPolicy.dnsIpBlocks`.
+Nonstandard proxy destinations require complete, narrow rules in
+`networkPolicy.extraEgress`; do not place proxy credentials in chart values.
+
 Use an explicit kubeconfig and context for **every** command; do not use an
 ambient context. In the examples below choose a real, isolated target:
 

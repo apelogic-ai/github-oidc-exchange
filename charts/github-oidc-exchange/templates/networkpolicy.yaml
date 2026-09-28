@@ -52,15 +52,34 @@ spec:
           podSelector:
             matchLabels:
               {{- toYaml .Values.networkPolicy.dnsPodSelector | nindent 14 }}
+        {{- range .Values.networkPolicy.dnsIpBlocks }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
       ports:
         - port: 53
           protocol: UDP
         - port: 53
           protocol: TCP
     - to:
+        {{- range .Values.networkPolicy.httpsEgressCidrs }}
         - ipBlock:
-            cidr: 0.0.0.0/0
+            cidr: {{ . }}
+        {{- end }}
       ports:
         - port: 443
           protocol: TCP
+    - to:
+        {{- range .Values.networkPolicy.apiServerCidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        {{- range .Values.networkPolicy.apiServerPorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 {{- end }}

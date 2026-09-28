@@ -88,6 +88,17 @@ networkPolicy:
     kubernetes.io/metadata.name: kube-system
   dnsPodSelector:
     k8s-app: kube-dns
+  dnsIpBlocks: [] # add literal NodeLocal DNSCache CIDRs when used
+  httpsEgressCidrs:
+    - 0.0.0.0/0
+    - ::/0
+  apiServerCidrs:
+    - 0.0.0.0/0 # narrow to pre- and post-DNAT API-server CIDRs when known
+    - ::/0
+  apiServerPorts:
+    - 443
+    - 6443
+  extraEgress: [] # complete rules for explicit proxies or other destinations
   metricsNamespaceSelector: {} # mandatory nonempty when serviceMonitor.enabled=true
   metricsPodSelector: {} # mandatory nonempty when serviceMonitor.enabled=true
 resources:
