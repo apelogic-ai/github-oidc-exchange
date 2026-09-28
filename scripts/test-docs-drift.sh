@@ -34,6 +34,10 @@ production_example=charts/github-oidc-exchange/examples/production-values.yaml
 grep -Fq 'repository: replace-with-release-image-repository' "$production_example"
 grep -Fq 'digest: replace-with-release-image-digest' "$production_example"
 grep -Fq 'release-manifest.json' "$production_example"
+for document in docs/installation.md charts/github-oidc-exchange/README.md; do
+  grep -Fq 'networkPolicy.metricsNamespaceSelector' "$document"
+  grep -Fq 'networkPolicy.metricsPodSelector' "$document"
+done
 
 v5_policy="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
 v6_policy="$(sed -n 's/^pub const SOURCE_AUTH_POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
