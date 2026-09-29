@@ -99,6 +99,7 @@ import os
 import ssl
 import sys
 import threading
+from urllib.parse import parse_qs, urlsplit
 
 diagnostics = sys.argv[3]
 coordination = sys.argv[4]
@@ -120,6 +121,27 @@ class BaseHandler(BaseHTTPRequestHandler):
         pass
 
 class TokenReviewHandler(BaseHandler):
+    def do_GET(self):
+        request_url = urlsplit(self.path)
+        query = parse_qs(request_url.query, keep_blank_values=True)
+        checks = {
+            "path": request_url.path == "/apis/coordination.k8s.io/v1/namespaces/smoke/leases",
+            "authorization": self.headers.get("authorization") == "Bearer projected-service-account-token",
+            "label_selector": query.get("labelSelector") == ["github-oidc-exchange.apelogic.io/replay-ledger=v1"],
+            "limit": query.get("limit") == ["50"],
+        }
+        record("lease readiness request " + " ".join(f"{name}={str(value).lower()}" for name, value in checks.items()))
+        if not all(checks.values()):
+            self.send_error(400)
+            return
+        self.reply({
+            "apiVersion": "coordination.k8s.io/v1",
+            "kind": "LeaseList",
+            "metadata": {"continue": ""},
+            "items": [],
+        })
+        record("lease readiness response available=true")
+
     def do_POST(self):
         length = int(self.headers.get("content-length", "0"))
         request = json.loads(self.rfile.read(length))
