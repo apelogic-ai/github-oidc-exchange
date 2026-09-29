@@ -1,4 +1,4 @@
-# github-oidc-exchange Helm chart 0.7.3
+# github-oidc-exchange Helm chart 0.7.4
 
 Read the [installation guide](../../docs/installation.md) before deploying.
 The [quickstart](../../docs/quickstart.md) covers the default v5 path; the
@@ -8,7 +8,7 @@ token verification.
 
 ## GitHub policy selection
 
-Chart/application 0.7.3 supports both policies:
+Chart/application 0.7.4 supports both policies:
 
 | `config.policyContract` | Policy object | Output |
 | --- | --- | --- |
@@ -21,7 +21,7 @@ match. An application upgrade with the default and existing v5 ConfigMap is
 behavior-preserving. Never modify the v5 object to activate v6. Create a
 separate v6 ConfigMap, change `policyContract`, `policyConfigMapName`, and
 `rolloutRevisions.githubPolicy` in one Helm revision. Roll back that Helm
-revision as a unit. See the [0.7.3 upgrade guide](../../docs/upgrade-v0.7.3.md).
+revision as a unit. See the [0.7.4 upgrade guide](../../docs/upgrade-v0.7.4.md).
 
 The chart deliberately fails validation until the operator supplies an
 immutable image digest, HTTPS issuer, dedicated GitHub OIDC input audience,
@@ -73,7 +73,9 @@ Kubernetes API access on TCP 443 and 6443 through
 pre- and post-DNAT endpoint contract proves a narrower set. Add literal
 NodeLocal DNSCache CIDRs to `networkPolicy.dnsIpBlocks`. Use
 `networkPolicy.extraEgress` for complete, narrowly scoped rules such as an
-HTTPS proxy on a nonstandard port.
+HTTPS proxy on a nonstandard port. The configured DNS selector/IP peers are
+also admitted for reply traffic without a destination-port restriction because
+DNS replies target ephemeral client ports on CNIs that do not retain state.
 
 Chart values contain object references only, never private key, policy, TLS,
 or registry credential contents. Projected inputs do not hot-reload. The

@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-target=scripts/smoke-release-container.sh
-ci=.github/workflows/ci.yml
-release=.github/workflows/release.yml
+if ((BASH_VERSINFO[0] < 5)); then
+  printf 'validate-runtime-smoke.sh requires Bash 5 or newer (found %s)\n' \
+    "$BASH_VERSION" >&2
+  exit 2
+fi
+
+target=${SMOKE_TARGET:-scripts/smoke-release-container.sh}
+ci=${CI_WORKFLOW:-.github/workflows/ci.yml}
+release=${RELEASE_WORKFLOW:-.github/workflows/release.yml}
 
 first_main_statement="$(awk '/^async fn main\(\)/ { getline; sub(/^[[:space:]]+/, ""); print; exit }' src/main.rs)"
 [[ "$first_main_statement" == 'rustls::crypto::aws_lc_rs::default_provider()' ]]
@@ -46,7 +52,16 @@ grep -qF 'SMOKE_PLATFORM=linux/amd64 bash scripts/smoke-release-container.sh "$I
 grep -qF 'SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@$IMAGE_DIGEST"' "$release"
 
 line_number() {
-  grep -n -m1 -F "$2" "$1" | cut -d: -f1
+  local file=$1
+  local anchor=$2
+  local result
+
+  result="$(grep -n -m1 -F "$anchor" "$file" | cut -d: -f1 || true)"
+  if [[ -z "$result" ]]; then
+    printf "%s: anchor '%s' not found\n" "$file" "$anchor" >&2
+    return 1
+  fi
+  printf '%s\n' "$result"
 }
 
 ci_contract="$(line_number "$ci" 'bash scripts/validate-runtime-smoke.sh')"

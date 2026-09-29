@@ -29,7 +29,8 @@ cleanup() {
 trap cleanup EXIT
 
 probe_api_server() {
-  python3 - "$kubeconfig" "$namespace" "$api_server_service_ip" <<'PY'
+  local endpoint=${1:-$api_server_service_ip}
+  python3 - "$kubeconfig" "$namespace" "$endpoint" <<'PY'
 import subprocess
 import sys
 
@@ -149,6 +150,20 @@ for _ in $(seq 1 12); do
 done
 if [[ "${api_server_reachable:-0}" != 1 ]]; then
   printf 'default policy did not reach the post-DNAT API-server endpoint on 6443\n' >&2
+  exit 1
+fi
+
+# Exercise the same API path by Service DNS name. On kind/Kubernetes 1.36 this
+# regresses if the ingress half of the policy drops DNS replies.
+for _ in $(seq 1 12); do
+  if probe_api_server kubernetes.default.svc.cluster.local; then
+    dns_api_server_reachable=1
+    break
+  fi
+  sleep 1
+done
+if [[ "${dns_api_server_reachable:-0}" != 1 ]]; then
+  printf 'default policy did not admit DNS replies for the Kubernetes Service name\n' >&2
   exit 1
 fi
 

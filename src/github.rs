@@ -54,8 +54,17 @@ pub enum Audience {
 pub enum VerifyError {
     #[error("assertion is invalid")]
     Invalid,
-    #[error("GitHub signing keys are unavailable")]
-    KeysUnavailable,
+    #[error("GitHub signing keys are unavailable while {stage}: {detail}")]
+    KeysUnavailable { stage: &'static str, detail: String },
+}
+
+impl VerifyError {
+    fn keys_unavailable(stage: &'static str, detail: impl std::fmt::Display) -> Self {
+        Self::KeysUnavailable {
+            stage,
+            detail: detail.to_string(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -89,7 +98,9 @@ impl GitHubVerifier {
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(5))
             .build()
-            .map_err(|_| VerifyError::KeysUnavailable)?;
+            .map_err(|error| {
+                VerifyError::keys_unavailable("initializing the JWKS HTTP client", error)
+            })?;
         Ok(Self {
             audience,
             client,
@@ -111,6 +122,14 @@ impl GitHubVerifier {
         verifier.key_source = KeySource::Injected;
         verifier.cache.write().await.keys.insert(kid, key);
         verifier.cache.write().await.fetched_at = Utc::now().timestamp();
+        Ok(verifier)
+    }
+
+    #[cfg(feature = "test-support")]
+    #[doc = "Constructs a verifier with an explicit JWKS URL for failure-path tests."]
+    pub fn with_test_jwks_url(audience: String, jwks_url: String) -> Result<Self, VerifyError> {
+        let mut verifier = Self::new(audience)?;
+        verifier.jwks_url = jwks_url;
         Ok(verifier)
     }
 
@@ -210,7 +229,10 @@ impl GitHubVerifier {
         #[cfg(feature = "test-support")]
         if self.key_source == KeySource::Injected {
             return if self.cache.read().await.keys.is_empty() {
-                Err(VerifyError::KeysUnavailable)
+                Err(VerifyError::keys_unavailable(
+                    "reading the injected test key cache",
+                    "the cache contains no signing keys",
+                ))
             } else {
                 Ok(())
             };
@@ -220,13 +242,15 @@ impl GitHubVerifier {
             .get(&self.jwks_url)
             .send()
             .await
-            .map_err(|_| VerifyError::KeysUnavailable)?
+            .map_err(|error| VerifyError::keys_unavailable("fetching the GitHub JWKS", error))?
             .error_for_status()
-            .map_err(|_| VerifyError::KeysUnavailable)?;
+            .map_err(|error| {
+                VerifyError::keys_unavailable("checking the GitHub JWKS HTTP status", error)
+            })?;
         let document: JwkSet = response
             .json()
             .await
-            .map_err(|_| VerifyError::KeysUnavailable)?;
+            .map_err(|error| VerifyError::keys_unavailable("decoding the GitHub JWKS", error))?;
         let mut keys = HashMap::new();
         for jwk in document.keys {
             let Some(kid) = jwk.common.key_id.clone() else {
@@ -243,7 +267,10 @@ impl GitHubVerifier {
             }
         }
         if keys.is_empty() {
-            return Err(VerifyError::KeysUnavailable);
+            return Err(VerifyError::keys_unavailable(
+                "validating the GitHub JWKS",
+                "the document contains no usable RS256 signing keys",
+            ));
         }
         *self.cache.write().await = KeyCache {
             keys,

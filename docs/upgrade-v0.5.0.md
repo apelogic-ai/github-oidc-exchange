@@ -1,8 +1,8 @@
 # Upgrade to 0.5.0 and GitHub policy v5
 
-> Historical guide for the 0.5.0 boundary. For current 0.7.3 installation,
+> Historical guide for the 0.5.0 boundary. For current 0.7.4 installation,
 > policy selection, and rollback, use the [installation guide](installation.md)
-> and [0.7.3 upgrade guide](upgrade-v0.7.3.md).
+> and [0.7.4 upgrade guide](upgrade-v0.7.4.md).
 
 Release 0.5.0 removes the obsolete Steward Service Envelope bootstrap identity
 path. Keeping a dormant privileged path would allow accidental reactivation,

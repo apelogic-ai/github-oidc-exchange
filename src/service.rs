@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::{
     SOURCE_PROVENANCE_CONTRACT,
-    github::{GitHubClaims, GitHubVerifier},
+    github::{GitHubClaims, GitHubVerifier, VerifyError},
     keys::KeyRing,
     policy::Policy,
     replay::{ReplayError, ReplayLedger},
@@ -139,10 +139,24 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
         self.metrics
             .requests
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let claims = self.verifier.verify(assertion).await.map_err(|error| {
-            self.deny(&GitHubClaims::default(), &error.to_string());
-            ExchangeError::Unauthorized
-        })?;
+        let claims = match self.verifier.verify(assertion).await {
+            Ok(claims) => claims,
+            Err(VerifyError::Invalid) => {
+                self.deny(&GitHubClaims::default(), "assertion is invalid");
+                return Err(ExchangeError::Unauthorized);
+            }
+            Err(error @ VerifyError::KeysUnavailable { .. }) => {
+                self.metrics
+                    .errors
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.audit(
+                    "exchange_failed",
+                    &GitHubClaims::default(),
+                    &error.to_string(),
+                );
+                return Err(ExchangeError::Unavailable);
+            }
+        };
         let identity = self.policy.authorize(&claims).map_err(|error| {
             self.deny(&claims, &error.to_string());
             ExchangeError::Unauthorized
