@@ -105,6 +105,8 @@ required=(
   'steps.artifacthub.outputs.digest'
   'Verify GHCR packages remain public'
   'Sign, attest, and verify immutable GHCR artifacts'
+  'dist/public-image-signature.sigstore.json'
+  'dist/public-chart-signature.sigstore.json'
   'output-file: ${{ runner.temp }}/image.spdx.json'
   'output-file: ${{ runner.temp }}/chart.spdx.json'
   'Verify anonymous exact-digest GHCR pulls'

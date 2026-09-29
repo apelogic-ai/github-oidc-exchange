@@ -365,10 +365,12 @@ jobs:
           for artifact in image chart; do
             if [[ "$artifact" == image ]]; then
               reference="$image"
+              bundle=dist/public-image-signature.sigstore.json
             else
               reference="$chart"
+              bundle=dist/public-chart-signature.sigstore.json
             fi
-            cosign sign --yes --bundle "dist/$artifact-signature.sigstore.json" --new-bundle-format=true --registry-referrers-mode=oci-1-1 "$reference"
+            cosign sign --yes --bundle "$bundle" --new-bundle-format=true --registry-referrers-mode=oci-1-1 "$reference"
             cosign attest --yes --new-bundle-format=true --type spdxjson --predicate "$RUNNER_TEMP/$artifact.spdx.json" "$reference"
             cosign attest --yes --new-bundle-format=true --type slsaprovenance1 --predicate dist/release.slsa.json "$reference"
             cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true "$reference" > /dev/null
