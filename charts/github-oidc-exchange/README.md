@@ -41,6 +41,11 @@ becomes unready when either enabled active signing key enters that window and
 runtime signing stops at key expiry. Alert earlier using the public metrics
 gauges documented in the installation guide.
 
+`config.githubJwksMaxStalenessSeconds` defaults to six hours. A matching
+cached GitHub key remains usable through a shorter JWKS outage; readiness
+fails only after that hard bound. Refresh attempts are single-flight and
+rate-limited, while the cache age and refresh-failure count are metrics.
+
 `image.digest` must come from the release handoff or a verified
 manifest-preserving mirror. Placeholder and homogeneous digests are rejected;
 tag-only deployment is unsupported. Validate before mutation:

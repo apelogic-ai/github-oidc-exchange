@@ -3,7 +3,7 @@ use std::{
     env, fs,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
@@ -20,6 +20,9 @@ const MAX_LEASE_DURATION_SECONDS: i64 = 960;
 const MAX_CLEANUP_PER_EXCHANGE: usize = 1;
 const MAX_CLEANUP_PAGES_PER_EXCHANGE: usize = 2;
 const CLEANUP_PAGE_SIZE: usize = 50;
+const READINESS_LEASE_NAME: &str = "github-oidc-exchange-readiness";
+const READINESS_CACHE_TTL: Duration = Duration::from_secs(30);
+const READINESS_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ReplayError {
@@ -51,6 +54,13 @@ pub struct KubernetesLeaseReplayLedger {
     collection_url: Url,
     credential_file: PathBuf,
     cleanup_continue: Arc<Mutex<Option<String>>>,
+    readiness: Arc<tokio::sync::Mutex<ReadinessCache>>,
+}
+
+#[derive(Default)]
+struct ReadinessCache {
+    checked_at: Option<Instant>,
+    ready: bool,
 }
 
 impl KubernetesLeaseReplayLedger {
@@ -122,6 +132,7 @@ impl KubernetesLeaseReplayLedger {
             collection_url,
             credential_file,
             cleanup_continue: Arc::default(),
+            readiness: Arc::default(),
         })
     }
 
@@ -139,6 +150,7 @@ impl KubernetesLeaseReplayLedger {
             collection_url,
             credential_file,
             cleanup_continue: Arc::default(),
+            readiness: Arc::default(),
         })
     }
 
@@ -358,7 +370,24 @@ impl ReplayLedger for KubernetesLeaseReplayLedger {
     }
 
     async fn check_ready(&self) -> Result<(), ReplayError> {
-        self.list(None).await.map(drop)
+        let mut readiness = self.readiness.lock().await;
+        if readiness
+            .checked_at
+            .is_some_and(|checked_at| checked_at.elapsed() < READINESS_CACHE_TTL)
+        {
+            return if readiness.ready {
+                Ok(())
+            } else {
+                Err(ReplayError::Unavailable)
+            };
+        }
+        let result = tokio::time::timeout(READINESS_TIMEOUT, self.get(READINESS_LEASE_NAME))
+            .await
+            .map_err(|_| ReplayError::Unavailable)
+            .and_then(|result| result.map(drop));
+        readiness.checked_at = Some(Instant::now());
+        readiness.ready = result.is_ok();
+        result
     }
 }
 
@@ -539,8 +568,23 @@ fn valid_dns_label(value: &str) -> bool {
 
 #[cfg(test)]
 mod lease_tests {
-    use chrono::{Duration, Utc};
+    #[cfg(feature = "test-support")]
+    use std::{
+        fs,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+    };
 
+    #[cfg(feature = "test-support")]
+    use axum::{Router, extract::State, http::StatusCode, routing::get};
+    use chrono::{Duration, Utc};
+    #[cfg(feature = "test-support")]
+    use tempfile::NamedTempFile;
+
+    #[cfg(feature = "test-support")]
+    use super::ReplayLedger;
     use super::{
         KubernetesLeaseReplayLedger, LEASE_RETENTION_SECONDS, LEDGER_LABEL, LEDGER_VERSION, Lease,
         LeaseMetadata, LeaseSpec, ReplayError, expired_owned_leases, lease_name, retained_until,
@@ -588,6 +632,44 @@ mod lease_tests {
             .map(|lease| lease.metadata.name.as_str())
             .collect::<Vec<_>>();
         assert_eq!(candidates, ["expired"]);
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn readiness_uses_a_cached_get_of_the_fixed_sentinel()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+        async fn missing_sentinel(State(requests): State<Arc<AtomicU64>>) -> StatusCode {
+            requests.fetch_add(1, Ordering::Relaxed);
+            StatusCode::NOT_FOUND
+        }
+
+        let requests = Arc::new(AtomicU64::new(0));
+        let application = Router::new()
+            .route(
+                "/apis/coordination.k8s.io/v1/namespaces/smoke/leases/github-oidc-exchange-readiness",
+                get(missing_sentinel),
+            )
+            .with_state(requests.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let server = tokio::spawn(async move { axum::serve(listener, application).await });
+        let credential = NamedTempFile::new()?;
+        fs::write(credential.path(), "service-account-token")?;
+        let ledger = KubernetesLeaseReplayLedger::from_test_api(
+            reqwest::Client::new(),
+            reqwest::Url::parse(&format!(
+                "http://{address}/apis/coordination.k8s.io/v1/namespaces/smoke/leases"
+            ))?,
+            credential.path().to_owned(),
+        )?;
+
+        assert!(ledger.check_ready().await.is_ok());
+        assert!(ledger.check_ready().await.is_ok());
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        server.abort();
+        Ok(())
     }
 
     fn test_lease(name: &str, renewed_at: chrono::DateTime<Utc>, duration: i32) -> Lease {

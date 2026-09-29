@@ -124,6 +124,9 @@ for document in README.md docs/installation.md docs/quickstart.md \
 done
 for expected in \
   'KEY_EXPIRY_READINESS_THRESHOLD_SECONDS' \
+  'GITHUB_JWKS_MAX_STALENESS_SECONDS' \
+  'github_oidc_exchange_jwks_refresh_failures_total' \
+  'github_oidc_exchange_jwks_age_seconds' \
   'github_oidc_exchange_signing_key_seconds_until_expiry' \
   'github_oidc_exchange_workload_signing_key_seconds_until_expiry'; do
   grep -Fq "$expected" src/http.rs src/config.rs docs/installation.md \
@@ -195,6 +198,7 @@ for expected in \
   'job_workflow_refs' \
   'one-hour JWKS cache' \
   'github_jwks' \
+  'github_oidc_exchange_jwks_refresh_failures_total' \
   'replay_ledger' \
   'latency histogram' \
   'public-boundary guard' \
@@ -335,8 +339,11 @@ done
 observability=docs/operator-observability-contract-v1.md
 for expected in \
   'startup_failed' 'github_signing_key' 'github_jwks' 'replay_ledger' \
-  'assertion_invalid' 'policy_unauthorized' 'github_jwks_unavailable' \
-  'replay_ledger_unavailable' 'signing_unavailable' \
+  'assertion is invalid' 'identity is not authorized' \
+  'GitHub signing keys are unavailable while <stage>: <detail>' \
+  'ledger_unavailable' 'signing_unavailable' \
+  'github_oidc_exchange_jwks_refresh_failures_total' \
+  'github_oidc_exchange_jwks_age_seconds' \
   'github_oidc_exchange_duration_seconds' '# HELP' '# TYPE'; do
   grep -Fq "$expected" "$observability"
 done

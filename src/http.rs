@@ -343,6 +343,20 @@ async fn metrics<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + '
     );
     append_metric(
         &mut output,
+        "github_oidc_exchange_jwks_refresh_failures_total",
+        "GitHub JWKS refresh attempts that failed.",
+        "counter",
+        state.service.verifier.refresh_failures(),
+    );
+    append_metric(
+        &mut output,
+        "github_oidc_exchange_jwks_age_seconds",
+        "Seconds since the last successful GitHub JWKS refresh.",
+        "gauge",
+        state.service.verifier.cache_age_seconds().await,
+    );
+    append_metric(
+        &mut output,
         "github_oidc_exchange_signing_key_seconds_until_expiry",
         "Seconds until the active GitHub exchange signing key expires.",
         "gauge",

@@ -91,6 +91,8 @@ spec:
               value: /etc/github-oidc-exchange/keyring/keyring.json
             - name: KEY_EXPIRY_READINESS_THRESHOLD_SECONDS
               value: {{ .Values.config.keyExpiryReadinessThresholdSeconds | quote }}
+            - name: GITHUB_JWKS_MAX_STALENESS_SECONDS
+              value: {{ .Values.config.githubJwksMaxStalenessSeconds | quote }}
             - name: RUST_LOG
               value: github_oidc_exchange=info
             - name: LISTEN_ADDRESS

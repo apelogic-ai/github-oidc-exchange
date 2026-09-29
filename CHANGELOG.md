@@ -37,6 +37,9 @@ signatures, and public-registry attestations.
 - Report replay-ledger configuration failures precisely and make GitHub JWKS,
   replay ledger, and signing-key state visible through dependency-aware
   readiness.
+- Keep matching cached GitHub keys usable through a configurable hard-staleness
+  window, rate-limit refresh retries, and replace per-probe Lease listing with
+  a cached sentinel GET while preserving established audit reason values.
 
 ## [0.7.4] - 2026-09-28
 

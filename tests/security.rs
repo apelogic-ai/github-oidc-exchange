@@ -114,6 +114,15 @@ impl ReplayLedger for UnreadyReplayLedger {
     }
 }
 
+#[derive(Clone)]
+struct UnavailableReplayLedger;
+
+impl ReplayLedger for UnavailableReplayLedger {
+    async fn use_once(&self, _jti: &str, _expires_at: i64) -> Result<(), ReplayError> {
+        Err(ReplayError::Unavailable)
+    }
+}
+
 fn policy() -> Policy {
     Policy {
         version: POLICY_VERSION.to_owned(),
@@ -669,8 +678,8 @@ async fn rejected_assertions_never_enter_identity_logs() -> Result<(), Box<dyn s
     assert!(!captured.contains(&unauthorized_assertion));
     assert!(!captured.contains("source_provenance"));
     assert!(captured.contains("exchange_denied"));
-    assert!(captured.contains("assertion_invalid"));
-    assert!(captured.contains("policy_unauthorized"));
+    assert!(captured.contains("assertion is invalid"));
+    assert!(captured.contains("identity is not authorized"));
     Ok(())
 }
 
@@ -725,11 +734,55 @@ async fn unavailable_github_keys_log_the_failure_stage_and_cause()
             .clone(),
     )?;
     assert!(captured.contains("exchange_failed"));
-    assert!(captured.contains("github_jwks_unavailable"));
+    assert!(captured.contains("GitHub signing keys are unavailable"));
     assert!(captured.contains("while fetching the GitHub JWKS:"));
     assert!(captured.contains("client error (Connect)"));
     assert!(!captured.contains(&assertion));
     peer.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn unavailable_replay_ledger_preserves_the_established_audit_reason()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (encoding, decoding) = rsa_key()?;
+    let verifier =
+        GitHubVerifier::with_test_key(AUDIENCE.to_owned(), "github-test-key".to_owned(), decoding)
+            .await?;
+    let service = ExchangeService {
+        verifier,
+        policy: Arc::new(policy()),
+        ledger: Arc::new(UnavailableReplayLedger),
+        keys: Arc::new(keyring()?),
+        issuer: "https://identity.example.com".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    };
+    let assertion = signed_github_assertion(&claims(), &encoding)?;
+    let logs = CapturedLogs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(logs.clone())
+        .finish();
+
+    assert_eq!(
+        service
+            .exchange(&assertion)
+            .with_subscriber(subscriber)
+            .await,
+        Err(ExchangeError::Unavailable)
+    );
+    let captured = String::from_utf8(
+        logs.0
+            .lock()
+            .map_err(|_| "captured log mutex poisoned")?
+            .clone(),
+    )?;
+    assert!(captured.contains("exchange_failed"));
+    assert!(captured.contains("ledger_unavailable"));
     Ok(())
 }
 
@@ -1851,6 +1904,10 @@ async fn readiness_and_metrics_expose_the_active_signing_key_expiry()
     assert!(body.contains("# TYPE github_oidc_exchange_requests_total counter"));
     assert!(body.contains("# HELP github_oidc_exchange_duration_seconds"));
     assert!(body.contains("# TYPE github_oidc_exchange_duration_seconds histogram"));
+    assert!(body.contains("# HELP github_oidc_exchange_jwks_refresh_failures_total"));
+    assert!(body.contains("# TYPE github_oidc_exchange_jwks_refresh_failures_total counter"));
+    assert!(body.contains("# HELP github_oidc_exchange_jwks_age_seconds"));
+    assert!(body.contains("# TYPE github_oidc_exchange_jwks_age_seconds gauge"));
     assert!(body.contains("github_oidc_exchange_duration_seconds_bucket{le=\"+Inf\"} 0"));
     let seconds = body
         .lines()

@@ -197,7 +197,7 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
         let claims = match self.verifier.verify(assertion).await {
             Ok(claims) => claims,
             Err(VerifyError::Invalid) => {
-                self.deny(&GitHubClaims::default(), "assertion_invalid");
+                self.deny(&GitHubClaims::default(), "assertion is invalid");
                 return Err(ExchangeError::Unauthorized);
             }
             Err(error @ VerifyError::KeysUnavailable { .. }) => {
@@ -207,14 +207,14 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
                 self.audit(
                     "exchange_failed",
                     &GitHubClaims::default(),
-                    "github_jwks_unavailable",
-                    Some(&error.to_string()),
+                    &error.to_string(),
+                    None,
                 );
                 return Err(ExchangeError::Unavailable);
             }
         };
         let identity = self.policy.authorize(&claims).map_err(|_| {
-            self.deny(&claims, "policy_unauthorized");
+            self.deny(&claims, "identity is not authorized");
             ExchangeError::Unauthorized
         })?;
         match self.ledger.use_once(&claims.jti, claims.exp).await {
@@ -230,12 +230,7 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
                 self.metrics
                     .errors
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                self.audit(
-                    "exchange_failed",
-                    &claims,
-                    "replay_ledger_unavailable",
-                    None,
-                );
+                self.audit("exchange_failed", &claims, "ledger_unavailable", None);
                 return Err(ExchangeError::Unavailable);
             }
         }

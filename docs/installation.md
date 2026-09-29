@@ -641,6 +641,15 @@ expected gauge as a monitoring failure. Choose a smaller readiness threshold
 only when the configured key lifetime and a tested rotation process require
 it; the chart accepts 120 through 31536000 seconds.
 
+The default `config.githubJwksMaxStalenessSeconds` is 21600 (six hours), with
+an accepted range of 600 through 604800 seconds. Readiness uses only the age of
+the last successfully cached GitHub key set, so an egress interruption inside
+that bound does not remove every replica from Service endpoints. Each replica
+soft-refreshes on exchange after five minutes, rate-limits retries to one per
+30 seconds, and forces a separately rate-limited refresh for an unknown
+`kid`. The replay-ledger readiness check uses a fixed sentinel Lease GET with
+a one-second deadline and caches 200/404 health for 30 seconds.
+
 Repeat the **version-checked** file replacement after activate/retire (and for
 the RSA keyring or a policy ConfigMap), fetching a fresh metadata-only
 `resourceVersion` each time. `kubectl replace` can otherwise perform an
@@ -680,12 +689,15 @@ JWKS warm-up. A successful remote-key warm-up records
 `dependency=github_jwks` without logging key contents.
 
 During exchange, an invalid assertion records `exchange_denied` and returns
-401. A GitHub JWKS refresh failure records `exchange_failed` with the failing
-fetch/status/decode/validation stage and cause, increments the error metric,
-and returns 503 `temporarily_unavailable`. Neither event contains the source
-assertion or an issued token. Use the stage and cause to distinguish DNS, TLS,
-HTTP status, malformed JWKS, and an empty usable-key set before changing
-policy or signing material.
+401. GitHub keys refresh after a five-minute soft age. A failed refresh emits
+`github_jwks_refresh_failed`, increments
+`github_oidc_exchange_jwks_refresh_failures_total`, and continues using a
+matching cached key until `config.githubJwksMaxStalenessSeconds` (21600 by
+default). Only an empty or hard-stale cache records `exchange_failed` and
+returns 503 `temporarily_unavailable`. Alert on the failure counter and
+`github_oidc_exchange_jwks_age_seconds`; use the logged stage and cause to
+distinguish DNS, TLS, HTTP status, malformed JWKS, and an empty usable-key set.
+Neither event contains the source assertion or an issued token.
 
 ## 7. Post-install and delivery test checklist
 

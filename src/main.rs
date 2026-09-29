@@ -64,7 +64,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 log_startup_failure("Kubernetes Lease replay ledger", failure);
             })?,
     );
-    let verifier = GitHubVerifier::new(config.github_exchange_audience).inspect_err(|failure| {
+    let verifier = GitHubVerifier::new_with_max_staleness(
+        config.github_exchange_audience,
+        config.github_jwks_max_staleness,
+    )
+    .inspect_err(|failure| {
         log_startup_failure("GitHub JWKS verifier", failure);
     })?;
     verifier.warm_up().await.inspect_err(|failure| {

@@ -68,8 +68,13 @@ kubectl --kubeconfig "$IDENTITY_KUBECONFIG" \
 Verify `/healthz`, `/readyz`, discovery, JWKS, one accepted exchange, wrong
 audience, policy denial, and replay. A readiness failure returns 503 JSON with
 stable names such as `github_jwks` or `replay_ledger`. Confirm `/metrics`
-contains HELP/TYPE lines and `github_oidc_exchange_duration_seconds`, and
-confirm logs follow the
+contains HELP/TYPE lines, `github_oidc_exchange_duration_seconds`,
+`github_oidc_exchange_jwks_age_seconds`, and
+`github_oidc_exchange_jwks_refresh_failures_total`. The optional
+`config.githubJwksMaxStalenessSeconds` defaults to 21600; retain that default
+unless a reviewed outage and rotation policy requires a value from 600 through
+604800 seconds. Confirm established audit reason values remain unchanged and
+logs follow the
 [operator observability contract](operator-observability-contract-v1.md)
 without bearer or private-key material.
 

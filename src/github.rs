@@ -1,4 +1,11 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use chrono::Utc;
 use jsonwebtoken::{
@@ -7,12 +14,16 @@ use jsonwebtoken::{
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
+use tracing::warn;
 
 use crate::GITHUB_ISSUER;
 
 const JWKS_URL: &str = "https://token.actions.githubusercontent.com/.well-known/jwks";
 const MAX_ASSERTION_BYTES: usize = 32 * 1024;
+const JWKS_SOFT_REFRESH_SECONDS: u64 = 300;
+const JWKS_REFRESH_RETRY_SECONDS: u64 = 30;
+pub const DEFAULT_JWKS_MAX_STALENESS_SECONDS: u64 = 21_600;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct GitHubClaims {
@@ -72,7 +83,10 @@ pub struct GitHubVerifier {
     audience: String,
     client: reqwest::Client,
     cache: Arc<RwLock<KeyCache>>,
+    refresh: Arc<Mutex<RefreshState>>,
+    refresh_failures: Arc<AtomicU64>,
     jwks_url: String,
+    max_staleness: Duration,
     #[cfg(feature = "test-support")]
     key_source: KeySource,
 }
@@ -91,8 +105,31 @@ struct KeyCache {
     fetched_at: i64,
 }
 
+#[derive(Default)]
+struct RefreshState {
+    last_soft_attempt: i64,
+    last_forced_attempt: i64,
+    last_forced_failed: bool,
+}
+
+#[derive(Clone, Copy)]
+enum RefreshAttempt {
+    Refreshed,
+    Skipped,
+}
+
 impl GitHubVerifier {
     pub fn new(audience: String) -> Result<Self, VerifyError> {
+        Self::new_with_max_staleness(
+            audience,
+            Duration::from_secs(DEFAULT_JWKS_MAX_STALENESS_SECONDS),
+        )
+    }
+
+    pub fn new_with_max_staleness(
+        audience: String,
+        max_staleness: Duration,
+    ) -> Result<Self, VerifyError> {
         let client = reqwest::Client::builder()
             .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
@@ -108,7 +145,10 @@ impl GitHubVerifier {
             audience,
             client,
             cache: Arc::new(RwLock::new(KeyCache::default())),
+            refresh: Arc::new(Mutex::new(RefreshState::default())),
+            refresh_failures: Arc::new(AtomicU64::new(0)),
             jwks_url: JWKS_URL.to_owned(),
+            max_staleness,
             #[cfg(feature = "test-support")]
             key_source: KeySource::Remote,
         })
@@ -194,18 +234,32 @@ impl GitHubVerifier {
     }
 
     pub async fn warm_up(&self) -> Result<(), VerifyError> {
-        self.refresh().await
+        let _refresh = self.refresh.lock().await;
+        let result = self.refresh_now().await;
+        if let Err(error) = &result {
+            self.record_refresh_failure(error).await;
+        }
+        result
     }
 
     pub async fn check_ready(&self) -> Result<(), VerifyError> {
         let now = Utc::now().timestamp();
-        {
-            let cache = self.cache.read().await;
-            if !cache.keys.is_empty() && now.saturating_sub(cache.fetched_at) < 300 {
-                return Ok(());
-            }
+        let cache = self.cache.read().await;
+        if cache_is_usable(&cache, now, self.max_staleness) {
+            return Ok(());
         }
-        self.refresh().await
+        Err(VerifyError::keys_unavailable(
+            "checking the cached GitHub JWKS",
+            "the last successful refresh is past the configured hard-staleness bound",
+        ))
+    }
+
+    pub fn refresh_failures(&self) -> u64 {
+        self.refresh_failures.load(Ordering::Relaxed)
+    }
+
+    pub async fn cache_age_seconds(&self) -> u64 {
+        cache_age_seconds(self.cache.read().await.fetched_at, Utc::now().timestamp())
     }
 
     async fn key(&self, kid: &str) -> Result<DecodingKey, VerifyError> {
@@ -220,26 +274,112 @@ impl GitHubVerifier {
                 .cloned()
                 .ok_or(VerifyError::Invalid);
         }
-        let now = Utc::now().timestamp();
-        {
+        let cached = {
             let cache = self.cache.read().await;
-            if now - cache.fetched_at < 300
+            cache.keys.get(kid).cloned()
+        };
+        if let Some(key) = cached {
+            if self.cache_age_seconds().await < JWKS_SOFT_REFRESH_SECONDS {
+                return Ok(key);
+            }
+            let refresh_result = self.refresh_soft_if_due().await;
+            let cache = self.cache.read().await;
+            if cache_is_usable(&cache, Utc::now().timestamp(), self.max_staleness)
                 && let Some(key) = cache.keys.get(kid)
             {
                 return Ok(key.clone());
             }
+            if cache_is_usable(&cache, Utc::now().timestamp(), self.max_staleness)
+                && matches!(&refresh_result, Ok(RefreshAttempt::Refreshed))
+            {
+                return Err(VerifyError::Invalid);
+            }
+            return Err(refresh_result.err().unwrap_or_else(|| {
+                VerifyError::keys_unavailable(
+                    "using the cached GitHub JWKS",
+                    "the cache is past the configured hard-staleness bound",
+                )
+            }));
         }
-        self.refresh().await?;
-        self.cache
-            .read()
-            .await
-            .keys
-            .get(kid)
-            .cloned()
-            .ok_or(VerifyError::Invalid)
+
+        let refresh_result = self.refresh_for_unknown_kid_if_due(kid).await;
+        let cache = self.cache.read().await;
+        if cache_is_usable(&cache, Utc::now().timestamp(), self.max_staleness) {
+            if let Some(key) = cache.keys.get(kid) {
+                return Ok(key.clone());
+            }
+            return match refresh_result {
+                Ok(_) => Err(VerifyError::Invalid),
+                Err(error) => Err(error),
+            };
+        }
+        Err(refresh_result.err().unwrap_or_else(|| {
+            VerifyError::keys_unavailable(
+                "using the cached GitHub JWKS",
+                "the cache is empty or past the configured hard-staleness bound",
+            )
+        }))
     }
 
-    async fn refresh(&self) -> Result<(), VerifyError> {
+    async fn refresh_soft_if_due(&self) -> Result<RefreshAttempt, VerifyError> {
+        let mut refresh = self.refresh.lock().await;
+        let now = Utc::now().timestamp();
+        if self.cache_age_seconds().await < JWKS_SOFT_REFRESH_SECONDS
+            || attempted_recently(refresh.last_soft_attempt, now)
+        {
+            return Ok(RefreshAttempt::Skipped);
+        }
+        refresh.last_soft_attempt = now;
+        self.run_refresh().await
+    }
+
+    async fn refresh_for_unknown_kid_if_due(
+        &self,
+        kid: &str,
+    ) -> Result<RefreshAttempt, VerifyError> {
+        let mut refresh = self.refresh.lock().await;
+        let now = Utc::now().timestamp();
+        if self.cache.read().await.keys.contains_key(kid) {
+            return Ok(RefreshAttempt::Skipped);
+        }
+        if attempted_recently(refresh.last_forced_attempt, now) {
+            return if refresh.last_forced_failed {
+                Err(VerifyError::keys_unavailable(
+                    "refreshing the GitHub JWKS for an unknown key ID",
+                    "a recent forced refresh failed and retry is rate-limited",
+                ))
+            } else {
+                Ok(RefreshAttempt::Skipped)
+            };
+        }
+        refresh.last_forced_attempt = now;
+        let result = self.run_refresh().await;
+        refresh.last_forced_failed = result.is_err();
+        result
+    }
+
+    async fn run_refresh(&self) -> Result<RefreshAttempt, VerifyError> {
+        match self.refresh_now().await {
+            Ok(()) => Ok(RefreshAttempt::Refreshed),
+            Err(error) => {
+                self.record_refresh_failure(&error).await;
+                Err(error)
+            }
+        }
+    }
+
+    async fn record_refresh_failure(&self, error: &VerifyError) {
+        self.refresh_failures.fetch_add(1, Ordering::Relaxed);
+        let cache_age_seconds = self.cache_age_seconds().await;
+        warn!(
+            event = "github_jwks_refresh_failed",
+            cache_age_seconds,
+            detail = %error,
+            "GitHub JWKS refresh failed"
+        );
+    }
+
+    async fn refresh_now(&self) -> Result<(), VerifyError> {
         #[cfg(feature = "test-support")]
         if self.key_source == KeySource::Injected {
             return if self.cache.read().await.keys.is_empty() {
@@ -299,6 +439,21 @@ impl GitHubVerifier {
         };
         Ok(())
     }
+}
+
+fn attempted_recently(last_attempt: i64, now: i64) -> bool {
+    last_attempt > 0 && now.saturating_sub(last_attempt) < JWKS_REFRESH_RETRY_SECONDS as i64
+}
+
+fn cache_age_seconds(fetched_at: i64, now: i64) -> u64 {
+    if fetched_at <= 0 {
+        return u64::MAX;
+    }
+    u64::try_from(now.saturating_sub(fetched_at)).unwrap_or(0)
+}
+
+fn cache_is_usable(cache: &KeyCache, now: i64, max_staleness: Duration) -> bool {
+    !cache.keys.is_empty() && cache_age_seconds(cache.fetched_at, now) <= max_staleness.as_secs()
 }
 
 fn error_chain_detail(error: &(dyn std::error::Error + 'static)) -> String {
@@ -529,6 +684,116 @@ mod tests {
         verifier.warm_up().await?;
         assert!(verifier.verify(&assertion).await.is_ok());
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn cached_key_survives_refresh_failure_until_hard_staleness()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let (assertion, decoding) = signed_test_assertion("cached-source")?;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let unavailable_address = listener.local_addr()?;
+        drop(listener);
+        let mut verifier = GitHubVerifier::new_with_max_staleness(
+            "local-steward-run".to_owned(),
+            Duration::from_secs(600),
+        )?;
+        verifier.jwks_url = format!("https://{unavailable_address}/.well-known/jwks");
+        {
+            let mut cache = verifier.cache.write().await;
+            cache.keys.insert("cached-source".to_owned(), decoding);
+            cache.fetched_at = Utc::now().timestamp() - 301;
+        }
+
+        assert!(verifier.check_ready().await.is_ok());
+        assert_eq!(verifier.refresh_failures(), 0);
+        assert!(verifier.verify(&assertion).await.is_ok());
+        assert_eq!(verifier.refresh_failures(), 1);
+        assert!(verifier.verify(&assertion).await.is_ok());
+        assert_eq!(verifier.refresh_failures(), 1);
+
+        verifier.cache.write().await.fetched_at = Utc::now().timestamp() - 601;
+        assert!(verifier.check_ready().await.is_err());
+        assert!(matches!(
+            verifier.verify(&assertion).await,
+            Err(VerifyError::KeysUnavailable { .. })
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unknown_kid_forces_only_one_refresh_inside_retry_window()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let (assertion, decoding) = signed_test_assertion("unknown-source")?;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let unavailable_address = listener.local_addr()?;
+        drop(listener);
+        let mut verifier = GitHubVerifier::new_with_max_staleness(
+            "local-steward-run".to_owned(),
+            Duration::from_secs(600),
+        )?;
+        verifier.jwks_url = format!("https://{unavailable_address}/.well-known/jwks");
+        {
+            let mut cache = verifier.cache.write().await;
+            cache.keys.insert("cached-source".to_owned(), decoding);
+            cache.fetched_at = Utc::now().timestamp();
+        }
+
+        assert!(matches!(
+            verifier.verify(&assertion).await,
+            Err(VerifyError::KeysUnavailable { .. })
+        ));
+        assert_eq!(verifier.refresh_failures(), 1);
+        assert!(matches!(
+            verifier.verify(&assertion).await,
+            Err(VerifyError::KeysUnavailable { .. })
+        ));
+        assert_eq!(verifier.refresh_failures(), 1);
+        Ok(())
+    }
+
+    fn signed_test_assertion(
+        kid: &str,
+    ) -> Result<(String, DecodingKey), Box<dyn std::error::Error>> {
+        let private = RsaPrivateKey::new(&mut thread_rng(), 2048)?;
+        let document = private.to_pkcs1_der()?;
+        let encoding = EncodingKey::from_rsa_der(document.as_bytes());
+        let decoding = DecodingKey::from_rsa_components(
+            &URL_SAFE_NO_PAD.encode(private.n().to_bytes_be()),
+            &URL_SAFE_NO_PAD.encode(private.e().to_bytes_be()),
+        )?;
+        let now = Utc::now().timestamp();
+        let claims = GitHubClaims {
+            iss: GITHUB_ISSUER.to_owned(),
+            sub: "repo:local-fixture/steward-run:ref:refs/heads/main".to_owned(),
+            aud: Audience::One("local-steward-run".to_owned()),
+            exp: now + 300,
+            iat: now,
+            nbf: now - 5,
+            jti: "cached-key-fallback".to_owned(),
+            actor_id: "300001".to_owned(),
+            actor: "alice".to_owned(),
+            repository: "local-fixture/steward-run".to_owned(),
+            repository_id: "200001".to_owned(),
+            repository_owner_id: "100001".to_owned(),
+            sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+            run_id: "400001".to_owned(),
+            run_attempt: 1,
+            workflow_ref:
+                "local-fixture/steward-run/.github/workflows/workflow.yml@refs/heads/main"
+                    .to_owned(),
+            workflow_sha: "123456789abcdef0123456789abcdef012345678".to_owned(),
+            job_workflow_ref: "local-fixture/steward-run/.github/workflows/job.yml@refs/heads/main"
+                .to_owned(),
+            job_workflow_sha: "23456789abcdef0123456789abcdef0123456789".to_owned(),
+            event_name: "workflow_dispatch".to_owned(),
+            git_ref: "refs/heads/main".to_owned(),
+        };
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some(kid.to_owned());
+        header.typ = Some("JWT".to_owned());
+        Ok((encode(&header, &claims, &encoding)?, decoding))
     }
 }
 
