@@ -54,6 +54,37 @@ jobs:
           printf 'image=ghcr.io/%s/github-oidc-exchange\n' "$owner" >> "$GITHUB_OUTPUT"
           printf 'chart=ghcr.io/%s/charts/github-oidc-exchange\n' "$owner" >> "$GITHUB_OUTPUT"
 
+      - name: Install pinned ORAS for immutable-version preflight
+        shell: bash
+        env:
+          ORAS_VERSION: 1.3.3
+          ORAS_LINUX_AMD64_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59
+        run: |
+          set -euo pipefail
+          archive="oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          curl -sSLo "$RUNNER_TEMP/$archive" \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/$archive"
+          printf '%s  %s\n' "$ORAS_LINUX_AMD64_SHA256" "$RUNNER_TEMP/$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/oras-preflight"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/oras-preflight" oras
+          printf '%s\n' "$RUNNER_TEMP/oras-preflight" >> "$GITHUB_PATH"
+
+      - name: Reject existing immutable release tags before builds
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_REFERENCE: ${{ steps.refs.outputs.image }}
+          CHART_REFERENCE: ${{ steps.refs.outputs.chart }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          if oras manifest fetch --descriptor "$IMAGE_REFERENCE:$VERSION" >/dev/null 2>&1 ||
+             oras manifest fetch --descriptor "$CHART_REFERENCE:$VERSION" >/dev/null 2>&1; then
+            printf 'version tag already exists; never overwrite published artifacts\n' >&2
+            exit 1
+          fi
+
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
 
@@ -85,7 +116,6 @@ jobs:
       DOCKER_BUILD_RECORD_UPLOAD: "false"
       DOCKER_BUILD_SUMMARY: "false"
       IMAGE_REFERENCE: ${{ needs.preflight.outputs.image }}
-      CANDIDATE_TAG: candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}-amd64
     outputs:
       digest: ${{ steps.image.outputs.digest }}
     steps:
@@ -102,9 +132,8 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          push: true
           platforms: linux/amd64
-          tags: ${{ env.IMAGE_REFERENCE }}:${{ env.CANDIDATE_TAG }}
+          outputs: type=image,name=${{ env.IMAGE_REFERENCE }},push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -126,7 +155,6 @@ jobs:
       DOCKER_BUILD_RECORD_UPLOAD: "false"
       DOCKER_BUILD_SUMMARY: "false"
       IMAGE_REFERENCE: ${{ needs.preflight.outputs.image }}
-      CANDIDATE_TAG: candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}-arm64
     outputs:
       digest: ${{ steps.image.outputs.digest }}
     steps:
@@ -143,9 +171,8 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          push: true
           platforms: linux/arm64
-          tags: ${{ env.IMAGE_REFERENCE }}:${{ env.CANDIDATE_TAG }}
+          outputs: type=image,name=${{ env.IMAGE_REFERENCE }},push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -167,8 +194,6 @@ jobs:
       DOCKER_BUILD_RECORD_UPLOAD: "false"
       DOCKER_BUILD_SUMMARY: "false"
       VERSION: ${{ inputs.version }}
-      CANDIDATE_TAG: candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
-      CHART_CANDIDATE_TAG: candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
       IMAGE_REFERENCE: ${{ needs.preflight.outputs.image }}
       CHART_REFERENCE: ${{ needs.preflight.outputs.chart }}
       COSIGN_EXPERIMENTAL: "1"
@@ -207,15 +232,6 @@ jobs:
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           printf '%s' "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-      - name: Reject existing immutable release tags
-        shell: bash
-        run: |
-          set -euo pipefail
-          if oras manifest fetch --descriptor "$IMAGE_REFERENCE:$VERSION" >/dev/null 2>&1 ||
-             oras manifest fetch --descriptor "$CHART_REFERENCE:$VERSION" >/dev/null 2>&1; then
-            printf 'version tag already exists; never overwrite published artifacts\n' >&2
-            exit 1
-          fi
       - name: Compose native multi-platform image candidate
         id: image
         shell: bash
@@ -226,17 +242,18 @@ jobs:
           set -euo pipefail
           [[ "$AMD64_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
           [[ "$ARM64_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
-          docker buildx imagetools create \
-            --annotation "index:org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
-            --annotation "index:org.opencontainers.image.revision=$GITHUB_SHA" \
-            --annotation "index:org.opencontainers.image.version=$VERSION" \
-            --tag "$IMAGE_REFERENCE:$CANDIDATE_TAG" \
-            "$IMAGE_REFERENCE@$AMD64_DIGEST" \
-            "$IMAGE_REFERENCE@$ARM64_DIGEST"
-          digest="$(oras manifest fetch --descriptor "$IMAGE_REFERENCE:$CANDIDATE_TAG" | jq -r '.digest')"
-          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           mkdir -p dist
-          docker buildx imagetools inspect --raw "$IMAGE_REFERENCE@$digest" > dist/image-index.json
+          oras manifest index create "$IMAGE_REFERENCE" \
+            "$AMD64_DIGEST" "$ARM64_DIGEST" \
+            --annotation "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --annotation "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --annotation "org.opencontainers.image.version=$VERSION" \
+            --output dist/image-index.json
+          digest="sha256:$(sha256sum dist/image-index.json | cut -d' ' -f1)"
+          published="$(oras manifest push --descriptor \
+            --media-type application/vnd.oci.image.index.v1+json \
+            "$IMAGE_REFERENCE@$digest" dist/image-index.json | jq -r '.digest')"
+          [[ "$published" == "$digest" ]]
           jq -e \
             --arg amd64 "$AMD64_DIGEST" \
             --arg arm64 "$ARM64_DIGEST" \
@@ -306,21 +323,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           oras push --image-spec v1.0 \
             --config "$RUNNER_TEMP/chart-config.json":application/vnd.cncf.helm.config.v1+json \
-            --annotation "org.opencontainers.image.created=$created" \
             --annotation "org.opencontainers.image.description=Platform OIDC exchange issuer for GitHub and Kubernetes workload identity" \
             --annotation "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --annotation "org.opencontainers.image.title=github-oidc-exchange" \
             --annotation "org.opencontainers.image.version=$VERSION" \
             --format json \
-            "$CHART_REFERENCE:$CHART_CANDIDATE_TAG" \
+            "$CHART_REFERENCE" \
             "dist/github-oidc-exchange-$VERSION.tgz:application/vnd.cncf.helm.chart.content.v1.tar+gzip" \
             > "$RUNNER_TEMP/chart-candidate.json"
           digest="$(jq -r '.digest' "$RUNNER_TEMP/chart-candidate.json")"
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
-          published="$(oras manifest fetch --descriptor "$CHART_REFERENCE:$CHART_CANDIDATE_TAG" | jq -r '.digest')"
+          published="$(oras manifest fetch --descriptor "$CHART_REFERENCE@$digest" | jq -r '.digest')"
           [[ "$published" == "$digest" ]]
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
           printf '%s\n' "$digest" > dist/chart.digest

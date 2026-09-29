@@ -632,6 +632,64 @@ async fn rejected_assertions_never_enter_identity_logs() -> Result<(), Box<dyn s
     Ok(())
 }
 
+#[tokio::test]
+async fn unavailable_github_keys_log_the_failure_stage_and_cause()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (encoding, _) = rsa_key()?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let peer = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        drop(stream);
+        Ok::<(), std::io::Error>(())
+    });
+    let verifier = GitHubVerifier::with_test_jwks_url(
+        AUDIENCE.to_owned(),
+        format!("https://{address}/.well-known/jwks"),
+    )?;
+    let metrics = Arc::new(Metrics::default());
+    let service = ExchangeService {
+        verifier,
+        policy: Arc::new(policy()),
+        ledger: Arc::new(TestReplayLedger::default()),
+        keys: Arc::new(keyring()?),
+        issuer: "https://identity.example.com".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: metrics.clone(),
+    };
+    let assertion = signed_github_assertion(&claims(), &encoding)?;
+    let logs = CapturedLogs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(logs.clone())
+        .finish();
+
+    assert_eq!(
+        service
+            .exchange(&assertion)
+            .with_subscriber(subscriber)
+            .await,
+        Err(ExchangeError::Unavailable)
+    );
+    assert_eq!(metrics.errors.load(Ordering::Relaxed), 1);
+    assert_eq!(metrics.denied.load(Ordering::Relaxed), 0);
+    let captured = String::from_utf8(
+        logs.0
+            .lock()
+            .map_err(|_| "captured log mutex poisoned")?
+            .clone(),
+    )?;
+    assert!(captured.contains("exchange_failed"));
+    assert!(captured.contains("while fetching the GitHub JWKS:"));
+    assert!(captured.contains("client error (Connect)"));
+    assert!(!captured.contains(&assertion));
+    peer.await??;
+    Ok(())
+}
+
 fn keyring() -> Result<KeyRing, Box<dyn std::error::Error>> {
     let now = Utc::now();
     let file = NamedTempFile::new()?;

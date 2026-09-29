@@ -1,7 +1,7 @@
-# Installation guide — github-oidc-exchange 0.7.3
+# Installation guide — github-oidc-exchange 0.7.4
 
-This is the canonical operator guide for application **0.7.3**, Helm chart
-**0.7.3**, and the [Identity consumer contracts](consumer-contract-v1.md).
+This is the canonical operator guide for application **0.7.4**, Helm chart
+**0.7.4**, and the [Identity consumer contracts](consumer-contract-v1.md).
 It installs Identity in an operator-owned Kubernetes cluster from fork-owned
 artifacts. No ApeLogic account, cloud credential, external secret controller,
 GitHub OAuth App, or database is required. The baseline exchanges GitHub
@@ -17,11 +17,11 @@ the [baseline quickstart](quickstart.md), then return here for operations and
 optional features. Use the [integration guide](integration.md) for claim
 observation, exchange smoke, and Steward integration.
 
-Application 0.7.3 supports `github-oidc-exchange.apelogic.io/v5` and
+Application 0.7.4 supports `github-oidc-exchange.apelogic.io/v5` and
 `github-oidc-exchange.apelogic.io/v6`. The chart defaults to v5 and an existing
 v5 ConfigMap, preserving `steward-task-v2` behavior. Policy v6 is an explicit
 opt-in that issues `steward-task-v3`; activate it with a separately named
-ConfigMap using the [0.7.3 upgrade procedure](upgrade-v0.7.3.md).
+ConfigMap using the [0.7.4 upgrade procedure](upgrade-v0.7.4.md).
 Existing older installations must first follow their version-specific guides.
 
 ## Prerequisites and decisions
@@ -29,7 +29,7 @@ Existing older installations must first follow their version-specific guides.
 | Input | Baseline GitHub issuer | Additional workload profile |
 | --- | --- | --- |
 | Cluster/architecture | Kubernetes >=1.32, `linux/amd64` or `linux/arm64`, working DNS, outbound HTTPS to GitHub JWKS and Kubernetes API; ability to create namespaced Lease Role/Binding and NetworkPolicy. Two schedulable replicas by default. | Cluster-admin or delegated right to create the chart's narrow TokenReview ClusterRole/Binding; caller namespace and pod labels for an exact NetworkPolicy selector. |
-| Tools | Rust 1.95, Helm 3.17+, Docker/buildx, `kubectl`, `jq`, and `oras` for digest lookup; `crane` when mirroring; explicit kubeconfig/context. | Same, plus a projected, bound service-account token for each caller. |
+| Tools | Rust 1.95, a C compiler/linker (`clang` or `gcc`) for native Rust dependencies, Helm 3.17+, Docker/buildx, `kubectl`, `jq`, and `oras` for digest lookup; `crane` when mirroring; Bash 5+ for release-contract scripts; explicit kubeconfig/context. | Same, plus a projected, bound service-account token for each caller. |
 | Registry | Fork-owned OCI image/chart repositories accessible from cluster nodes; immutable digest for image and chart. Private registry requires a pre-created `kubernetes.io/dockerconfigjson` pull Secret named only in `image.pullSecrets`. | Same image/chart. |
 | Issuer/public network | Unique HTTPS issuer URL and DNS A/CNAME; publicly trusted certificate whose SAN covers its DNS name; select external HTTPS proxy + internal Service, chart Ingress with chosen controller, or chart HTTPRoute attached to an existing HTTPS Gateway. Allow its actual source CIDRs to port 8080. Hosted GitHub runners need a reachable public issuer/exchange; self-hosted runners may use a private route if DNS and trust agree. | Workload listener is internal Service port 8443 only. Server certificate SAN must include `github-oidc-exchange.<namespace>.svc.cluster.local`; distribute its public issuer CA bundle to callers and plan renewal/overlap. |
 | GitHub policy | Dedicated inbound audience and immutable numeric `repository_owner_id`/`repository_id`. v5 additionally requires exact subject/event/ref and mapped actor. v6 enforces those selectors only when configured. All signed provenance remains shape- and consistency-validated. GitHub jobs need `permissions: id-token: write`. | Independent exact service-account username-to-subject/roles policy and TokenReview input audience. |
@@ -48,6 +48,9 @@ others enforce it against the translated API-server endpoint. When tightening
 `networkPolicy.apiServerCidrs`, include every address visible in both cases and
 retain every endpoint port in `networkPolicy.apiServerPorts`. Configure
 literal NodeLocal DNSCache addresses through `networkPolicy.dnsIpBlocks`.
+The chart admits ingress from those same narrowly selected DNS peers without a
+destination-port restriction so DNS replies can reach ephemeral client ports
+on CNIs that do not retain reply state.
 Nonstandard proxy destinations require complete, narrow rules in
 `networkPolicy.extraEgress`; do not place proxy credentials in chart values.
 
@@ -107,21 +110,24 @@ From an exact tagged fork commit, run the repo's CI checks first. The optional
 smokes/scans them, packages and publishes the chart to the **fork owner's**
 GHCR, signs/attests the artifacts, and attaches immutable coordinates to a
 GitHub release. It needs the fork's `GITHUB_TOKEN` package/write/OIDC rights,
-not any cloud credential. The older `release.yml` ECR workflow is optional and
-not part of this installation path. Make fork GHCR packages public if anonymous
-pulls are intended; verify visibility separately. For another operator-owned
-OCI registry, authenticate with that registry's own account and run:
+not any cloud credential. The primary `.github/workflows/release.yml` also
+publishes directly to GHCR; neither release path uses an intermediate registry.
+Make fork GHCR packages public if anonymous pulls are intended; verify
+visibility separately. For another operator-owned OCI registry, authenticate
+with that registry's own account and run a native single-architecture build:
 
 ```sh
-export IDENTITY_VERSION=0.7.3
+export IDENTITY_VERSION=0.7.4
 export IDENTITY_IMAGE_REPO=registry.example.org/team/github-oidc-exchange
 export IDENTITY_CHART_REPO=registry.example.org/team/charts/github-oidc-exchange
+# Match the builder host: linux/amd64 on x86-64 or linux/arm64 on ARM64.
+export IDENTITY_PLATFORM=linux/amd64
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
 bash scripts/validate-release.sh
 bash scripts/test-chart.sh
-docker buildx build --platform linux/amd64,linux/arm64 --push \
+docker buildx build --platform "$IDENTITY_PLATFORM" --push \
   -t "$IDENTITY_IMAGE_REPO:$IDENTITY_VERSION" .
 install -d ./dist
 helm package charts/github-oidc-exchange --destination ./dist
@@ -132,9 +138,13 @@ export IDENTITY_CHART_DIGEST="$(oras manifest fetch --descriptor "$IDENTITY_CHAR
 printf 'image=%s@%s\nchart=%s@%s\n' "$IDENTITY_IMAGE_REPO" "$IDENTITY_IMAGE_DIGEST" "$IDENTITY_CHART_REPO" "$IDENTITY_CHART_DIGEST"
 ```
 
-Use native platform builders and the vulnerability/SBOM/signature gates in the
-portable release workflow for production; the manual commands above show the
-registry-neutral mechanics, not a substitute for those gates. Both digests
+The single-platform command does not require CPU emulation when
+`IDENTITY_PLATFORM` matches the builder host. A manual `linux/amd64,linux/arm64`
+build requires a multi-node native builder or binfmt/QEMU emulation. Use the
+repository release workflows, which assign each architecture to a native
+runner, for a multi-platform release. The manual commands above show the
+registry-neutral mechanics, not a substitute for the workflow's
+vulnerability/SBOM/signature gates. Both digests
 must be `sha256:` plus 64 lowercase hex characters. Record source commit,
 chart/image digests, platform manifests, and signature verification in a
 non-secret release handoff. A Helm chart OCI digest identifies the package;
@@ -180,6 +190,11 @@ jq -e '.chart|contains("@sha256:")' ./dist/release-manifest.json >/dev/null
 GHCR image and chart packages public for anonymous cluster pulls, or create a
 registry pull Secret and reference only its name in values.
 
+The attached `release.slsa.json` is the human-inspectable provenance predicate,
+not a standalone signed statement. Treat provenance as authoritative only
+after `cosign verify-attestation --type slsaprovenance1` binds that predicate
+to the exact signed OCI digest.
+
 The release also attaches `policy-contract.schema.json`,
 `policy-contract.example.json`, `policy-contract-v6.schema.json`,
 `policy-contract-v6.example.json`, and
@@ -219,7 +234,7 @@ cargo run --locked --bin keyring-tool -- generate-es256 \
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
 ```
 
-When consuming the 0.7.3 or later release artifacts, download the policy files
+When consuming the 0.7.4 or later release artifacts, download the policy files
 above and run the same operations from the verified image digest. Run as the
 invoking host user so atomic mode-0600 output on the private bind mount is not
 owned by a container-only UID:
@@ -461,13 +476,13 @@ helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
 ```
 
 Validate discovery/JWKS and a fresh exchange again. There is no database
-migration; keep the same namespace to preserve replay Leases. A 0.7.3
+migration; keep the same namespace to preserve replay Leases. A 0.7.4
 application upgrade that retains v5 is safe to roll back normally. After v6
 activation, an older binary cannot read v6: roll back the chart/application
 and all three policy-selection values together to the retained v5 object.
 Never perform an image-only rollback while v6 remains mounted. The exact
 preflight, activation, and rollback sequence is in the
-[0.7.3 upgrade guide](upgrade-v0.7.3.md).
+[0.7.4 upgrade guide](upgrade-v0.7.4.md).
 
 ## 5. Enable optional workload exchange
 
@@ -633,6 +648,22 @@ Certificate objects. It does **not** delete operator-created policy/key/TLS
 objects or the namespaced replay Leases; cert-manager TLS Secret retention
 depends on its policy, so inspect it explicitly. Do not delete the namespace
 or private files as part of uninstall without a separate retention decision.
+
+## Startup and dependency diagnostics
+
+Startup failures are JSON log events with `event=startup_failed`, a bounded
+`stage`, and the underlying safe error text. Stages distinguish configuration,
+policy/key loading, Kubernetes clients, TLS identity, listeners, and GitHub
+JWKS warm-up. A successful remote-key warm-up records
+`dependency=github_jwks` without logging key contents.
+
+During exchange, an invalid assertion records `exchange_denied` and returns
+401. A GitHub JWKS refresh failure records `exchange_failed` with the failing
+fetch/status/decode/validation stage and cause, increments the error metric,
+and returns 503 `temporarily_unavailable`. Neither event contains the source
+assertion or an issued token. Use the stage and cause to distinguish DNS, TLS,
+HTTP status, malformed JWKS, and an empty usable-key set before changing
+policy or signing material.
 
 ## 7. Post-install and delivery test checklist
 

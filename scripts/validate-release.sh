@@ -4,6 +4,7 @@ set -euo pipefail
 bash scripts/validate-ci-tools.sh
 bash scripts/test-portable-release.sh
 bash scripts/test-docs-drift.sh
+bash scripts/test-runtime-smoke-contract.sh
 bash scripts/test-release-contract-assets.sh
 bash scripts/check-public-release-boundary.sh
 bash scripts/test-public-release-boundary.sh
@@ -84,8 +85,10 @@ required=(
   '--experimental-oci11=true'
   '--type spdxjson'
   '--type slsaprovenance1'
-  'CANDIDATE_TAG: candidate-'
-  'CHART_CANDIDATE_TAG: candidate-'
+  'Reject existing immutable release tags before builds'
+  'push-by-digest=true'
+  'oras manifest index create "$IMAGE_REFERENCE"'
+  '"$IMAGE_REFERENCE@$digest" dist/image-index.json'
   'oras manifest fetch --descriptor "$IMAGE_REFERENCE:$VERSION"'
   'oras manifest fetch --descriptor "$CHART_REFERENCE:$VERSION"'
   'oras push --image-spec v1.0'
@@ -140,6 +143,16 @@ required=(
 for contract in "${required[@]}"; do
   grep -Fq -- "$contract" "$workflow"
 done
+
+if grep -R -n -F 'candidate-' .github/workflows; then
+  printf 'release workflows must publish intermediate artifacts by digest only\n' >&2
+  exit 1
+fi
+
+preflight_rejection="$(grep -n -m1 -F 'name: Reject existing immutable release tags before builds' "$workflow" | cut -d: -f1)"
+amd64_job="$(grep -n -m1 -F '  build-amd64:' "$workflow" | cut -d: -f1)"
+[[ -n "$preflight_rejection" && -n "$amd64_job" ]]
+((preflight_rejection < amd64_job))
 
 if grep -R -n -i -E 'qemu|binfmt' .github/workflows; then
   printf 'emulated image builds are forbidden; use native architecture runners\n' >&2
@@ -322,8 +335,11 @@ awk '
   ingress && rule == 2 && /app[.]kubernetes[.]io\/name: example-caller/ { caller_pod = 1 }
   ingress && rule == 2 && /port: 8443/ { workload_port = 1 }
   ingress && rule == 2 && /port: 8080/ { bad = 1 }
+  ingress && rule == 4 && /kubernetes[.]io\/metadata[.]name: kube-system/ { dns_namespace = 1 }
+  ingress && rule == 4 && /k8s-app: kube-dns/ { dns_pod = 1 }
+  ingress && rule == 4 && /ports:/ { bad = 1 }
   END {
-    if (!(public_source && public_port && caller_namespace && caller_pod && workload_port) || bad) {
+    if (!(public_source && public_port && caller_namespace && caller_pod && workload_port && dns_namespace && dns_pod) || bad) {
       exit 1
     }
   }

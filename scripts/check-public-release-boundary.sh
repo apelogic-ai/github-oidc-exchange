@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ((BASH_VERSINFO[0] < 5)); then
+  printf 'check-public-release-boundary.sh requires Bash 5 or newer (found %s)\n' \
+    "$BASH_VERSION" >&2
+  exit 2
+fi
+
 workflow_root=.github/workflows
 evidence_files=()
 
@@ -26,35 +32,45 @@ if [[ ! -d "$workflow_root" ]]; then
   exit 2
 fi
 
-for forbidden in 'vars.ECR_' 'amazonaws.com' 'configure-aws-credentials'; do
-  if grep -R -n -F --include='*.yml' --include='*.yaml' "$forbidden" "$workflow_root"; then
-    printf 'workflow contains a forbidden registry dependency: %s\n' "$forbidden" >&2
+for forbidden in \
+  '(^|[^[:alnum:]_])(vars|secrets)[.](ecr|aws)_' \
+  'amazonaws[.]com' \
+  'configure-aws-credentials' \
+  'amazon-ecr-login' \
+  '(^|[[:space:]])aws[[:space:]]+ecr([[:space:]]|$)'; do
+  if grep -R -n -i -E "$forbidden" "$workflow_root"; then
+    printf 'workflow contains a forbidden registry dependency matching: %s\n' \
+      "$forbidden" >&2
     exit 1
   fi
 done
 
-check_registry_reference() {
+check_public_reference() {
   local file=$1
   local reference=$2
+  local host
 
-  reference=${reference#oci://}
   case "$reference" in
-    ghcr.io | ghcr.io/*)
-      return 0
-      ;;
-    github-oidc-exchange.apelogic.io/*)
-      return 0
-      ;;
-    http://* | https://*)
-      return 0
+    http://*)
+      printf 'release evidence contains a non-HTTPS host reference in %s: %s\n' \
+        "$file" "$reference" >&2
+      return 1
       ;;
   esac
-
-  if [[ "$reference" =~ ^([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?(/|$) ]]; then
-    printf 'release evidence names a non-GHCR registry in %s: %s\n' \
+  reference=${reference#https://}
+  reference=${reference#oci://}
+  host=${reference%%/*}
+  host=${host%%:*}
+  case "$host" in
+    ghcr.io | github.com | api.github.com | token.actions.githubusercontent.com | apelogic.ai | github-oidc-exchange.apelogic.io)
+      return 0
+      ;;
+    *)
+      printf 'release evidence names a host outside the allowlist in %s: %s\n' \
       "$file" "$reference" >&2
-    return 1
-  fi
+      return 1
+      ;;
+  esac
 }
 
 if ((${#evidence_files[@]} == 0)); then
@@ -75,7 +91,7 @@ for file in "${evidence_files[@]}"; do
           "$file" "$reference" >&2
         exit 1
       fi
-      check_registry_reference "$file" "$reference"
+      check_public_reference "$file" "$reference"
     done < <(jq -r '
       .. | objects | to_entries[] |
       select(.key | test("(^|_)(registry|image|chart|reference)$"; "i")) |
@@ -84,16 +100,16 @@ for file in "${evidence_files[@]}"; do
     ' "$file")
   fi
 
+  # Scheme-qualified references are always host references, even when they
+  # have no path. Bare references must include a path so dotted prose such as
+  # version numbers and file names is not mistaken for a registry host.
   while IFS= read -r reference; do
     [[ -n "$reference" ]] || continue
-    case "$reference" in
-      ghcr.io/*)
-        continue
-        ;;
-    esac
-    if grep -Fq "https://$reference" "$file" || grep -Fq "http://$reference" "$file"; then
-      continue
-    fi
-    check_registry_reference "$file" "$reference"
-  done < <(grep -Eo '([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?(/[[:alnum:]_.:@+-]+)+' "$file" || true)
+    check_public_reference "$file" "$reference"
+  done < <(grep -Eo '(https?://|oci://)([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?(/[[:alnum:]_.:@+?=&%/-]+)?' "$file" || true)
+
+  while IFS= read -r reference; do
+    [[ -n "$reference" ]] || continue
+    check_public_reference "$file" "$reference"
+  done < <(grep -Eo '([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?/[[:alnum:]_.:@+?=&%/-]+' "$file" || true)
 done

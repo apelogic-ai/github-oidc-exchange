@@ -10,6 +10,7 @@ fi
 for expected in 'workflow_dispatch:' 'packages: write' 'ubuntu-24.04-arm' \
   'linux/amd64' 'linux/arm64' 'scripts/smoke-release-container.sh' \
   'helm package' 'helm push' 'docker buildx imagetools create' \
+  'push-by-digest=true' 'Reject existing immutable release tags before builds' \
   'image: replace-with-release-image' 'artifacthub_image="$IMAGE@$image_digest"' \
   'gh release create' 'aquasecurity/trivy-action@' 'anchore/sbom-action@' \
   'cosign attest' 'cosign sign-blob' 'release-manifest.sigstore.json' \
@@ -22,3 +23,7 @@ for expected in 'workflow_dispatch:' 'packages: write' 'ubuntu-24.04-arm' \
   'slsaprovenance1' 'spdxjson'; do
   grep -Fq -- "$expected" "$workflow"
 done
+if grep -Fq 'candidate-' "$workflow"; then
+  printf 'portable release must not leave public candidate tags\n' >&2
+  exit 1
+fi

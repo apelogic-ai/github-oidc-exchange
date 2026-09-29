@@ -9,6 +9,31 @@ signatures, and public-registry attestations.
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-09-28
+
+### Changed
+
+- Publish intermediate release image and chart manifests by digest without
+  public `candidate-*` tags, and reject existing immutable versions in
+  preflight before architecture builds begin.
+- Harden the public-release boundary with case-insensitive workflow scanning,
+  an explicit evidence-host allowlist, Bash 5 enforcement, and named failures
+  for missing workflow anchors.
+- Document the native C compiler prerequisite and a single-architecture image
+  build that does not require CPU emulation.
+- Document direct GHCR publication and the release-manifest transition from
+  `manifest_preserving_mirror` to `direct_publish`. Clarify that the attached
+  `release.slsa.json` is a predicate whose authoritative form is the verified
+  OCI SLSA attestation.
+
+### Fixed
+
+- Preserve the stage and underlying cause of GitHub JWKS failures in startup
+  and exchange logs. Dependency failures now produce `exchange_failed` and
+  HTTP 503 instead of being classified as invalid assertions.
+- Admit peer-scoped DNS reply traffic in the chart NetworkPolicy and exercise
+  Kubernetes Service-name resolution in the Kubernetes 1.36 regression.
+
 ## [0.7.3] - 2026-09-28
 
 ### Added
@@ -315,7 +340,8 @@ signatures, and public-registry attestations.
   short-lived EKS-compatible ES256 token issuance.
 - Added signed image/chart release validation with immutable artifact digests.
 
-[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.0...v0.7.1

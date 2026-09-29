@@ -47,6 +47,32 @@ jobs:
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           printf 'image=ghcr.io/%s/github-oidc-exchange\n' "$owner" >> "$GITHUB_OUTPUT"
           printf 'chart=ghcr.io/%s/charts/github-oidc-exchange\n' "$owner" >> "$GITHUB_OUTPUT"
+      - name: Install pinned ORAS for immutable-version preflight
+        env:
+          ORAS_VERSION: 1.3.3
+          ORAS_LINUX_AMD64_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59
+        run: |
+          set -euo pipefail
+          archive="oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          curl -sSLo "$RUNNER_TEMP/$archive" "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/$archive"
+          printf '%s  %s\n' "$ORAS_LINUX_AMD64_SHA256" "$RUNNER_TEMP/$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/oras-preflight"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/oras-preflight" oras
+          printf '%s\n' "$RUNNER_TEMP/oras-preflight" >> "$GITHUB_PATH"
+      - name: Reject existing immutable release tags before builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.refs.outputs.image }}
+          CHART: ${{ steps.refs.outputs.chart }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          if oras manifest fetch --descriptor "$IMAGE:$VERSION" >/dev/null 2>&1 ||
+             oras manifest fetch --descriptor "$CHART:$VERSION" >/dev/null 2>&1; then
+            printf 'version tag already exists; never overwrite published artifacts\n' >&2
+            exit 1
+          fi
       - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
         with:
           version: v3.17.1
@@ -83,9 +109,8 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          push: true
           platforms: linux/amd64
-          tags: ${{ needs.preflight.outputs.image }}:candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}-amd64
+          outputs: type=image,name=${{ needs.preflight.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -121,9 +146,8 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          push: true
           platforms: linux/arm64
-          tags: ${{ needs.preflight.outputs.image }}:candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}-arm64
+          outputs: type=image,name=${{ needs.preflight.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -178,14 +202,6 @@ jobs:
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           printf '%s' "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-      - name: Reject existing version tags
-        run: |
-          set -euo pipefail
-          if oras manifest fetch --descriptor "$IMAGE:$VERSION" >/dev/null 2>&1 ||
-             oras manifest fetch --descriptor "$CHART:$VERSION" >/dev/null 2>&1; then
-            printf 'version tag already exists; never overwrite published artifacts\n' >&2
-            exit 1
-          fi
       - name: Publish verified multi-platform image and chart
         run: |
           set -euo pipefail

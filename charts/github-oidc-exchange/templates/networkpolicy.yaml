@@ -44,6 +44,21 @@ spec:
         - port: 8080
           protocol: TCP
     {{- end }}
+    # Kubernetes NetworkPolicy normally treats replies as part of an allowed
+    # egress connection. Some CNI implementations do not preserve that state
+    # for DNS on every path, so admit reply traffic only from the configured
+    # DNS peers. Reply destination ports are ephemeral and cannot be narrowed.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.dnsNamespaceSelector | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.dnsPodSelector | nindent 14 }}
+        {{- range .Values.networkPolicy.dnsIpBlocks }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
   egress:
     - to:
         - namespaceSelector:

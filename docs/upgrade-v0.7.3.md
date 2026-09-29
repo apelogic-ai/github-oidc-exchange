@@ -1,5 +1,10 @@
 # Upgrade to 0.7.3 — network, rollout, and release assets
 
+> Historical guide for the 0.7.3 boundary. For current installation,
+> diagnostics, release verification, and rollback, use the
+> [installation guide](installation.md) and
+> [0.7.4 upgrade guide](upgrade-v0.7.4.md).
+
 Application/chart 0.7.3 is a patch release. It preserves Identity's routes,
 token claims, audiences, policy schemas, supported Kubernetes floor, and
 default v5 behavior. The release adds portable API-server egress, optional

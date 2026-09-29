@@ -118,6 +118,8 @@ networkPolicy:
     k8s-app: kube-dns
   # Optional literal NodeLocal DNSCache addresses, for example
   # 169.254.20.10/32 or fd00::a/128. Selector-based cluster DNS remains on.
+  # The same selector/IP peers are admitted for DNS reply traffic because
+  # reply destination ports are ephemeral on CNIs that do not retain state.
   dnsIpBlocks: []
   # GitHub OIDC discovery/JWKS and other required HTTPS destinations. The
   # dual-stack defaults preserve the chart's existing unrestricted HTTPS
