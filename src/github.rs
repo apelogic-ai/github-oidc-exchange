@@ -99,7 +99,10 @@ impl GitHubVerifier {
             .timeout(Duration::from_secs(5))
             .build()
             .map_err(|error| {
-                VerifyError::keys_unavailable("initializing the JWKS HTTP client", error)
+                VerifyError::keys_unavailable(
+                    "initializing the JWKS HTTP client",
+                    error_chain_detail(&error),
+                )
             })?;
         Ok(Self {
             audience,
@@ -242,15 +245,22 @@ impl GitHubVerifier {
             .get(&self.jwks_url)
             .send()
             .await
-            .map_err(|error| VerifyError::keys_unavailable("fetching the GitHub JWKS", error))?
+            .map_err(|error| {
+                VerifyError::keys_unavailable(
+                    "fetching the GitHub JWKS",
+                    error_chain_detail(&error),
+                )
+            })?
             .error_for_status()
             .map_err(|error| {
-                VerifyError::keys_unavailable("checking the GitHub JWKS HTTP status", error)
+                VerifyError::keys_unavailable(
+                    "checking the GitHub JWKS HTTP status",
+                    error_chain_detail(&error),
+                )
             })?;
-        let document: JwkSet = response
-            .json()
-            .await
-            .map_err(|error| VerifyError::keys_unavailable("decoding the GitHub JWKS", error))?;
+        let document: JwkSet = response.json().await.map_err(|error| {
+            VerifyError::keys_unavailable("decoding the GitHub JWKS", error_chain_detail(&error))
+        })?;
         let mut keys = HashMap::new();
         for jwk in document.keys {
             let Some(kid) = jwk.common.key_id.clone() else {
@@ -278,6 +288,25 @@ impl GitHubVerifier {
         };
         Ok(())
     }
+}
+
+fn error_chain_detail(error: &(dyn std::error::Error + 'static)) -> String {
+    const MAX_CAUSES: usize = 8;
+
+    let mut detail = error.to_string();
+    let mut cause = error.source();
+    for _ in 0..MAX_CAUSES {
+        let Some(current) = cause else {
+            break;
+        };
+        let current_detail = current.to_string();
+        if !current_detail.is_empty() && !detail.ends_with(&current_detail) {
+            detail.push_str(": ");
+            detail.push_str(&current_detail);
+        }
+        cause = current.source();
+    }
+    detail
 }
 
 fn numeric_identifier(value: &str) -> bool {

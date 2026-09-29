@@ -100,8 +100,16 @@ for file in "${evidence_files[@]}"; do
     ' "$file")
   fi
 
+  # Scheme-qualified references are always host references, even when they
+  # have no path. Bare references must include a path so dotted prose such as
+  # version numbers and file names is not mistaken for a registry host.
   while IFS= read -r reference; do
     [[ -n "$reference" ]] || continue
     check_public_reference "$file" "$reference"
-  done < <(grep -Eo '(https?://|oci://)?([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?(/[[:alnum:]_.:@+?=&%/-]+)?' "$file" || true)
+  done < <(grep -Eo '(https?://|oci://)([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?(/[[:alnum:]_.:@+?=&%/-]+)?' "$file" || true)
+
+  while IFS= read -r reference; do
+    [[ -n "$reference" ]] || continue
+    check_public_reference "$file" "$reference"
+  done < <(grep -Eo '([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?/[[:alnum:]_.:@+?=&%/-]+' "$file" || true)
 done
