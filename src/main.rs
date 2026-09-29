@@ -75,6 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log_startup_failure("GitHub JWKS warm-up", failure);
     })?;
     info!(dependency = "github_jwks", "startup dependency is ready");
+    let _jwks_refresh_task = tokio::spawn(verifier.clone().run_refresh_loop());
     let service = ExchangeService {
         verifier,
         policy,

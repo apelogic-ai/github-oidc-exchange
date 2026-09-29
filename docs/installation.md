@@ -645,10 +645,11 @@ The default `config.githubJwksMaxStalenessSeconds` is 21600 (six hours), with
 an accepted range of 600 through 604800 seconds. Readiness uses only the age of
 the last successfully cached GitHub key set, so an egress interruption inside
 that bound does not remove every replica from Service endpoints. Each replica
-soft-refreshes on exchange after five minutes, rate-limits retries to one per
-30 seconds, and forces a separately rate-limited refresh for an unknown
-`kid`. The replay-ledger readiness check uses a fixed sentinel Lease GET with
-a one-second deadline and caches 200/404 health for 30 seconds.
+uses a background loop to refresh after five minutes, including while idle,
+and rate-limits retries to one per 30 seconds. A matching cached-key exchange
+does not wait for the refresh request; an unknown `kid` forces a separately
+rate-limited refresh. The replay-ledger readiness check uses a fixed sentinel
+Lease GET with a one-second deadline and caches 200/404 health for 30 seconds.
 
 Repeat the **version-checked** file replacement after activate/retire (and for
 the RSA keyring or a policy ConfigMap), fetching a fresh metadata-only
@@ -689,8 +690,9 @@ JWKS warm-up. A successful remote-key warm-up records
 `dependency=github_jwks` without logging key contents.
 
 During exchange, an invalid assertion records `exchange_denied` and returns
-401. GitHub keys refresh after a five-minute soft age. A failed refresh emits
-`github_jwks_refresh_failed`, increments
+401. A background loop refreshes GitHub keys after a five-minute soft age, so
+an idle replica refreshes before the hard-staleness bound. A failed refresh
+emits `github_jwks_refresh_failed`, increments
 `github_oidc_exchange_jwks_refresh_failures_total`, and continues using a
 matching cached key until `config.githubJwksMaxStalenessSeconds` (21600 by
 default). Only an empty or hard-stale cache records `exchange_failed` and

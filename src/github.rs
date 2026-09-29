@@ -130,17 +130,7 @@ impl GitHubVerifier {
         audience: String,
         max_staleness: Duration,
     ) -> Result<Self, VerifyError> {
-        let client = reqwest::Client::builder()
-            .https_only(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(5))
-            .build()
-            .map_err(|error| {
-                VerifyError::keys_unavailable(
-                    "initializing the JWKS HTTP client",
-                    error_chain_detail(&error),
-                )
-            })?;
+        let client = jwks_client(true)?;
         Ok(Self {
             audience,
             client,
@@ -172,6 +162,7 @@ impl GitHubVerifier {
     #[doc = "Constructs a verifier with an explicit JWKS URL for failure-path tests."]
     pub fn with_test_jwks_url(audience: String, jwks_url: String) -> Result<Self, VerifyError> {
         let mut verifier = Self::new(audience)?;
+        verifier.client = jwks_client(false)?;
         verifier.jwks_url = jwks_url;
         Ok(verifier)
     }
@@ -254,6 +245,11 @@ impl GitHubVerifier {
         ))
     }
 
+    pub async fn run_refresh_loop(self) {
+        self.run_refresh_loop_with_interval(Duration::from_secs(JWKS_REFRESH_RETRY_SECONDS))
+            .await;
+    }
+
     pub fn refresh_failures(&self) -> u64 {
         self.refresh_failures.load(Ordering::Relaxed)
     }
@@ -274,32 +270,20 @@ impl GitHubVerifier {
                 .cloned()
                 .ok_or(VerifyError::Invalid);
         }
-        let cached = {
-            let cache = self.cache.read().await;
-            cache.keys.get(kid).cloned()
-        };
-        if let Some(key) = cached {
-            if self.cache_age_seconds().await < JWKS_SOFT_REFRESH_SECONDS {
-                return Ok(key);
-            }
-            let refresh_result = self.refresh_soft_if_due().await;
+        let cached_key_is_hard_stale = {
             let cache = self.cache.read().await;
             if cache_is_usable(&cache, Utc::now().timestamp(), self.max_staleness)
                 && let Some(key) = cache.keys.get(kid)
             {
                 return Ok(key.clone());
             }
-            if cache_is_usable(&cache, Utc::now().timestamp(), self.max_staleness)
-                && matches!(&refresh_result, Ok(RefreshAttempt::Refreshed))
-            {
-                return Err(VerifyError::Invalid);
-            }
-            return Err(refresh_result.err().unwrap_or_else(|| {
-                VerifyError::keys_unavailable(
-                    "using the cached GitHub JWKS",
-                    "the cache is past the configured hard-staleness bound",
-                )
-            }));
+            cache.keys.contains_key(kid)
+        };
+        if cached_key_is_hard_stale {
+            return Err(VerifyError::keys_unavailable(
+                "using the cached GitHub JWKS",
+                "the cache is past the configured hard-staleness bound",
+            ));
         }
 
         let refresh_result = self.refresh_for_unknown_kid_if_due(kid).await;
@@ -331,6 +315,13 @@ impl GitHubVerifier {
         }
         refresh.last_soft_attempt = now;
         self.run_refresh().await
+    }
+
+    async fn run_refresh_loop_with_interval(&self, interval: Duration) {
+        loop {
+            tokio::time::sleep(interval).await;
+            let _ = self.refresh_soft_if_due().await;
+        }
     }
 
     async fn refresh_for_unknown_kid_if_due(
@@ -439,6 +430,20 @@ impl GitHubVerifier {
         };
         Ok(())
     }
+}
+
+fn jwks_client(https_only: bool) -> Result<reqwest::Client, VerifyError> {
+    reqwest::Client::builder()
+        .https_only(https_only)
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|error| {
+            VerifyError::keys_unavailable(
+                "initializing the JWKS HTTP client",
+                error_chain_detail(&error),
+            )
+        })
 }
 
 fn attempted_recently(last_attempt: i64, now: i64) -> bool {
@@ -623,6 +628,7 @@ fn valid_git_ref(value: &str) -> bool {
 
 #[cfg(all(test, feature = "test-support"))]
 mod tests {
+    use axum::{Json, Router, routing::get};
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     use rand::thread_rng;
@@ -687,7 +693,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cached_key_survives_refresh_failure_until_hard_staleness()
+    async fn cached_key_does_not_wait_for_a_failed_background_refresh_until_hard_staleness()
     -> Result<(), Box<dyn std::error::Error>> {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let (assertion, decoding) = signed_test_assertion("cached-source")?;
@@ -708,7 +714,23 @@ mod tests {
         assert!(verifier.check_ready().await.is_ok());
         assert_eq!(verifier.refresh_failures(), 0);
         assert!(verifier.verify(&assertion).await.is_ok());
-        assert_eq!(verifier.refresh_failures(), 1);
+        assert_eq!(verifier.refresh_failures(), 0);
+
+        let refresh_verifier = verifier.clone();
+        let refresh_task = tokio::spawn(async move {
+            refresh_verifier
+                .run_refresh_loop_with_interval(Duration::from_millis(10))
+                .await;
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while verifier.refresh_failures() == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        refresh_task.abort();
+
+        assert!(verifier.check_ready().await.is_ok());
         assert!(verifier.verify(&assertion).await.is_ok());
         assert_eq!(verifier.refresh_failures(), 1);
 
@@ -750,6 +772,76 @@ mod tests {
             Err(VerifyError::KeysUnavailable { .. })
         ));
         assert_eq!(verifier.refresh_failures(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn background_refresh_recovers_a_hard_stale_cache_without_an_exchange()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let private = RsaPrivateKey::new(&mut thread_rng(), 2048)?;
+        let modulus = URL_SAFE_NO_PAD.encode(private.n().to_bytes_be());
+        let exponent = URL_SAFE_NO_PAD.encode(private.e().to_bytes_be());
+        let decoding = DecodingKey::from_rsa_components(&modulus, &exponent)?;
+        let document = Arc::new(serde_json::json!({
+            "keys": [{
+                "kty": "RSA",
+                "alg": "RS256",
+                "use": "sig",
+                "kid": "background-source",
+                "n": modulus,
+                "e": exponent
+            }]
+        }));
+        let requests = Arc::new(AtomicU64::new(0));
+        let app = Router::new().route(
+            "/.well-known/jwks",
+            get({
+                let document = document.clone();
+                let requests = requests.clone();
+                move || {
+                    let document = document.clone();
+                    let requests = requests.clone();
+                    async move {
+                        requests.fetch_add(1, Ordering::Relaxed);
+                        Json((*document).clone())
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let verifier = GitHubVerifier::with_test_jwks_url(
+            "local-steward-run".to_owned(),
+            format!("http://{address}/.well-known/jwks"),
+        )?;
+        {
+            let mut cache = verifier.cache.write().await;
+            cache.keys.insert("background-source".to_owned(), decoding);
+            cache.fetched_at =
+                Utc::now().timestamp() - i64::try_from(DEFAULT_JWKS_MAX_STALENESS_SECONDS)? - 1;
+        }
+        assert!(verifier.check_ready().await.is_err());
+
+        let refresh_verifier = verifier.clone();
+        let refresh_task = tokio::spawn(async move {
+            refresh_verifier
+                .run_refresh_loop_with_interval(Duration::from_millis(10))
+                .await;
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while verifier.check_ready().await.is_err() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+
+        assert!(requests.load(Ordering::Relaxed) >= 1);
+        assert_eq!(verifier.refresh_failures(), 0);
+        refresh_task.abort();
+        server.abort();
         Ok(())
     }
 

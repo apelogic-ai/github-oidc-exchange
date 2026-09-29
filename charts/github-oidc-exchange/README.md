@@ -43,8 +43,9 @@ gauges documented in the installation guide.
 
 `config.githubJwksMaxStalenessSeconds` defaults to six hours. A matching
 cached GitHub key remains usable through a shorter JWKS outage; readiness
-fails only after that hard bound. Refresh attempts are single-flight and
-rate-limited, while the cache age and refresh-failure count are metrics.
+fails only after that hard bound. An idle-safe background loop keeps the cache
+fresh; attempts are single-flight and rate-limited, while the cache age and
+refresh-failure count are metrics.
 
 `image.digest` must come from the release handoff or a verified
 manifest-preserving mirror. Placeholder and homogeneous digests are rejected;

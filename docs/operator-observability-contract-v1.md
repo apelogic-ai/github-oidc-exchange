@@ -36,7 +36,9 @@ may contain multiple simultaneous failures and clients must ignore unknown
 additive names. A failing signing-key check means the current key is inside its
 configured expiry window. `github_jwks` fails only when no successfully loaded
 key set remains inside `GITHUB_JWKS_MAX_STALENESS_SECONDS`; the probe performs
-no GitHub network request. `replay_ledger` uses a fixed sentinel Lease GET,
+no GitHub network request. A single-flight background loop refreshes the cache
+after the five-minute soft age, including on replicas receiving no exchanges.
+`replay_ledger` uses a fixed sentinel Lease GET,
 treats 200 or 404 as healthy, times the request out within one second, and
 caches the result for 30 seconds. A failed check means Identity cannot safely
 accept a GitHub assertion.
@@ -97,8 +99,9 @@ approaching the configured readiness threshold. Use audit reason counts to
 separate policy denials from dependency outages; HTTP 401 and 503 have the same
 boundary.
 
-After the five-minute soft refresh age, an exchange attempts a single-flight
-refresh at most once per 30 seconds. A refresh failure emits
+After the five-minute soft refresh age, a background loop attempts a
+single-flight refresh at most once per 30 seconds. A matching cached-key
+exchange does not wait for that network request. A refresh failure emits
 `event="github_jwks_refresh_failed"`, increments the refresh-failure counter,
 and continues with a matching cached key until the configured hard-staleness
 bound. An unknown `kid` gets a separately rate-limited forced refresh so key
