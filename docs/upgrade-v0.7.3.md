@@ -197,9 +197,10 @@ decision; its presence does not affect Pods that mount v5.
   assertion, and an unadmitted repository.
 - Verify replay Lease creation with API-server traffic on the cluster's actual
   post-DNAT port.
-- When Reloader automation is enabled, change a non-secret test ConfigMap and
-  verify every replica receives a new pod UID before relying on it for key or
-  policy changes.
+- When Reloader automation is enabled, make a harmless data change to one of
+  the ConfigMaps named in the Deployment's Reloader annotation and verify
+  every replica receives a new pod UID before relying on it for key or policy
+  changes.
 - If workload exchange is enabled, verify the exact values in the
   [Steward/OpenShell pairing guide](steward-openshell-workload-pairing.md).
 
@@ -211,7 +212,8 @@ versioned policy objects and overlapping signing keys until verification is
 complete.
 
 ```sh
-helm rollback "$IDENTITY_RELEASE" PREVIOUS_REVISION \
+helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
+  rollback "$IDENTITY_RELEASE" PREVIOUS_REVISION \
   --namespace "$IDENTITY_NAMESPACE" \
   --wait
 ```

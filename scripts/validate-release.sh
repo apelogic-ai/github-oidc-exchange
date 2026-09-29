@@ -5,6 +5,8 @@ bash scripts/validate-ci-tools.sh
 bash scripts/test-portable-release.sh
 bash scripts/test-docs-drift.sh
 bash scripts/test-release-contract-assets.sh
+bash scripts/check-public-release-boundary.sh
+bash scripts/test-public-release-boundary.sh
 
 artifacthub_metadata=charts/github-oidc-exchange/artifacthub-repo.yml
 [[ -f "$artifacthub_metadata" ]]
@@ -63,6 +65,10 @@ required=(
   'workflow_dispatch:'
   'packages: write'
   'runs-on: ubuntu-24.04-arm'
+  'image=ghcr.io/%s/github-oidc-exchange'
+  'chart=ghcr.io/%s/charts/github-oidc-exchange'
+  'DOCKER_BUILD_RECORD_UPLOAD: "false"'
+  'DOCKER_BUILD_SUMMARY: "false"'
   'Build and publish native amd64 image candidate'
   'Build and publish native arm64 image candidate'
   'Compose native multi-platform image candidate'
@@ -80,35 +86,35 @@ required=(
   '--type slsaprovenance1'
   'CANDIDATE_TAG: candidate-'
   'CHART_CANDIDATE_TAG: candidate-'
+  'oras manifest fetch --descriptor "$IMAGE_REFERENCE:$VERSION"'
+  'oras manifest fetch --descriptor "$CHART_REFERENCE:$VERSION"'
   'oras push --image-spec v1.0'
   'org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY'
-  'aws ecr describe-images'
-  'Promote verified image candidate'
-  'Promote verified chart candidate'
+  'Scan native amd64 image digest with Trivy'
+  'Scan native arm64 image digest with Trivy'
+  '${{ env.IMAGE_REFERENCE }}@${{ needs.build-amd64.outputs.digest }}'
+  '${{ env.IMAGE_REFERENCE }}@${{ needs.build-arm64.outputs.digest }}'
+  'Publish signed version tags'
+  'oras tag "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}" "$VERSION"'
   'oras tag "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" "$VERSION"'
-  'PUBLIC_IMAGE_REFERENCE=ghcr.io/'
-  'PUBLIC_CHART_REFERENCE=ghcr.io/'
   'Authenticate to GitHub Container Registry'
-  'Mirror verified immutable ECR artifacts to GHCR'
   'Publish Artifact Hub repository metadata'
-  '$PUBLIC_CHART_REFERENCE:artifacthub.io'
+  '$CHART_REFERENCE:artifacthub.io'
   'application/vnd.cncf.artifacthub.config.v1+yaml'
   'application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml'
   'steps.artifacthub.outputs.digest'
-  'Verify mirrored GHCR packages remain public'
-  'Sign, attest, and verify public GHCR artifacts'
-  'output-file: ${{ runner.temp }}/public-image.spdx.json'
-  'output-file: ${{ runner.temp }}/public-chart.spdx.json'
+  'Verify GHCR packages remain public'
+  'Sign, attest, and verify immutable GHCR artifacts'
+  'output-file: ${{ runner.temp }}/image.spdx.json'
+  'output-file: ${{ runner.temp }}/chart.spdx.json'
   'Verify anonymous exact-digest GHCR pulls'
-  'oras cp "$source_image" "$PUBLIC_IMAGE_REFERENCE:$VERSION"'
-  'oras cp "$source_chart" "$PUBLIC_CHART_REFERENCE:$VERSION"'
   'docker logout ghcr.io || true'
   'helm registry logout ghcr.io || true'
   'oras logout ghcr.io || true'
   'public_image_digest:$public_image_digest'
   'public_chart_digest:$public_chart_digest'
   'anonymous_pull_verified:true'
-  'manifest_preserving_mirror:true'
+  'direct_publish:true'
   'image_platforms:$platforms[0]'
   'release_url:$release_url'
   'workflow_run_url:$workflow_run_url'
@@ -124,6 +130,9 @@ required=(
   'identity_contract:$identity_contract'
   'supported_policy_contracts:[$policy_contract,$source_auth_policy_contract]'
   'supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]'
+  'bash scripts/check-public-release-boundary.sh'
+  '--evidence dist/release.slsa.json'
+  '--evidence dist/release-manifest.json'
 )
 
 for contract in "${required[@]}"; do
@@ -137,37 +146,6 @@ fi
 
 for architecture in amd64 arm64; do
   grep -Fq -- "image-platform-$architecture.digest" "$workflow"
-  grep -Fq -- "architecture == \$architecture" "$workflow"
-done
-grep -Fq -- 'scan="$RUNNER_TEMP/image.ecr-scan-$architecture.json"' "$workflow"
-
-for private_output in \
-  'dist/image.ecr-scan-' \
-  'dist/image.trivy.json' \
-  'dist/chart.trivy.json' \
-  'dist/image.spdx.json' \
-  'dist/chart.spdx.json' \
-  'dist/chart-candidate.json' \
-  'dist/chart-config.json'; do
-  if grep -Fq -- "$private_output" "$workflow"; then
-    printf 'private release evidence must not be written to the public dist directory: %s\n' \
-      "$private_output" >&2
-    exit 1
-  fi
-done
-
-for private_manifest_field in \
-  '--arg ecr_' \
-  'ecr_image:' \
-  'ecr_chart:' \
-  'ecr_image_digest:' \
-  'ecr_chart_digest:' \
-  'byte_identical_to_ecr:'; do
-  if grep -Fq -- "$private_manifest_field" "$workflow"; then
-    printf 'public release manifest retains a private-registry field: %s\n' \
-      "$private_manifest_field" >&2
-    exit 1
-  fi
 done
 
 grep -Fq -- 'kube_version="$(sed -n' "$workflow"

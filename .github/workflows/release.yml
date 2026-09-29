@@ -21,19 +21,17 @@ jobs:
   preflight:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      AWS_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
-      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
-      IMAGE_REPOSITORY_NAME: ${{ vars.ECR_IMAGE_REPOSITORY }}
-      CHART_REPOSITORY_NAME: ${{ vars.ECR_CHART_REPOSITORY }}
+    outputs:
+      image: ${{ steps.refs.outputs.image }}
+      chart: ${{ steps.refs.outputs.chart }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Validate release request before cloud authentication
+      - name: Validate release request
+        id: refs
         shell: bash
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
@@ -51,18 +49,15 @@ jobs:
             printf 'release v%s already exists\n' "$REQUESTED_VERSION" >&2
             exit 1
           fi
-          : "${AWS_REGION:?Set AWS_REGION}"
-          : "${AWS_ROLE_ARN:?Set AWS_RELEASE_ROLE_ARN}"
-          : "${ECR_REGISTRY:?Set ECR_REGISTRY}"
-          : "${IMAGE_REPOSITORY_NAME:?Set ECR_IMAGE_REPOSITORY}"
-          : "${CHART_REPOSITORY_NAME:?Set ECR_CHART_REPOSITORY}"
-          ghcr_owner="${GITHUB_REPOSITORY_OWNER,,}"
-          [[ "$ghcr_owner" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          [[ "$owner" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
+          printf 'image=ghcr.io/%s/github-oidc-exchange\n' "$owner" >> "$GITHUB_OUTPUT"
+          printf 'chart=ghcr.io/%s/charts/github-oidc-exchange\n' "$owner" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
 
-      - name: Validate runtime smoke contract before cloud authentication
+      - name: Validate runtime smoke contract
         run: bash scripts/validate-runtime-smoke.sh
 
       - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
@@ -87,10 +82,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      AWS_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
-      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
-      IMAGE_REFERENCE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_IMAGE_REPOSITORY }}
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+      DOCKER_BUILD_SUMMARY: "false"
+      IMAGE_REFERENCE: ${{ needs.preflight.outputs.image }}
       CANDIDATE_TAG: candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}-amd64
     outputs:
       digest: ${{ steps.image.outputs.digest }}
@@ -98,19 +92,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
-      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v5.1.0
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          role-session-name: github-oidc-exchange-amd64-${{ github.run_id }}
-
-      - name: Authenticate to ECR
-        shell: bash
-        run: aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
-
+      - name: Authenticate to GitHub Container Registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-
       - name: Build and publish native amd64 image candidate
         id: image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -127,7 +113,6 @@ jobs:
           sbom: false
           cache-from: type=gha,scope=release-amd64
           cache-to: type=gha,mode=max,scope=release-amd64
-
       - name: Smoke native amd64 image candidate
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
@@ -138,10 +123,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      AWS_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
-      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
-      IMAGE_REFERENCE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_IMAGE_REPOSITORY }}
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+      DOCKER_BUILD_SUMMARY: "false"
+      IMAGE_REFERENCE: ${{ needs.preflight.outputs.image }}
       CANDIDATE_TAG: candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}-arm64
     outputs:
       digest: ${{ steps.image.outputs.digest }}
@@ -149,19 +133,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
-      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v5.1.0
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          role-session-name: github-oidc-exchange-arm64-${{ github.run_id }}
-
-      - name: Authenticate to ECR
-        shell: bash
-        run: aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
-
+      - name: Authenticate to GitHub Container Registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-
       - name: Build and publish native arm64 image candidate
         id: image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -178,56 +154,36 @@ jobs:
           sbom: false
           cache-from: type=gha,scope=release-arm64
           cache-to: type=gha,mode=max,scope=release-arm64
-
       - name: Smoke native arm64 image candidate
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh "$IMAGE_REFERENCE@$IMAGE_DIGEST"
 
   publish:
-    needs:
-      - preflight
-      - build-amd64
-      - build-arm64
+    needs: [preflight, build-amd64, build-arm64]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      AWS_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
-      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
-      IMAGE_REPOSITORY_NAME: ${{ vars.ECR_IMAGE_REPOSITORY }}
-      CHART_REPOSITORY_NAME: ${{ vars.ECR_CHART_REPOSITORY }}
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+      DOCKER_BUILD_SUMMARY: "false"
       VERSION: ${{ inputs.version }}
       CANDIDATE_TAG: candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
       CHART_CANDIDATE_TAG: candidate-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
-      IMAGE_REFERENCE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_IMAGE_REPOSITORY }}
-      CHART_REFERENCE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_CHART_REPOSITORY }}
+      IMAGE_REFERENCE: ${{ needs.preflight.outputs.image }}
+      CHART_REFERENCE: ${{ needs.preflight.outputs.chart }}
       COSIGN_EXPERIMENTAL: "1"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Define public release references
-        shell: bash
-        run: |
-          set -euo pipefail
-          ghcr_owner="${GITHUB_REPOSITORY_OWNER,,}"
-          [[ "$ghcr_owner" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
-          printf 'PUBLIC_IMAGE_REFERENCE=ghcr.io/%s/github-oidc-exchange\n' "$ghcr_owner" >> "$GITHUB_ENV"
-          printf 'PUBLIC_CHART_REFERENCE=ghcr.io/%s/charts/github-oidc-exchange\n' "$ghcr_owner" >> "$GITHUB_ENV"
-
       - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4.3.1
         with:
           version: v3.17.1
-
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-
       - uses: sigstore/cosign-installer@874852de93c66509b01dc7cd80f7a5385182d017 # v4.1.0
         with:
           cosign-release: v3.1.2
-
       - name: Install pinned ORAS
         shell: bash
         env:
@@ -242,26 +198,24 @@ jobs:
           mkdir -p "$RUNNER_TEMP/oras-bin"
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/oras-bin" oras
           printf '%s\n' "$RUNNER_TEMP/oras-bin" >> "$GITHUB_PATH"
-
-      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v5.1.0
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          role-session-name: github-oidc-exchange-${{ github.run_id }}
-
-      - name: Authenticate to ECR
+      - name: Authenticate to GitHub Container Registry
         shell: bash
-        run: aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
-
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
       - name: Reject existing immutable release tags
         shell: bash
         run: |
           set -euo pipefail
-          for repository in "$IMAGE_REPOSITORY_NAME" "$CHART_REPOSITORY_NAME"; do
-            existing="$(aws ecr batch-get-image --repository-name "$repository" --image-ids imageTag="$VERSION" --query 'images[0].imageId.imageDigest' --output text)"
-            [[ "$existing" == None ]]
-          done
-
+          if oras manifest fetch --descriptor "$IMAGE_REFERENCE:$VERSION" >/dev/null 2>&1 ||
+             oras manifest fetch --descriptor "$CHART_REFERENCE:$VERSION" >/dev/null 2>&1; then
+            printf 'version tag already exists; never overwrite published artifacts\n' >&2
+            exit 1
+          fi
       - name: Compose native multi-platform image candidate
         id: image
         shell: bash
@@ -279,11 +233,7 @@ jobs:
             --tag "$IMAGE_REFERENCE:$CANDIDATE_TAG" \
             "$IMAGE_REFERENCE@$AMD64_DIGEST" \
             "$IMAGE_REFERENCE@$ARM64_DIGEST"
-          digest="$(aws ecr batch-get-image \
-            --repository-name "$IMAGE_REPOSITORY_NAME" \
-            --image-ids imageTag="$CANDIDATE_TAG" \
-            --query 'images[0].imageId.imageDigest' \
-            --output text)"
+          digest="$(oras manifest fetch --descriptor "$IMAGE_REFERENCE:$CANDIDATE_TAG" | jq -r '.digest')"
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           mkdir -p dist
           docker buildx imagetools inspect --raw "$IMAGE_REFERENCE@$digest" > dist/image-index.json
@@ -294,13 +244,32 @@ jobs:
              and ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64" and .digest == $amd64)] | length) == 1
              and ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64" and .digest == $arm64)] | length) == 1' \
             dist/image-index.json > /dev/null
+          printf '%s\n' "$AMD64_DIGEST" > dist/image-platform-amd64.digest
+          printf '%s\n' "$ARM64_DIGEST" > dist/image-platform-arm64.digest
+          jq -n --arg amd64 "$AMD64_DIGEST" --arg arm64 "$ARM64_DIGEST" \
+            '{linux:{amd64:$amd64,arm64:$arm64}}' > dist/image-platforms.json
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Package and scan chart locally
+      - name: Scan native amd64 image digest with Trivy
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+        with:
+          image-ref: ${{ env.IMAGE_REFERENCE }}@${{ needs.build-amd64.outputs.digest }}
+          format: json
+          output: ${{ runner.temp }}/image-amd64.trivy.json
+          exit-code: "1"
+          severity: CRITICAL
+      - name: Scan native arm64 image digest with Trivy
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+        with:
+          image-ref: ${{ env.IMAGE_REFERENCE }}@${{ needs.build-arm64.outputs.digest }}
+          format: json
+          output: ${{ runner.temp }}/image-arm64.trivy.json
+          exit-code: "1"
+          severity: CRITICAL
+      - name: Package chart locally
         shell: bash
         run: |
           set -euo pipefail
-          artifacthub_image="$PUBLIC_IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"
+          artifacthub_image="$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"
           [[ "$artifacthub_image" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$ ]]
           sed -i "s|image: replace-with-release-image|image: $artifacthub_image|" \
             charts/github-oidc-exchange/Chart.yaml
@@ -323,16 +292,8 @@ jobs:
             kubeVersion: $kube_version,
             type: "application"
           }' > "$RUNNER_TEMP/chart-config.json"
-
-      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
-        with:
-          image-ref: ${{ env.IMAGE_REFERENCE }}@${{ steps.image.outputs.digest }}
-          format: json
-          output: ${{ runner.temp }}/image.trivy.json
-          exit-code: "1"
-          severity: CRITICAL
-
-      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+      - name: Scan packaged chart with Trivy
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
         with:
           scan-type: fs
           scan-ref: /tmp/chart-scan
@@ -340,55 +301,6 @@ jobs:
           output: ${{ runner.temp }}/chart.trivy.json
           exit-code: "1"
           severity: CRITICAL
-
-      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.22.2
-        with:
-          image: ${{ env.IMAGE_REFERENCE }}@${{ steps.image.outputs.digest }}
-          format: spdx-json
-          output-file: ${{ runner.temp }}/image.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-
-      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.22.2
-        with:
-          path: /tmp/chart-scan
-          format: spdx-json
-          output-file: ${{ runner.temp }}/chart.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-
-      - name: Enforce clean ECR scans on every runnable platform manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-          image="$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"
-          docker buildx imagetools inspect --raw "$image" > dist/image-index.json
-          for architecture in amd64 arm64; do
-            platform_digest="$(jq -r --arg architecture "$architecture" '
-              [.manifests[]?
-                | select(.platform.os == "linux" and .platform.architecture == $architecture)
-                | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest")
-                | .digest] | unique | if length == 1 then .[0] else empty end
-            ' dist/image-index.json)"
-            [[ "$platform_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
-            if [[ "$architecture" == amd64 ]]; then
-              expected="${{ needs.build-amd64.outputs.digest }}"
-            else
-              expected="${{ needs.build-arm64.outputs.digest }}"
-            fi
-            [[ "$platform_digest" == "$expected" ]]
-            aws ecr wait image-scan-complete --repository-name "$IMAGE_REPOSITORY_NAME" --image-id imageDigest="$platform_digest"
-            scan="$RUNNER_TEMP/image.ecr-scan-$architecture.json"
-            aws ecr describe-image-scan-findings --repository-name "$IMAGE_REPOSITORY_NAME" --image-id imageDigest="$platform_digest" --output json > "$scan"
-            [[ "$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' "$scan")" == 0 ]]
-            printf '%s\n' "$platform_digest" > "dist/image-platform-$architecture.digest"
-          done
-          jq -n \
-            --rawfile amd64 dist/image-platform-amd64.digest \
-            --rawfile arm64 dist/image-platform-arm64.digest \
-            '{linux:{amd64:($amd64 | rtrimstr("\n")),arm64:($arm64 | rtrimstr("\n"))}}' \
-            > dist/image-platforms.json
-
       - name: Publish unique immutable chart candidate
         id: chart
         shell: bash
@@ -408,16 +320,27 @@ jobs:
             > "$RUNNER_TEMP/chart-candidate.json"
           digest="$(jq -r '.digest' "$RUNNER_TEMP/chart-candidate.json")"
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
-          registry_digest="$(aws ecr describe-images \
-            --repository-name "$CHART_REPOSITORY_NAME" \
-            --image-ids imageTag="$CHART_CANDIDATE_TAG" \
-            --query 'imageDetails[0].imageDigest' \
-            --output text)"
-          [[ "$registry_digest" == "$digest" ]]
+          published="$(oras manifest fetch --descriptor "$CHART_REFERENCE:$CHART_CANDIDATE_TAG" | jq -r '.digest')"
+          [[ "$published" == "$digest" ]]
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
           printf '%s\n' "$digest" > dist/chart.digest
-
-      - name: Generate SLSA v1 provenance predicates
+      - name: Generate image SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.22.2
+        with:
+          image: ${{ env.IMAGE_REFERENCE }}@${{ steps.image.outputs.digest }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/image.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Generate chart SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.22.2
+        with:
+          path: /tmp/chart-scan
+          format: spdx-json
+          output-file: ${{ runner.temp }}/chart.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Generate SLSA v1 provenance predicate
         shell: bash
         run: |
           set -euo pipefail
@@ -431,8 +354,7 @@ jobs:
                 metadata: {invocationId:$invocation}
               }
             }' > dist/release.slsa.json
-
-      - name: Sign, attest, and verify immutable candidate artifacts
+      - name: Sign, attest, and verify immutable GHCR artifacts
         shell: bash
         run: |
           set -euo pipefail
@@ -446,68 +368,33 @@ jobs:
             else
               reference="$chart"
             fi
-            cosign sign --yes --bundle "$RUNNER_TEMP/$artifact-signature.sigstore.json" --new-bundle-format=true --registry-referrers-mode=oci-1-1 "$reference"
+            cosign sign --yes --bundle "dist/$artifact-signature.sigstore.json" --new-bundle-format=true --registry-referrers-mode=oci-1-1 "$reference"
             cosign attest --yes --new-bundle-format=true --type spdxjson --predicate "$RUNNER_TEMP/$artifact.spdx.json" "$reference"
             cosign attest --yes --new-bundle-format=true --type slsaprovenance1 --predicate dist/release.slsa.json "$reference"
             cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true "$reference" > /dev/null
             cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type spdxjson "$reference" > /dev/null
             cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type slsaprovenance1 "$reference" > /dev/null
           done
-
-      - name: Promote verified image candidate
+      - name: Publish signed version tags
         shell: bash
         run: |
           set -euo pipefail
-          docker buildx imagetools create --tag "$IMAGE_REFERENCE:$VERSION" "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"
-          published="$(aws ecr batch-get-image --repository-name "$IMAGE_REPOSITORY_NAME" --image-ids imageTag="$VERSION" --query 'images[0].imageId.imageDigest' --output text)"
-          [[ "$published" == "${{ steps.image.outputs.digest }}" ]]
-
-      - name: Promote verified chart candidate
-        shell: bash
-        run: |
-          set -euo pipefail
+          oras tag "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}" "$VERSION"
           oras tag "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" "$VERSION"
-          published="$(aws ecr batch-get-image \
-            --repository-name "$CHART_REPOSITORY_NAME" \
-            --image-ids imageTag="$VERSION" \
-            --query 'images[0].imageId.imageDigest' \
-            --output text)"
-          [[ "$published" == "${{ steps.chart.outputs.digest }}" ]]
-          mkdir -p /tmp/promoted-chart
-          helm pull "oci://$CHART_REFERENCE" --version "$VERSION" --destination /tmp/promoted-chart
-          cmp "dist/github-oidc-exchange-$VERSION.tgz" \
-            "/tmp/promoted-chart/github-oidc-exchange-$VERSION.tgz"
-
-      - name: Authenticate to GitHub Container Registry
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-
-      - name: Mirror verified immutable ECR artifacts to GHCR
-        id: public
-        shell: bash
-        run: |
-          set -euo pipefail
-          source_image="$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"
-          source_chart="$CHART_REFERENCE@${{ steps.chart.outputs.digest }}"
-          oras cp "$source_image" "$PUBLIC_IMAGE_REFERENCE:$VERSION"
-          oras cp "$source_chart" "$PUBLIC_CHART_REFERENCE:$VERSION"
-          image_digest="$(oras manifest fetch --descriptor "$PUBLIC_IMAGE_REFERENCE:$VERSION" | jq -r '.digest')"
-          chart_digest="$(oras manifest fetch --descriptor "$PUBLIC_CHART_REFERENCE:$VERSION" | jq -r '.digest')"
+          image_digest="$(oras manifest fetch --descriptor "$IMAGE_REFERENCE:$VERSION" | jq -r '.digest')"
+          chart_digest="$(oras manifest fetch --descriptor "$CHART_REFERENCE:$VERSION" | jq -r '.digest')"
           [[ "$image_digest" == "${{ steps.image.outputs.digest }}" ]]
           [[ "$chart_digest" == "${{ steps.chart.outputs.digest }}" ]]
-          printf 'image_digest=%s\n' "$image_digest" >> "$GITHUB_OUTPUT"
-          printf 'chart_digest=%s\n' "$chart_digest" >> "$GITHUB_OUTPUT"
-
+          mkdir -p /tmp/published-chart
+          helm pull "oci://$CHART_REFERENCE" --version "$VERSION" --destination /tmp/published-chart
+          cmp "dist/github-oidc-exchange-$VERSION.tgz" \
+            "/tmp/published-chart/github-oidc-exchange-$VERSION.tgz"
       - name: Publish Artifact Hub repository metadata
         id: artifacthub
         shell: bash
         run: |
           set -euo pipefail
-          metadata_ref="$PUBLIC_CHART_REFERENCE:artifacthub.io"
+          metadata_ref="$CHART_REFERENCE:artifacthub.io"
           metadata_file=charts/github-oidc-exchange/artifacthub-repo.yml
           oras push "$metadata_ref" \
             --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
@@ -519,8 +406,7 @@ jobs:
             ([.layers[] | select(.mediaType == "application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml")] | length) == 1
           ' >/dev/null
           printf 'digest=%s\n' "$metadata_digest" >> "$GITHUB_OUTPUT"
-
-      - name: Verify mirrored GHCR packages remain public
+      - name: Verify GHCR packages remain public
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -531,82 +417,38 @@ jobs:
             visibility="$(gh api "orgs/$owner/packages/container/$package" --jq .visibility)"
             [[ "$visibility" == public ]]
           done
-
-      - name: Generate public GHCR image SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.22.2
-        with:
-          image: ${{ env.PUBLIC_IMAGE_REFERENCE }}@${{ steps.public.outputs.image_digest }}
-          format: spdx-json
-          output-file: ${{ runner.temp }}/public-image.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-
-      - name: Generate public chart SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.22.2
-        with:
-          path: /tmp/chart-scan
-          format: spdx-json
-          output-file: ${{ runner.temp }}/public-chart.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-
-      - name: Sign, attest, and verify public GHCR artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
-          issuer="https://token.actions.githubusercontent.com"
-          public_image="$PUBLIC_IMAGE_REFERENCE@${{ steps.public.outputs.image_digest }}"
-          public_chart="$PUBLIC_CHART_REFERENCE@${{ steps.public.outputs.chart_digest }}"
-          for artifact in public-image public-chart; do
-            if [[ "$artifact" == public-image ]]; then
-              reference="$public_image"
-              sbom="$RUNNER_TEMP/public-image.spdx.json"
-            else
-              reference="$public_chart"
-              sbom="$RUNNER_TEMP/public-chart.spdx.json"
-            fi
-            cosign sign --yes --bundle "dist/$artifact-signature.sigstore.json" --new-bundle-format=true --registry-referrers-mode=oci-1-1 "$reference"
-            cosign attest --yes --new-bundle-format=true --type spdxjson --predicate "$sbom" "$reference"
-            cosign attest --yes --new-bundle-format=true --type slsaprovenance1 --predicate dist/release.slsa.json "$reference"
-            cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true "$reference" > /dev/null
-            cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type spdxjson "$reference" > /dev/null
-            cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type slsaprovenance1 "$reference" > /dev/null
-          done
-
       - name: Verify anonymous exact-digest GHCR pulls
         shell: bash
         run: |
           set -euo pipefail
-          public_image="$PUBLIC_IMAGE_REFERENCE@${{ steps.public.outputs.image_digest }}"
-          public_chart="$PUBLIC_CHART_REFERENCE@${{ steps.public.outputs.chart_digest }}"
+          image="$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}"
+          chart="$CHART_REFERENCE@${{ steps.chart.outputs.digest }}"
           identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
           issuer="https://token.actions.githubusercontent.com"
           docker logout ghcr.io || true
           helm registry logout ghcr.io || true
           oras logout ghcr.io || true
-          docker pull "$public_image"
-          docker image inspect "$public_image" --format '{{json .RepoDigests}}' | jq -e --arg ref "$public_image" 'index($ref) != null' > /dev/null
-          image_digest="$(oras manifest fetch --descriptor "$public_image" | jq -r '.digest')"
-          chart_digest="$(oras manifest fetch --descriptor "$public_chart" | jq -r '.digest')"
-          artifacthub_digest="$(oras manifest fetch --descriptor "$PUBLIC_CHART_REFERENCE:artifacthub.io" | jq -r '.digest')"
-          [[ "$image_digest" == "${{ steps.public.outputs.image_digest }}" ]]
-          [[ "$chart_digest" == "${{ steps.public.outputs.chart_digest }}" ]]
+          docker pull "$image"
+          docker image inspect "$image" --format '{{json .RepoDigests}}' | jq -e --arg ref "$image" 'index($ref) != null' > /dev/null
+          image_digest="$(oras manifest fetch --descriptor "$image" | jq -r '.digest')"
+          chart_digest="$(oras manifest fetch --descriptor "$chart" | jq -r '.digest')"
+          artifacthub_digest="$(oras manifest fetch --descriptor "$CHART_REFERENCE:artifacthub.io" | jq -r '.digest')"
+          [[ "$image_digest" == "${{ steps.image.outputs.digest }}" ]]
+          [[ "$chart_digest" == "${{ steps.chart.outputs.digest }}" ]]
           [[ "$artifacthub_digest" == "${{ steps.artifacthub.outputs.digest }}" ]]
-          oras manifest fetch "$PUBLIC_CHART_REFERENCE:artifacthub.io" | jq -e '
+          oras manifest fetch "$CHART_REFERENCE:artifacthub.io" | jq -e '
             ([.layers[] | select(.mediaType == "application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml")] | length) == 1
           ' >/dev/null
-          mkdir -p /tmp/public-chart
-          helm pull "oci://$PUBLIC_CHART_REFERENCE" --version "$VERSION" --destination /tmp/public-chart
+          mkdir -p /tmp/anonymous-chart
+          helm pull "oci://$CHART_REFERENCE" --version "$VERSION" --destination /tmp/anonymous-chart
           cmp "dist/github-oidc-exchange-$VERSION.tgz" \
-            "/tmp/public-chart/github-oidc-exchange-$VERSION.tgz"
-          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true "$public_image" > /dev/null
-          cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type spdxjson "$public_image" > /dev/null
-          cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type slsaprovenance1 "$public_image" > /dev/null
-          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true "$public_chart" > /dev/null
-          cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type spdxjson "$public_chart" > /dev/null
-          cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type slsaprovenance1 "$public_chart" > /dev/null
-
+            "/tmp/anonymous-chart/github-oidc-exchange-$VERSION.tgz"
+          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true "$image" > /dev/null
+          cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type spdxjson "$image" > /dev/null
+          cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type slsaprovenance1 "$image" > /dev/null
+          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true "$chart" > /dev/null
+          cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type spdxjson "$chart" > /dev/null
+          cosign verify-attestation --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" --experimental-oci11=true --new-bundle-format=true --type slsaprovenance1 "$chart" > /dev/null
       - name: Publish signed release handoff
         env:
           GH_TOKEN: ${{ github.token }}
@@ -624,22 +466,25 @@ jobs:
             --arg commit "$GITHUB_SHA" \
             --arg release_url "https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" \
             --arg workflow_run_url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --arg image "$PUBLIC_IMAGE_REFERENCE@${{ steps.public.outputs.image_digest }}" \
-            --arg chart "$PUBLIC_CHART_REFERENCE@${{ steps.public.outputs.chart_digest }}" \
-            --arg public_image_digest "${{ steps.public.outputs.image_digest }}" \
-            --arg public_chart_digest "${{ steps.public.outputs.chart_digest }}" \
+            --arg image "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}" \
+            --arg chart "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" \
+            --arg public_image_digest "${{ steps.image.outputs.digest }}" \
+            --arg public_chart_digest "${{ steps.chart.outputs.digest }}" \
             --arg policy_contract "$policy_contract" \
             --arg identity_contract "$identity_contract" \
             --arg source_auth_policy_contract "$source_auth_policy_contract" \
             --arg source_auth_identity_contract "$source_auth_identity_contract" \
             --slurpfile platforms dist/image-platforms.json \
-            '{version:$version,commit:$commit,release_url:$release_url,workflow_run_url:$workflow_run_url,image:$image,chart:$chart,public_image_digest:$public_image_digest,public_chart_digest:$public_chart_digest,image_platforms:$platforms[0],public_distribution:{registry:"ghcr.io",anonymous_pull_verified:true,manifest_preserving_mirror:true},policy_contract:$policy_contract,identity_contract:$identity_contract,supported_policy_contracts:[$policy_contract,$source_auth_policy_contract],supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]}' \
+            '{version:$version,commit:$commit,release_url:$release_url,workflow_run_url:$workflow_run_url,image:$image,chart:$chart,public_image_digest:$public_image_digest,public_chart_digest:$public_chart_digest,image_platforms:$platforms[0],public_distribution:{registry:"ghcr.io",anonymous_pull_verified:true,direct_publish:true},policy_contract:$policy_contract,identity_contract:$identity_contract,supported_policy_contracts:[$policy_contract,$source_auth_policy_contract],supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]}' \
             > dist/release-manifest.json
+          bash scripts/check-public-release-boundary.sh \
+            --evidence dist/release.slsa.json \
+            --evidence dist/release-manifest.json \
+            --evidence "docs/releases/v$VERSION.md"
           identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
           cosign sign-blob --yes --bundle dist/release-manifest.sigstore.json dist/release-manifest.json
           cosign verify-blob --bundle dist/release-manifest.sigstore.json --certificate-identity "$identity" --certificate-oidc-issuer https://token.actions.githubusercontent.com dist/release-manifest.json
           gh release create "v$VERSION" --target "$GITHUB_SHA" --title "github-oidc-exchange v$VERSION" --notes-file "docs/releases/v$VERSION.md" dist/*
-
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ always() && hashFiles('dist/*') != '' }}
         with:
