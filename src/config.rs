@@ -2,7 +2,9 @@ use std::{env, net::SocketAddr, path::PathBuf, time::Duration};
 
 use thiserror::Error;
 
-use crate::{POLICY_VERSION, SOURCE_AUTH_POLICY_VERSION};
+use crate::{
+    POLICY_VERSION, SOURCE_AUTH_POLICY_VERSION, github::DEFAULT_JWKS_MAX_STALENESS_SECONDS,
+};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -16,6 +18,7 @@ pub struct Config {
     pub listen_address: SocketAddr,
     pub token_ttl: Duration,
     pub key_expiry_readiness_threshold: Duration,
+    pub github_jwks_max_staleness: Duration,
     pub workload: Option<WorkloadConfig>,
     pub browser_hop1: Option<BrowserHop1Config>,
 }
@@ -58,6 +61,8 @@ pub enum ConfigError {
     InvalidListenAddress,
     #[error("KEY_EXPIRY_READINESS_THRESHOLD_SECONDS must be between 120 and 31536000")]
     InvalidKeyExpiryReadinessThreshold,
+    #[error("GITHUB_JWKS_MAX_STALENESS_SECONDS must be between 600 and 604800")]
+    InvalidGitHubJwksMaxStaleness,
     #[error("WORKLOAD_LISTEN_ADDRESS is invalid")]
     InvalidWorkloadListenAddress,
     #[error("public and workload listeners must use different addresses")]
@@ -116,6 +121,13 @@ impl Config {
             .filter(|seconds| (120..=31_536_000).contains(seconds))
             .map(Duration::from_secs)
             .ok_or(ConfigError::InvalidKeyExpiryReadinessThreshold)?;
+        let github_jwks_max_staleness = env::var("GITHUB_JWKS_MAX_STALENESS_SECONDS")
+            .unwrap_or_else(|_| DEFAULT_JWKS_MAX_STALENESS_SECONDS.to_string())
+            .parse::<u64>()
+            .ok()
+            .filter(|seconds| valid_github_jwks_max_staleness(*seconds))
+            .map(Duration::from_secs)
+            .ok_or(ConfigError::InvalidGitHubJwksMaxStaleness)?;
         Ok(Self {
             issuer_url,
             github_exchange_audience,
@@ -127,6 +139,7 @@ impl Config {
             listen_address,
             token_ttl: Duration::from_secs(120),
             key_expiry_readiness_threshold,
+            github_jwks_max_staleness,
             workload,
             browser_hop1,
         })
@@ -245,6 +258,10 @@ fn valid_exchange_audience(value: &str) -> bool {
     !value.is_empty() && value.len() <= 255 && value.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
+fn valid_github_jwks_max_staleness(seconds: u64) -> bool {
+    (600..=604_800).contains(&seconds)
+}
+
 fn supported_policy_version(value: &str) -> bool {
     matches!(value, POLICY_VERSION | SOURCE_AUTH_POLICY_VERSION)
 }
@@ -268,6 +285,11 @@ mod tests {
         assert!(!valid_exchange_audience("contains whitespace"));
         assert!(!valid_exchange_audience("contains\0control"));
         assert!(!valid_exchange_audience(&"a".repeat(256)));
+        assert!(!valid_github_jwks_max_staleness(599));
+        assert!(valid_github_jwks_max_staleness(600));
+        assert!(valid_github_jwks_max_staleness(21_600));
+        assert!(valid_github_jwks_max_staleness(604_800));
+        assert!(!valid_github_jwks_max_staleness(604_801));
         assert!(supported_policy_version(POLICY_VERSION));
         assert!(supported_policy_version(SOURCE_AUTH_POLICY_VERSION));
         assert!(!supported_policy_version(

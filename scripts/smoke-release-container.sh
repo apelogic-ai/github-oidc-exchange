@@ -99,6 +99,7 @@ import os
 import ssl
 import sys
 import threading
+from urllib.parse import urlsplit
 
 diagnostics = sys.argv[3]
 coordination = sys.argv[4]
@@ -120,6 +121,22 @@ class BaseHandler(BaseHTTPRequestHandler):
         pass
 
 class TokenReviewHandler(BaseHandler):
+    def do_GET(self):
+        request_url = urlsplit(self.path)
+        checks = {
+            "path": request_url.path == "/apis/coordination.k8s.io/v1/namespaces/smoke/leases/github-oidc-exchange-readiness",
+            "authorization": self.headers.get("authorization") == "Bearer projected-service-account-token",
+            "query": request_url.query == "",
+        }
+        record("lease readiness request " + " ".join(f"{name}={str(value).lower()}" for name, value in checks.items()))
+        if not all(checks.values()):
+            self.send_error(400)
+            return
+        self.send_response(404)
+        self.send_header("content-length", "0")
+        self.end_headers()
+        record("lease readiness response status=404 available=true")
+
     def do_POST(self):
         length = int(self.headers.get("content-length", "0"))
         request = json.loads(self.rfile.read(length))

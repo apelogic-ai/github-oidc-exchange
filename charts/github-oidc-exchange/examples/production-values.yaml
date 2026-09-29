@@ -33,6 +33,7 @@ config:
   keyringSecretName: github-oidc-exchange-keyring
   keyringSecretKey: keyring.json
   keyExpiryReadinessThresholdSeconds: 604800
+  githubJwksMaxStalenessSeconds: 21600
 
 # Bump only the matching revision after the referenced projected object has
 # been verified in the cluster. These opaque values must never contain secret

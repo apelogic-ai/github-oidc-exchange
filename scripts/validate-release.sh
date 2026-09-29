@@ -116,25 +116,11 @@ required=(
   'docker logout ghcr.io || true'
   'helm registry logout ghcr.io || true'
   'oras logout ghcr.io || true'
-  'public_image_digest:$public_image_digest'
-  'public_chart_digest:$public_chart_digest'
-  'anonymous_pull_verified:true'
-  'direct_publish:true'
-  'image_platforms:$platforms[0]'
-  'release_url:$release_url'
-  'workflow_run_url:$workflow_run_url'
   '[[ -s "docs/releases/v$REQUESTED_VERSION.md" ]]'
   'gh release create "v$VERSION"'
   'bash scripts/stage-release-contract-assets.sh dist'
+  'bash scripts/generate-release-evidence.sh dist'
   '--notes-file "docs/releases/v$VERSION.md"'
-  '--arg policy_contract "$policy_contract"'
-  '--arg identity_contract "$identity_contract"'
-  '--arg source_auth_policy_contract "$source_auth_policy_contract"'
-  '--arg source_auth_identity_contract "$source_auth_identity_contract"'
-  'policy_contract:$policy_contract'
-  'identity_contract:$identity_contract'
-  'supported_policy_contracts:[$policy_contract,$source_auth_policy_contract]'
-  'supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]'
   'bash scripts/check-public-release-boundary.sh'
   '--evidence dist/release.slsa.json'
   '--evidence dist/release-manifest.json'
@@ -144,14 +130,37 @@ for contract in "${required[@]}"; do
   grep -Fq -- "$contract" "$workflow"
 done
 
+evidence_generator=scripts/generate-release-evidence.sh
+[[ -x "$evidence_generator" ]]
+for contract in \
+  '--arg policy_contract "$policy_contract"' \
+  '--arg identity_contract "$identity_contract"' \
+  '--arg source_auth_policy_contract "$source_auth_policy_contract"' \
+  '--arg source_auth_identity_contract "$source_auth_identity_contract"' \
+  'public_image_digest:$public_image_digest' \
+  'public_chart_digest:$public_chart_digest' \
+  'anonymous_pull_verified:true' \
+  'direct_publish:true' \
+  'image_platforms:$platforms[0]' \
+  'release_url:$release_url' \
+  'workflow_run_url:$workflow_run_url' \
+  'policy_contract:$policy_contract' \
+  'identity_contract:$identity_contract' \
+  'supported_policy_contracts:[$policy_contract,$source_auth_policy_contract]' \
+  'supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]'; do
+  grep -Fq -- "$contract" "$evidence_generator"
+done
+
 if grep -R -n -F 'candidate-' .github/workflows; then
   printf 'release workflows must publish intermediate artifacts by digest only\n' >&2
   exit 1
 fi
 
 preflight_rejection="$(grep -n -m1 -F 'name: Reject existing immutable release tags before builds' "$workflow" | cut -d: -f1)"
+preflight_boundary="$(grep -n -m1 -F 'name: Enforce public release boundary before publishing' "$workflow" | cut -d: -f1)"
 amd64_job="$(grep -n -m1 -F '  build-amd64:' "$workflow" | cut -d: -f1)"
-[[ -n "$preflight_rejection" && -n "$amd64_job" ]]
+[[ -n "$preflight_boundary" && -n "$preflight_rejection" && -n "$amd64_job" ]]
+((preflight_boundary < preflight_rejection))
 ((preflight_rejection < amd64_job))
 
 if grep -R -n -i -E 'qemu|binfmt' .github/workflows; then
@@ -297,6 +306,7 @@ workload_contracts=(
   'name: WORKLOAD_INPUT_AUDIENCE'
   'name: WORKLOAD_RSA_KEYRING_FILE'
   'name: KEY_EXPIRY_READINESS_THRESHOLD_SECONDS'
+  'name: GITHUB_JWKS_MAX_STALENESS_SECONDS'
   'name: WORKLOAD_LISTEN_ADDRESS'
   'name: TLS_CERTIFICATE_FILE'
   'name: TLS_PRIVATE_KEY_FILE'

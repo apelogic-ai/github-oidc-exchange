@@ -30,51 +30,40 @@ bash scripts/check-public-release-boundary.sh \
   --evidence "$fixture_dir/release-manifest.json" \
   --evidence "$fixture_dir/release-notes.md"
 
-image_digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-chart_digest=sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
-release_url="https://github.com/apelogic-ai/github-oidc-exchange/releases/tag/v$version"
-workflow_run_url="https://github.com/apelogic-ai/github-oidc-exchange/actions/runs/123456789"
-image="ghcr.io/apelogic-ai/github-oidc-exchange@$image_digest"
-chart="ghcr.io/apelogic-ai/charts/github-oidc-exchange@$chart_digest"
-policy_contract="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
-identity_contract="$(sed -n 's/^pub const IDENTITY_CONTRACT: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
-source_auth_policy_contract="$(sed -n 's/^pub const SOURCE_AUTH_POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
-source_auth_identity_contract="$(sed -n 's/^pub const SOURCE_AUTH_IDENTITY_CONTRACT: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
 printf '%s\n' \
   '{"linux":{"amd64":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","arm64":"sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"}}' \
   > "$fixture_dir/image-platforms.json"
-jq -n --arg version "$version" --arg commit 0123456789abcdef0123456789abcdef01234567 \
-  --arg release_url "$release_url" --arg workflow_run_url "$workflow_run_url" \
-  --arg image "$image" --arg chart "$chart" \
-  --arg public_image_digest "$image_digest" --arg public_chart_digest "$chart_digest" \
-  --arg policy_contract "$policy_contract" --arg identity_contract "$identity_contract" \
-  --arg source_auth_policy_contract "$source_auth_policy_contract" \
-  --arg source_auth_identity_contract "$source_auth_identity_contract" \
-  --slurpfile platforms "$fixture_dir/image-platforms.json" \
-  '{version:$version,commit:$commit,release_url:$release_url,workflow_run_url:$workflow_run_url,image:$image,chart:$chart,public_image_digest:$public_image_digest,public_chart_digest:$public_chart_digest,image_platforms:$platforms[0],public_distribution:{registry:"ghcr.io",anonymous_pull_verified:true,direct_publish:true},policy_contract:$policy_contract,identity_contract:$identity_contract,supported_policy_contracts:[$policy_contract,$source_auth_policy_contract],supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]}' \
-  > "$fixture_dir/workflow-release-manifest.json"
-
-jq -n \
-  --arg source https://github.com/apelogic-ai/github-oidc-exchange \
-  --arg commit 0123456789abcdef0123456789abcdef01234567 \
-  --arg workflow https://github.com/apelogic-ai/github-oidc-exchange/.github/workflows/release.yml@refs/heads/main \
-  --arg invocation 123456789/1 --arg version "$version" \
-  '{buildDefinition:{buildType:"https://apelogic.ai/build-types/github-actions-release/v1",externalParameters:{source:$source,commit:$commit,version:$version}},runDetails:{builder:{id:$workflow},metadata:{invocationId:$invocation}}}' \
-  > "$fixture_dir/workflow-release.slsa.json"
+RELEASE_VERSION="$version" \
+RELEASE_COMMIT=0123456789abcdef0123456789abcdef01234567 \
+RELEASE_REPOSITORY=apelogic-ai/github-oidc-exchange \
+RELEASE_WORKFLOW_REF=refs/heads/main \
+RELEASE_RUN_ID=123456789 \
+RELEASE_RUN_ATTEMPT=1 \
+RELEASE_IMAGE=ghcr.io/apelogic-ai/github-oidc-exchange@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+RELEASE_CHART=ghcr.io/apelogic-ai/charts/github-oidc-exchange@sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 \
+RELEASE_IMAGE_DIGEST=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+RELEASE_CHART_DIGEST=sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 \
+RELEASE_PLATFORMS_FILE="$fixture_dir/image-platforms.json" \
+  bash scripts/generate-release-evidence.sh "$fixture_dir"
 
 bash scripts/check-public-release-boundary.sh \
   --workflows .github/workflows \
   --evidence "$release_notes" \
-  --evidence "$fixture_dir/workflow-release-manifest.json" \
-  --evidence "$fixture_dir/workflow-release.slsa.json"
+  --evidence "$fixture_dir/release-manifest.json" \
+  --evidence "$fixture_dir/release.slsa.json"
 
 plant=0
 for planted in \
   '${{ vars.ECR_PLANTED }}' \
   '${{ vars.aws_planted }}' \
   '${{ secrets.ECR_PLANTED }}' \
+  '${{ vars['"'"'ECR_PLANTED'"'"'] }}' \
+  '${{ secrets["AWS_PLANTED"] }}' \
   'uses: aws-actions/amazon-ecr-login@0000000000000000000000000000000000000000' \
   'run: aws ecr get-login-password' \
+  'run: $(aws ecr get-login-password)' \
+  'run: aws --region us-east-1 ecr get-login-password' \
+  'run: "aws" ecr get-login-password' \
   '000000000000.dkr.example.amazonaws.com/example' \
   'uses: aws-actions/configure-aws-credentials@0000000000000000000000000000000000000000'; do
   plant=$((plant + 1))
@@ -97,6 +86,18 @@ if bash scripts/check-public-release-boundary.sh \
   printf 'release boundary guard accepted a planted evidence reference\n' >&2
   exit 1
 fi
+
+for planted_host in \
+  'Private registry: registry.private.invalid' \
+  '{"note":"registry.private.invalid"}'; do
+  printf '%s\n' "$planted_host" > "$fixture_dir/planted-bare-host.txt"
+  if bash scripts/check-public-release-boundary.sh \
+    --workflows "$fixture_dir/workflows" \
+    --evidence "$fixture_dir/planted-bare-host.txt" >/dev/null 2>&1; then
+    printf 'release boundary guard accepted a planted bare host\n' >&2
+    exit 1
+  fi
+done
 
 printf '%s\n' \
   '{"documentation":"https://unapproved.example.invalid"}' \

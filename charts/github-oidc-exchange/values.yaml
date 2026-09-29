@@ -31,6 +31,9 @@ config:
   keyringSecretKey: keyring.json
   # Readiness fails this many seconds before either active signing key expires.
   keyExpiryReadinessThresholdSeconds: 604800
+  # Cached GitHub signing keys remain usable through transient JWKS outages for
+  # this many seconds after the last successful refresh.
+  githubJwksMaxStalenessSeconds: 21600
 
 rolloutRevisions:
   # Required controller-free rollout triggers. Change only the entry whose

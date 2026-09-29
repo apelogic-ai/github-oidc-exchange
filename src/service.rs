@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use jsonwebtoken::get_current_timestamp;
 use serde::Serialize;
@@ -34,6 +37,54 @@ pub struct Metrics {
     pub denied: std::sync::atomic::AtomicU64,
     pub replayed: std::sync::atomic::AtomicU64,
     pub errors: std::sync::atomic::AtomicU64,
+    duration_buckets: [std::sync::atomic::AtomicU64; 8],
+    duration_count: std::sync::atomic::AtomicU64,
+    duration_sum_micros: std::sync::atomic::AtomicU64,
+}
+
+pub const EXCHANGE_DURATION_BUCKET_SECONDS: [f64; 8] =
+    [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 5.0];
+
+impl Metrics {
+    fn observe_duration(&self, elapsed: Duration) {
+        let micros = elapsed.as_micros().min(u128::from(u64::MAX)) as u64;
+        self.duration_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.duration_sum_micros
+            .fetch_add(micros, std::sync::atomic::Ordering::Relaxed);
+        for (bucket, upper_bound) in self
+            .duration_buckets
+            .iter()
+            .zip(EXCHANGE_DURATION_BUCKET_SECONDS)
+        {
+            if elapsed.as_secs_f64() <= upper_bound {
+                bucket.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+
+    pub fn duration_snapshot(&self) -> ([u64; 8], u64, u64) {
+        (
+            std::array::from_fn(|index| {
+                self.duration_buckets[index].load(std::sync::atomic::Ordering::Relaxed)
+            }),
+            self.duration_count
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.duration_sum_micros
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+}
+
+struct ExchangeTimer<'a> {
+    metrics: &'a Metrics,
+    started: Instant,
+}
+
+impl Drop for ExchangeTimer<'_> {
+    fn drop(&mut self) {
+        self.metrics.observe_duration(self.started.elapsed());
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -139,6 +190,10 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
         self.metrics
             .requests
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _timer = ExchangeTimer {
+            metrics: &self.metrics,
+            started: Instant::now(),
+        };
         let claims = match self.verifier.verify(assertion).await {
             Ok(claims) => claims,
             Err(VerifyError::Invalid) => {
@@ -153,12 +208,13 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
                     "exchange_failed",
                     &GitHubClaims::default(),
                     &error.to_string(),
+                    None,
                 );
                 return Err(ExchangeError::Unavailable);
             }
         };
-        let identity = self.policy.authorize(&claims).map_err(|error| {
-            self.deny(&claims, &error.to_string());
+        let identity = self.policy.authorize(&claims).map_err(|_| {
+            self.deny(&claims, "identity is not authorized");
             ExchangeError::Unauthorized
         })?;
         match self.ledger.use_once(&claims.jti, claims.exp).await {
@@ -167,14 +223,14 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
                 self.metrics
                     .replayed
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                self.audit("exchange_replayed", &claims, "replay");
+                self.audit("exchange_replayed", &claims, "replay", None);
                 return Err(ExchangeError::Unauthorized);
             }
-            Err(ReplayError::Unavailable) => {
+            Err(ReplayError::Unavailable | ReplayError::Configuration(_)) => {
                 self.metrics
                     .errors
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                self.audit("exchange_failed", &claims, "ledger_unavailable");
+                self.audit("exchange_failed", &claims, "ledger_unavailable", None);
                 return Err(ExchangeError::Unavailable);
             }
         }
@@ -196,7 +252,18 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
                 identity_contract: identity.identity_contract,
                 source_provenance: SourceProvenance::from(&claims),
             })
-            .map_err(|_| ExchangeError::Unavailable)?;
+            .map_err(|error| {
+                self.metrics
+                    .errors
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.audit(
+                    "exchange_failed",
+                    &claims,
+                    "signing_unavailable",
+                    Some(&error.to_string()),
+                );
+                ExchangeError::Unavailable
+            })?;
         self.metrics
             .issued
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -216,10 +283,10 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
         self.metrics
             .denied
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.audit("exchange_denied", claims, reason);
+        self.audit("exchange_denied", claims, reason, None);
     }
 
-    fn audit(&self, event: &str, claims: &GitHubClaims, reason: &str) {
+    fn audit(&self, event: &str, claims: &GitHubClaims, reason: &str, detail: Option<&str>) {
         warn!(
             event,
             actor_id = claims.actor_id,
@@ -229,6 +296,7 @@ impl<L: ReplayLedger + 'static> ExchangeService<L> {
             job_workflow_ref = claims.job_workflow_ref,
             source_jti_hash = hash_identifier(&claims.jti),
             reason,
+            detail = detail.unwrap_or_default(),
             "identity exchange rejected"
         );
     }

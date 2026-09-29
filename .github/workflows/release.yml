@@ -54,6 +54,11 @@ jobs:
           printf 'image=ghcr.io/%s/github-oidc-exchange\n' "$owner" >> "$GITHUB_OUTPUT"
           printf 'chart=ghcr.io/%s/charts/github-oidc-exchange\n' "$owner" >> "$GITHUB_OUTPUT"
 
+      - name: Enforce public release boundary before publishing
+        env:
+          VERSION: ${{ inputs.version }}
+        run: bash scripts/check-public-release-boundary.sh --evidence "docs/releases/v$VERSION.md"
+
       - name: Install pinned ORAS for immutable-version preflight
         shell: bash
         env:
@@ -355,20 +360,23 @@ jobs:
           output-file: ${{ runner.temp }}/chart.spdx.json
           upload-artifact: false
           upload-release-assets: false
-      - name: Generate SLSA v1 provenance predicate
+      - name: Generate release evidence
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_WORKFLOW_REF: ${{ github.ref }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          RELEASE_IMAGE: ${{ env.IMAGE_REFERENCE }}@${{ steps.image.outputs.digest }}
+          RELEASE_CHART: ${{ env.CHART_REFERENCE }}@${{ steps.chart.outputs.digest }}
+          RELEASE_IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          RELEASE_CHART_DIGEST: ${{ steps.chart.outputs.digest }}
+          RELEASE_PLATFORMS_FILE: dist/image-platforms.json
         run: |
           set -euo pipefail
-          jq -n --arg source "https://github.com/$GITHUB_REPOSITORY" --arg commit "$GITHUB_SHA" --arg workflow "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF" --arg invocation "$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT" --arg version "$VERSION" '{
-              buildDefinition: {
-                buildType: "https://apelogic.ai/build-types/github-actions-release/v1",
-                externalParameters: {source:$source, commit:$commit, version:$version}
-              },
-              runDetails: {
-                builder: {id:$workflow},
-                metadata: {invocationId:$invocation}
-              }
-            }' > dist/release.slsa.json
+          bash scripts/generate-release-evidence.sh dist
       - name: Sign, attest, and verify immutable GHCR artifacts
         shell: bash
         run: |
@@ -473,27 +481,6 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/stage-release-contract-assets.sh dist
-          policy_contract="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
-          identity_contract="$(sed -n 's/^pub const IDENTITY_CONTRACT: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
-          source_auth_policy_contract="$(sed -n 's/^pub const SOURCE_AUTH_POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
-          source_auth_identity_contract="$(sed -n 's/^pub const SOURCE_AUTH_IDENTITY_CONTRACT: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
-          [[ -n "$policy_contract" && -n "$identity_contract" && -n "$source_auth_policy_contract" && -n "$source_auth_identity_contract" ]]
-          jq -n \
-            --arg version "$VERSION" \
-            --arg commit "$GITHUB_SHA" \
-            --arg release_url "https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" \
-            --arg workflow_run_url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --arg image "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}" \
-            --arg chart "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" \
-            --arg public_image_digest "${{ steps.image.outputs.digest }}" \
-            --arg public_chart_digest "${{ steps.chart.outputs.digest }}" \
-            --arg policy_contract "$policy_contract" \
-            --arg identity_contract "$identity_contract" \
-            --arg source_auth_policy_contract "$source_auth_policy_contract" \
-            --arg source_auth_identity_contract "$source_auth_identity_contract" \
-            --slurpfile platforms dist/image-platforms.json \
-            '{version:$version,commit:$commit,release_url:$release_url,workflow_run_url:$workflow_run_url,image:$image,chart:$chart,public_image_digest:$public_image_digest,public_chart_digest:$public_chart_digest,image_platforms:$platforms[0],public_distribution:{registry:"ghcr.io",anonymous_pull_verified:true,direct_publish:true},policy_contract:$policy_contract,identity_contract:$identity_contract,supported_policy_contracts:[$policy_contract,$source_auth_policy_contract],supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]}' \
-            > dist/release-manifest.json
           bash scripts/check-public-release-boundary.sh \
             --evidence dist/release.slsa.json \
             --evidence dist/release-manifest.json \

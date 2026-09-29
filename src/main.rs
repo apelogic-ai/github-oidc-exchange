@@ -42,10 +42,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log_startup_failure("GitHub authorization policy", failure);
     })?;
     if policy.version != config.expected_policy_version {
-        return Err(std::io::Error::other(
-            "loaded policy version does not match EXPECTED_POLICY_VERSION",
-        )
-        .into());
+        let failure =
+            std::io::Error::other("loaded policy version does not match EXPECTED_POLICY_VERSION");
+        log_startup_failure("GitHub authorization policy contract", &failure);
+        return Err(failure.into());
     }
     let policy = Arc::new(policy);
     let keys = Arc::new(
@@ -64,13 +64,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 log_startup_failure("Kubernetes Lease replay ledger", failure);
             })?,
     );
-    let verifier = GitHubVerifier::new(config.github_exchange_audience).inspect_err(|failure| {
+    let verifier = GitHubVerifier::new_with_max_staleness(
+        config.github_exchange_audience,
+        config.github_jwks_max_staleness,
+    )
+    .inspect_err(|failure| {
         log_startup_failure("GitHub JWKS verifier", failure);
     })?;
     verifier.warm_up().await.inspect_err(|failure| {
         log_startup_failure("GitHub JWKS warm-up", failure);
     })?;
     info!(dependency = "github_jwks", "startup dependency is ready");
+    let _jwks_refresh_task = tokio::spawn(verifier.clone().run_refresh_loop());
     let service = ExchangeService {
         verifier,
         policy,

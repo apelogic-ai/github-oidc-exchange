@@ -9,6 +9,39 @@ signatures, and public-registry attestations.
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-09-29
+
+### Added
+
+- Allow policy v6 to admit every repository under one immutable numeric owner
+  through an explicit `repository_id: "*"` rule while preserving configured
+  selectors and concrete repository provenance.
+- Add optional exact reusable-workflow ref and SHA selectors to policy v6.
+- Publish a stable operator contract for readiness checks, structured audit
+  events/reasons, Prometheus metric metadata, and exchange latency.
+
+### Changed
+
+- Document classic and immutable-ID GitHub OIDC subjects, live template
+  discovery, OpenShell restart after workload-exchange activation, and a
+  short-lived operator CLI authentication procedure.
+- Generate release manifest and SLSA predicate fixtures through the same
+  script used by the release workflow, and run the public-boundary guard in
+  preflight before artifact publication.
+
+### Fixed
+
+- Detect bracket-style workflow variables, reordered or command-substituted
+  registry CLI invocations, and bare private hosts without misclassifying
+  versions or ordinary filenames.
+- Report replay-ledger configuration failures precisely and make GitHub JWKS,
+  replay ledger, and signing-key state visible through dependency-aware
+  readiness.
+- Keep matching cached GitHub keys usable through a configurable hard-staleness
+  window, refresh idle replicas in the background, rate-limit refresh retries,
+  and replace per-probe Lease listing with a cached sentinel GET while
+  preserving established audit reason values.
+
 ## [0.7.4] - 2026-09-28
 
 ### Changed

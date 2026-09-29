@@ -1,7 +1,7 @@
-# Installation guide — github-oidc-exchange 0.7.4
+# Installation guide — github-oidc-exchange 0.7.5
 
-This is the canonical operator guide for application **0.7.4**, Helm chart
-**0.7.4**, and the [Identity consumer contracts](consumer-contract-v1.md).
+This is the canonical operator guide for application **0.7.5**, Helm chart
+**0.7.5**, and the [Identity consumer contracts](consumer-contract-v1.md).
 It installs Identity in an operator-owned Kubernetes cluster from fork-owned
 artifacts. No ApeLogic account, cloud credential, external secret controller,
 GitHub OAuth App, or database is required. The baseline exchanges GitHub
@@ -12,16 +12,20 @@ in this repository. Registry access, issuer DNS/TLS, real GitHub assertions,
 and optional Kubernetes TokenReview must be tested in the target environment;
 successful Helm rendering alone is not acceptance.
 
+Treat the stable readiness checks, audit reasons, and Prometheus metrics in the
+[operator observability contract](operator-observability-contract-v1.md) as
+the monitoring and incident-response interface.
+
 For an opinionated v5 installation using an existing HTTPS Gateway, start with
 the [baseline quickstart](quickstart.md), then return here for operations and
 optional features. Use the [integration guide](integration.md) for claim
 observation, exchange smoke, and Steward integration.
 
-Application 0.7.4 supports `github-oidc-exchange.apelogic.io/v5` and
+Application 0.7.5 supports `github-oidc-exchange.apelogic.io/v5` and
 `github-oidc-exchange.apelogic.io/v6`. The chart defaults to v5 and an existing
 v5 ConfigMap, preserving `steward-task-v2` behavior. Policy v6 is an explicit
 opt-in that issues `steward-task-v3`; activate it with a separately named
-ConfigMap using the [0.7.4 upgrade procedure](upgrade-v0.7.4.md).
+ConfigMap using the [0.7.5 upgrade procedure](upgrade-v0.7.5.md).
 Existing older installations must first follow their version-specific guides.
 
 ## Prerequisites and decisions
@@ -117,7 +121,7 @@ visibility separately. For another operator-owned OCI registry, authenticate
 with that registry's own account and run a native single-architecture build:
 
 ```sh
-export IDENTITY_VERSION=0.7.4
+export IDENTITY_VERSION=0.7.5
 export IDENTITY_IMAGE_REPO=registry.example.org/team/github-oidc-exchange
 export IDENTITY_CHART_REPO=registry.example.org/team/charts/github-oidc-exchange
 # Match the builder host: linux/amd64 on x86-64 or linux/arm64 on ARM64.
@@ -212,8 +216,13 @@ storage. The chart's fixed output audiences are `steward-task-api` and, when
 enabled, `openshell-api`.
 
 The default v5 path requires exact subjects, events, refs, and verified actor
-mappings. The v6 path always binds signed numeric owner/repository IDs.
-`subjects`, `events`, and `refs` are independent optional exact selectors.
+mappings. The v6 path always binds a signed numeric owner ID and either one
+signed numeric repository ID or an explicit owner-wide `repository_id: "*"`
+rule. Per-repository rules remain the default. `subjects`, `events`, `refs`,
+`job_workflow_refs`, and `job_workflow_shas` are independent optional exact
+selectors. Owner-wide and exact repository rules cannot coexist for the same
+owner. Regardless of rule scope, provenance records the concrete signed
+`repository_id`.
 `actors`, `allowed_email_domains`, and `acting_group_prefix` are optional only
 as one complete compatibility bundle. Without that bundle, Identity emits no
 legacy email or group claims. It still validates the shape and consistency of
@@ -234,7 +243,7 @@ cargo run --locked --bin keyring-tool -- generate-es256 \
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
 ```
 
-When consuming the 0.7.4 or later release artifacts, download the policy files
+When consuming the 0.7.5 or later release artifacts, download the policy files
 above and run the same operations from the verified image digest. Run as the
 invoking host user so atomic mode-0600 output on the private bind mount is not
 owned by a container-only UID:
@@ -256,9 +265,19 @@ run_keyring_tool generate-rsa \
 run_keyring_tool validate-rsa /work/workload-keyring.json
 ```
 
-GitHub's ordinary `sub` is `repo:ORG/REPO:ref:refs/heads/BRANCH` for a branch
-workflow; environments and other triggers differ. **Do not invent or infer the
-subject from a repository name.** Run a short-lived, access-restricted probe in
+GitHub's classic `sub` is `repo:ORG/REPO:ref:refs/heads/BRANCH` for a branch
+workflow. A repository configured with an immutable-ID subject template can
+instead emit
+`repo:ORG@<owner-id>/REPO@<repo-id>:ref:refs/heads/BRANCH`. Environments and
+other triggers differ, and repository-specific customization may change the
+included keys or their order. Inspect it first:
+
+```sh
+gh api repos/OWNER/REPO/actions/oidc/customization/sub
+```
+
+**Do not invent or infer the subject from a repository name or template.** Run
+a short-lived, access-restricted probe in
 the actual GitHub repository and reusable-workflow context with
 `permissions: id-token: write`. Request the selected audience using
 `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`; decode
@@ -268,10 +287,13 @@ only the local JWT payload and inspect `sub`, `repository_owner_id`,
 For v5, admit the **observed exact** subject, event, ref, and actor mapping. For
 v6, configure the complete actor compatibility bundle only when Identity must
 emit a v2-compatible identity; configure repository selectors only when their
-exact restriction is required. A minimal v6 policy intentionally accepts valid branch, tag, pull
-request, event, workflow-subject, and numeric actor variations from the same
-admitted numeric repository without policy edits. In both versions, the
-numeric IDs and signed provenance remain mandatory trust inputs.
+exact restriction is required. `job_workflow_refs` pins the complete observed
+reusable-workflow reference and `job_workflow_shas` pins its exact lowercase
+40-character commit. A minimal v6 policy intentionally accepts valid branch,
+tag, pull request, event, workflow-subject, and numeric actor variations from
+the admitted repository without policy edits. An owner-wide rule extends that
+decision to every repository under one immutable owner ID. In both versions,
+the numeric IDs and signed provenance remain mandatory trust inputs.
 GitHub OAuth Apps do not participate in this flow.
 
 If enabling workload exchange, prepare its separate policy and keyring:
@@ -476,13 +498,13 @@ helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
 ```
 
 Validate discovery/JWKS and a fresh exchange again. There is no database
-migration; keep the same namespace to preserve replay Leases. A 0.7.4
+migration; keep the same namespace to preserve replay Leases. A 0.7.5
 application upgrade that retains v5 is safe to roll back normally. After v6
 activation, an older binary cannot read v6: roll back the chart/application
 and all three policy-selection values together to the retained v5 object.
 Never perform an image-only rollback while v6 remains mounted. The exact
 preflight, activation, and rollback sequence is in the
-[0.7.4 upgrade guide](upgrade-v0.7.4.md).
+[0.7.5 upgrade guide](upgrade-v0.7.5.md).
 
 ## 5. Enable optional workload exchange
 
@@ -619,6 +641,16 @@ expected gauge as a monitoring failure. Choose a smaller readiness threshold
 only when the configured key lifetime and a tested rotation process require
 it; the chart accepts 120 through 31536000 seconds.
 
+The default `config.githubJwksMaxStalenessSeconds` is 21600 (six hours), with
+an accepted range of 600 through 604800 seconds. Readiness uses only the age of
+the last successfully cached GitHub key set, so an egress interruption inside
+that bound does not remove every replica from Service endpoints. Each replica
+uses a background loop to refresh after five minutes, including while idle,
+and rate-limits retries to one per 30 seconds. A matching cached-key exchange
+does not wait for the refresh request; an unknown `kid` forces a separately
+rate-limited refresh. The replay-ledger readiness check uses a fixed sentinel
+Lease GET with a one-second deadline and caches 200/404 health for 30 seconds.
+
 Repeat the **version-checked** file replacement after activate/retire (and for
 the RSA keyring or a policy ConfigMap), fetching a fresh metadata-only
 `resourceVersion` each time. `kubectl replace` can otherwise perform an
@@ -658,12 +690,16 @@ JWKS warm-up. A successful remote-key warm-up records
 `dependency=github_jwks` without logging key contents.
 
 During exchange, an invalid assertion records `exchange_denied` and returns
-401. A GitHub JWKS refresh failure records `exchange_failed` with the failing
-fetch/status/decode/validation stage and cause, increments the error metric,
-and returns 503 `temporarily_unavailable`. Neither event contains the source
-assertion or an issued token. Use the stage and cause to distinguish DNS, TLS,
-HTTP status, malformed JWKS, and an empty usable-key set before changing
-policy or signing material.
+401. A background loop refreshes GitHub keys after a five-minute soft age, so
+an idle replica refreshes before the hard-staleness bound. A failed refresh
+emits `github_jwks_refresh_failed`, increments
+`github_oidc_exchange_jwks_refresh_failures_total`, and continues using a
+matching cached key until `config.githubJwksMaxStalenessSeconds` (21600 by
+default). Only an empty or hard-stale cache records `exchange_failed` and
+returns 503 `temporarily_unavailable`. Alert on the failure counter and
+`github_oidc_exchange_jwks_age_seconds`; use the logged stage and cause to
+distinguish DNS, TLS, HTTP status, malformed JWKS, and an empty usable-key set.
+Neither event contains the source assertion or an issued token.
 
 ## 7. Post-install and delivery test checklist
 

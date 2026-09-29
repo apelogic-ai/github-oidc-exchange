@@ -251,6 +251,8 @@ grep -Fq 'value: /etc/github-oidc-exchange/policy/policy.json' "$scratch/baselin
 grep -Fq 'value: /etc/github-oidc-exchange/keyring/keyring.json' "$scratch/baseline.yaml"
 grep -A1 -Fq 'name: KEY_EXPIRY_READINESS_THRESHOLD_SECONDS
               value: "604800"' "$scratch/baseline.yaml"
+grep -A1 -Fq 'name: GITHUB_JWKS_MAX_STALENESS_SECONDS
+              value: "21600"' "$scratch/baseline.yaml"
 if grep -Fq 'name: WORKLOAD_EXCHANGE_ENABLED' "$scratch/baseline.yaml" ||
   grep -Fq 'resources: ["tokenreviews"]' "$scratch/baseline.yaml" ||
   grep -Fq 'secretName: github-oidc-exchange-workload-rsa-keyring' "$scratch/baseline.yaml"; then
@@ -326,6 +328,15 @@ for invalid_threshold in 119 31536001; do
     --set "config.keyExpiryReadinessThresholdSeconds=$invalid_threshold" \
     >/dev/null 2>&1; then
     printf 'chart must reject key expiry readiness threshold %s\n' "$invalid_threshold" >&2
+    exit 1
+  fi
+done
+for invalid_staleness in 599 604801; do
+  if helm template invalid-jwks-staleness "$chart" \
+    -f "$chart/ci/test-values.yaml" \
+    --set "config.githubJwksMaxStalenessSeconds=$invalid_staleness" \
+    >/dev/null 2>&1; then
+    printf 'chart must reject GitHub JWKS max staleness %s\n' "$invalid_staleness" >&2
     exit 1
   fi
 done

@@ -1,6 +1,6 @@
 # github-oidc-exchange
 
-`github-oidc-exchange` 0.7.4 is an MIT-licensed, fork-installable Kubernetes
+`github-oidc-exchange` 0.7.5 is an MIT-licensed, fork-installable Kubernetes
 identity service. It verifies short-lived GitHub Actions OIDC assertions and
 issues two-minute ES256 tokens for Steward. An optional internal workload
 profile uses Kubernetes TokenReview and issues separate RS256 tokens for
@@ -19,21 +19,21 @@ requirements.
 The signed OCI Helm chart is also listed on
 [Artifact Hub](https://artifacthub.io/packages/helm/github-oidc-exchange/github-oidc-exchange).
 
-Release 0.7.4 supports two GitHub policy/token paths:
+Release 0.7.5 supports two GitHub policy/token paths:
 
 | Policy | Activation | Identity decision | Issued contract |
 | --- | --- | --- | --- |
 | `github-oidc-exchange.apelogic.io/v5` | Default and upgrade-safe | Exact subject, event, ref, and mapped numeric actor, plus numeric owner/repository IDs | `steward-task-v2`, unchanged |
 | `github-oidc-exchange.apelogic.io/v6` | Explicit opt-in | Numeric owner/repository IDs plus only the optional selectors that are present | `steward-task-v3` |
 
-The chart defaults to v5. Upgrading the 0.7.4 application while retaining the
+The chart defaults to v5. Upgrading the 0.7.5 application while retaining the
 existing v5 ConfigMap therefore preserves the v5 authorization decisions and
 v2 token shape. Activating v6 requires `config.policyContract`,
 `config.policyConfigMapName`, and `rolloutRevisions.githubPolicy` to select and
 roll out a separately created v6 policy object. Never rewrite or delete the v5
 object during activation. Rollback after v6 activation switches the
 application/chart revision and policy reference back together. See the
-[0.7.4 upgrade guide](docs/upgrade-v0.7.4.md).
+[0.7.5 upgrade guide](docs/upgrade-v0.7.5.md).
 
 In v6, repository `subjects`, `events`, and `refs` are independent optional
 compatibility selectors. `actors`, `allowed_email_domains`, and
@@ -47,6 +47,13 @@ values remain validated source provenance. Steward remains responsible for
 user binding and Task authority. Identity has no runtime dependency on Steward
 and does not query Steward users, policies, or Tasks; Steward is a downstream
 verifier of the issued contract.
+
+Policy v6 may set `repository_id` to `"*"` for one numeric `owner_id`. That
+explicit rule admits repositories owned by that immutable owner while still
+enforcing every configured subject, event, ref, reusable-workflow ref, and
+reusable-workflow SHA selector. Per-repository numeric IDs remain the default,
+owner-wide and exact rules cannot overlap for one owner, and issued provenance
+always records the concrete repository ID.
 
 The v3 token keeps the stable subject
 `github-actions:actor:<positive canonical numeric actor ID>`. The required
@@ -62,13 +69,17 @@ provenance.
 
 | Surface | Current status |
 | --- | --- |
-| Application and OCI Helm chart | `0.7.4` together; Kubernetes >=1.32; `linux/amd64` and `linux/arm64`. |
+| Application and OCI Helm chart | `0.7.5` together; Kubernetes >=1.32; `linux/amd64` and `linux/arm64`. |
 | GitHub input | GitHub RS256 assertion; exact configured input audience; immutable numeric owner/repository boundary; short freshness; replay protection; internally consistent signed provenance. |
 | GitHub output | ES256; `aud=["steward-task-api"]`; 120-second TTL; `steward-task-v2` for v5 or `steward-task-v3` for v6. |
 | Workload exchange | Off by default; internal HTTPS port 8443; exact TokenReview audience and service-account policy; RS256 `openshell-workload-v1`. |
 | Browser HOP-1 | Off by default; requires workload exchange and a public Steward JWKS; see its [v1 contract](docs/browser-hop1-contract-v1.md). |
 | Public routes | `/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`, `/jwks.json`, and `/v1/exchange` only. The workload route is never public. |
 | Key expiry | Signing validity is checked on every use; readiness fails before expiry using a configurable threshold, with seconds-to-expiry gauges for ES256 and optional RSA keys. |
+
+Readiness check names, structured audit events and rejection reasons, and
+Prometheus metric semantics form the stable
+[operator observability contract](docs/operator-observability-contract-v1.md).
 
 The RFC 8414 and OpenID metadata endpoints return the same discovery contract:
 the exact issuer, JWKS URI, GitHub exchange endpoint, exact GitHub OIDC input

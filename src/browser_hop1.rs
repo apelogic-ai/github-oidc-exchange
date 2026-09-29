@@ -254,7 +254,7 @@ impl<L: ReplayLedger + 'static> BrowserHop1ExchangeService<L> {
                 );
                 return Err(BrowserHop1ExchangeError::Unauthorized);
             }
-            Err(ReplayError::Unavailable) => {
+            Err(ReplayError::Unavailable | ReplayError::Configuration(_)) => {
                 self.metrics.errors.fetch_add(1, Ordering::Relaxed);
                 self.audit(
                     "browser_hop1_failed",

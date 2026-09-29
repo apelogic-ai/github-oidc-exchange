@@ -3,7 +3,7 @@ use std::{
     env, fs,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
@@ -20,6 +20,9 @@ const MAX_LEASE_DURATION_SECONDS: i64 = 960;
 const MAX_CLEANUP_PER_EXCHANGE: usize = 1;
 const MAX_CLEANUP_PAGES_PER_EXCHANGE: usize = 2;
 const CLEANUP_PAGE_SIZE: usize = 50;
+const READINESS_LEASE_NAME: &str = "github-oidc-exchange-readiness";
+const READINESS_CACHE_TTL: Duration = Duration::from_secs(30);
+const READINESS_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ReplayError {
@@ -27,6 +30,8 @@ pub enum ReplayError {
     Replayed,
     #[error("replay ledger is unavailable")]
     Unavailable,
+    #[error("replay ledger configuration is invalid: {0}")]
+    Configuration(String),
 }
 
 pub trait ReplayLedger: Send + Sync {
@@ -35,6 +40,10 @@ pub trait ReplayLedger: Send + Sync {
         jti: &str,
         expires_at: i64,
     ) -> impl std::future::Future<Output = Result<(), ReplayError>> + Send;
+
+    fn check_ready(&self) -> impl std::future::Future<Output = Result<(), ReplayError>> + Send {
+        async { Ok(()) }
+    }
 }
 
 /// Cluster-native replay ledger. A Lease is the authoritative one-time-use record; bounded
@@ -45,20 +54,32 @@ pub struct KubernetesLeaseReplayLedger {
     collection_url: Url,
     credential_file: PathBuf,
     cleanup_continue: Arc<Mutex<Option<String>>>,
+    readiness: Arc<tokio::sync::Mutex<ReadinessCache>>,
+}
+
+#[derive(Default)]
+struct ReadinessCache {
+    checked_at: Option<Instant>,
+    ready: bool,
 }
 
 impl KubernetesLeaseReplayLedger {
     pub fn in_cluster(namespace: String) -> Result<Self, ReplayError> {
         if !valid_dns_label(&namespace) {
-            return Err(ReplayError::Unavailable);
+            return Err(configuration(
+                "REPLAY_LEASE_NAMESPACE must be a valid DNS label",
+            ));
         }
-        let host = env::var("KUBERNETES_SERVICE_HOST").map_err(|_| ReplayError::Unavailable)?;
+        let host = env::var("KUBERNETES_SERVICE_HOST")
+            .map_err(|_| configuration("KUBERNETES_SERVICE_HOST is missing"))?;
         if host.is_empty() || host.contains(['/', '?', '#']) {
-            return Err(ReplayError::Unavailable);
+            return Err(configuration("KUBERNETES_SERVICE_HOST is invalid"));
         }
         let port = env::var("KUBERNETES_SERVICE_PORT_HTTPS").unwrap_or_else(|_| "443".to_owned());
         if port.parse::<u16>().is_err() {
-            return Err(ReplayError::Unavailable);
+            return Err(configuration(
+                "KUBERNETES_SERVICE_PORT_HTTPS is not a valid port",
+            ));
         }
         let authority = if host.contains(':') {
             format!("[{host}]")
@@ -68,7 +89,7 @@ impl KubernetesLeaseReplayLedger {
         let collection_url = Url::parse(&format!(
             "https://{authority}:{port}{LEASE_API_PATH}/{namespace}/leases"
         ))
-        .map_err(|_| ReplayError::Unavailable)?;
+        .map_err(|error| configuration(format!("Kubernetes Lease URL is invalid: {error}")))?;
         let ca_file = env::var("KUBERNETES_CA_CERTIFICATE_FILE")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
@@ -79,9 +100,21 @@ impl KubernetesLeaseReplayLedger {
             .unwrap_or_else(|_| {
                 PathBuf::from("/var/run/secrets/kubernetes.io/serviceaccount/token")
             });
-        let certificate = fs::read(ca_file)
-            .map_err(|_| ReplayError::Unavailable)
-            .and_then(|pem| Certificate::from_pem(&pem).map_err(|_| ReplayError::Unavailable))?;
+        let certificate = fs::read(&ca_file)
+            .map_err(|error| {
+                configuration(format!(
+                    "cannot read Kubernetes CA certificate {}: {error}",
+                    ca_file.display()
+                ))
+            })
+            .and_then(|pem| {
+                Certificate::from_pem(&pem).map_err(|error| {
+                    configuration(format!(
+                        "Kubernetes CA certificate {} is invalid: {error}",
+                        ca_file.display()
+                    ))
+                })
+            })?;
         let client = Client::builder()
             .https_only(true)
             .tls_built_in_root_certs(false)
@@ -89,12 +122,17 @@ impl KubernetesLeaseReplayLedger {
             .timeout(Duration::from_secs(5))
             .add_root_certificate(certificate)
             .build()
-            .map_err(|_| ReplayError::Unavailable)?;
+            .map_err(|error| {
+                configuration(format!(
+                    "cannot initialize Kubernetes Lease client: {error}"
+                ))
+            })?;
         Ok(Self {
             client,
             collection_url,
             credential_file,
             cleanup_continue: Arc::default(),
+            readiness: Arc::default(),
         })
     }
 
@@ -112,6 +150,7 @@ impl KubernetesLeaseReplayLedger {
             collection_url,
             credential_file,
             cleanup_continue: Arc::default(),
+            readiness: Arc::default(),
         })
     }
 
@@ -329,6 +368,31 @@ impl ReplayLedger for KubernetesLeaseReplayLedger {
             }
         }
     }
+
+    async fn check_ready(&self) -> Result<(), ReplayError> {
+        let mut readiness = self.readiness.lock().await;
+        if readiness
+            .checked_at
+            .is_some_and(|checked_at| checked_at.elapsed() < READINESS_CACHE_TTL)
+        {
+            return if readiness.ready {
+                Ok(())
+            } else {
+                Err(ReplayError::Unavailable)
+            };
+        }
+        let result = tokio::time::timeout(READINESS_TIMEOUT, self.get(READINESS_LEASE_NAME))
+            .await
+            .map_err(|_| ReplayError::Unavailable)
+            .and_then(|result| result.map(drop));
+        readiness.checked_at = Some(Instant::now());
+        readiness.ready = result.is_ok();
+        result
+    }
+}
+
+fn configuration(detail: impl Into<String>) -> ReplayError {
+    ReplayError::Configuration(detail.into())
 }
 
 #[derive(Clone, Copy)]
@@ -504,12 +568,37 @@ fn valid_dns_label(value: &str) -> bool {
 
 #[cfg(test)]
 mod lease_tests {
-    use chrono::{Duration, Utc};
-
-    use super::{
-        LEASE_RETENTION_SECONDS, LEDGER_LABEL, LEDGER_VERSION, Lease, LeaseMetadata, LeaseSpec,
-        expired_owned_leases, lease_name, retained_until, timestamp,
+    #[cfg(feature = "test-support")]
+    use std::{
+        fs,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
     };
+
+    #[cfg(feature = "test-support")]
+    use axum::{Router, extract::State, http::StatusCode, routing::get};
+    use chrono::{Duration, Utc};
+    #[cfg(feature = "test-support")]
+    use tempfile::NamedTempFile;
+
+    #[cfg(feature = "test-support")]
+    use super::ReplayLedger;
+    use super::{
+        KubernetesLeaseReplayLedger, LEASE_RETENTION_SECONDS, LEDGER_LABEL, LEDGER_VERSION, Lease,
+        LeaseMetadata, LeaseSpec, ReplayError, expired_owned_leases, lease_name, retained_until,
+        timestamp,
+    };
+
+    #[test]
+    fn invalid_namespace_has_an_actionable_configuration_error() {
+        assert!(matches!(
+            KubernetesLeaseReplayLedger::in_cluster("Invalid_Namespace".to_owned()),
+            Err(ReplayError::Configuration(message))
+                if message == "REPLAY_LEASE_NAMESPACE must be a valid DNS label"
+        ));
+    }
 
     #[test]
     fn replay_lease_name_is_deterministic_dns_safe_and_expiry_is_never_early() {
@@ -543,6 +632,44 @@ mod lease_tests {
             .map(|lease| lease.metadata.name.as_str())
             .collect::<Vec<_>>();
         assert_eq!(candidates, ["expired"]);
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn readiness_uses_a_cached_get_of_the_fixed_sentinel()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+        async fn missing_sentinel(State(requests): State<Arc<AtomicU64>>) -> StatusCode {
+            requests.fetch_add(1, Ordering::Relaxed);
+            StatusCode::NOT_FOUND
+        }
+
+        let requests = Arc::new(AtomicU64::new(0));
+        let application = Router::new()
+            .route(
+                "/apis/coordination.k8s.io/v1/namespaces/smoke/leases/github-oidc-exchange-readiness",
+                get(missing_sentinel),
+            )
+            .with_state(requests.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let server = tokio::spawn(async move { axum::serve(listener, application).await });
+        let credential = NamedTempFile::new()?;
+        fs::write(credential.path(), "service-account-token")?;
+        let ledger = KubernetesLeaseReplayLedger::from_test_api(
+            reqwest::Client::new(),
+            reqwest::Url::parse(&format!(
+                "http://{address}/apis/coordination.k8s.io/v1/namespaces/smoke/leases"
+            ))?,
+            credential.path().to_owned(),
+        )?;
+
+        assert!(ledger.check_ready().await.is_ok());
+        assert!(ledger.check_ready().await.is_ok());
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        server.abort();
+        Ok(())
     }
 
     fn test_lease(name: &str, renewed_at: chrono::DateTime<Utc>, duration: i32) -> Lease {

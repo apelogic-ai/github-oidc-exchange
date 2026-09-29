@@ -40,6 +40,10 @@ pub struct RepositoryPolicy {
     pub events: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refs: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_workflow_refs: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_workflow_shas: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -152,6 +156,11 @@ impl Policy {
         let mut repository_rules = HashSet::new();
         for repository in &self.repositories {
             validate_repository_ids(repository, false)?;
+            if repository.job_workflow_refs.is_some() || repository.job_workflow_shas.is_some() {
+                return Err(invalid(
+                    "job workflow selectors are supported only by policy v6",
+                ));
+            }
             let subjects = required_selector("subjects", &repository.subjects)?;
             let events = required_selector("events", &repository.events)?;
             let refs = required_selector("refs", &repository.refs)?;
@@ -202,12 +211,20 @@ impl Policy {
         }
 
         let mut repository_ids = HashSet::new();
+        let mut owner_scopes = HashSet::new();
         for repository in &self.repositories {
             validate_repository_ids(repository, true)?;
-            if !repository_ids.insert((
-                repository.owner_id.as_str(),
-                repository.repository_id.as_str(),
-            )) {
+            let owner_id = repository.owner_id.as_str();
+            let repository_id = repository.repository_id.as_str();
+            let ambiguous = if repository_id == "*" {
+                !owner_scopes.insert(owner_id)
+                    || repository_ids
+                        .iter()
+                        .any(|(configured_owner, _)| *configured_owner == owner_id)
+            } else {
+                owner_scopes.contains(owner_id) || !repository_ids.insert((owner_id, repository_id))
+            };
+            if ambiguous {
                 return Err(invalid("duplicate or ambiguous repository rule"));
             }
             if let Some(subjects) = repository.subjects.as_deref() {
@@ -219,6 +236,14 @@ impl Policy {
             }
             if let Some(refs) = repository.refs.as_deref() {
                 require_values("refs", refs)?;
+            }
+            if let Some(workflow_refs) = repository.job_workflow_refs.as_deref() {
+                require_values("job_workflow_refs", workflow_refs)?;
+                validate_workflow_refs(workflow_refs)?;
+            }
+            if let Some(workflow_shas) = repository.job_workflow_shas.as_deref() {
+                require_values("job_workflow_shas", workflow_shas)?;
+                validate_workflow_shas(workflow_shas)?;
             }
         }
         Ok(())
@@ -274,12 +299,21 @@ impl Policy {
         }
         let mut matching_rules = self.repositories.iter().filter(|repository| {
             repository.owner_id == claims.repository_owner_id
-                && repository.repository_id == claims.repository_id
+                && (repository.repository_id == "*"
+                    || repository.repository_id == claims.repository_id)
                 && optional_selector_matches(&repository.subjects, &claims.sub)
                 && optional_selector_matches(&repository.events, &claims.event_name)
                 && optional_selector_matches(&repository.refs, &claims.git_ref)
+                && optional_selector_matches(
+                    &repository.job_workflow_refs,
+                    &claims.job_workflow_ref,
+                )
+                && optional_selector_matches(
+                    &repository.job_workflow_shas,
+                    &claims.job_workflow_sha,
+                )
         });
-        let repository = matching_rules.next().ok_or(PolicyError::Unauthorized)?;
+        let _repository = matching_rules.next().ok_or(PolicyError::Unauthorized)?;
         if matching_rules.next().is_some() {
             return Err(PolicyError::Unauthorized);
         }
@@ -319,7 +353,7 @@ impl Policy {
             subject: format!("github-actions:actor:{}", claims.actor_id),
             groups,
             identity_contract: SOURCE_AUTH_IDENTITY_CONTRACT,
-            repository: format!("{}/{}", repository.owner_id, repository.repository_id),
+            repository: format!("{}/{}", claims.repository_owner_id, claims.repository_id),
             workflow_ref: claims.workflow_ref.clone(),
             job_workflow_ref: claims.job_workflow_ref.clone(),
         })
@@ -341,15 +375,45 @@ fn validate_repository_ids(
     repository: &RepositoryPolicy,
     bounded: bool,
 ) -> Result<(), PolicyError> {
-    let valid = |value: &str| {
+    let valid_numeric = |value: &str| {
         if bounded {
             numeric_identifier(value)
         } else {
             decimal_identifier(value)
         }
     };
-    if !valid(&repository.owner_id) || !valid(&repository.repository_id) {
+    let repository_valid =
+        valid_numeric(&repository.repository_id) || bounded && repository.repository_id == "*";
+    if !valid_numeric(&repository.owner_id) || !repository_valid {
         return Err(invalid("repository numeric IDs are required"));
+    }
+    Ok(())
+}
+
+fn validate_workflow_refs(workflow_refs: &[String]) -> Result<(), PolicyError> {
+    if workflow_refs.iter().any(|workflow_ref| {
+        workflow_ref.len() > 2_048
+            || !workflow_ref.bytes().all(|byte| byte.is_ascii_graphic())
+            || !workflow_ref.contains("/.github/workflows/")
+            || !workflow_ref.contains('@')
+    }) {
+        return Err(invalid(
+            "job_workflow_refs must contain exact GitHub workflow references",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_workflow_shas(workflow_shas: &[String]) -> Result<(), PolicyError> {
+    if workflow_shas.iter().any(|sha| {
+        sha.len() != 40
+            || !sha
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }) {
+        return Err(invalid(
+            "job_workflow_shas must contain exact lowercase Git SHA-1 values",
+        ));
     }
     Ok(())
 }

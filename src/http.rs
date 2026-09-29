@@ -1,4 +1,4 @@
-use std::{sync::Arc, sync::atomic::Ordering};
+use std::{fmt::Write as _, sync::Arc, sync::atomic::Ordering};
 
 use axum::{
     Json, Router,
@@ -17,7 +17,7 @@ use crate::{
     browser_hop1::{BrowserHop1ExchangeError, BrowserHop1ExchangeService},
     keys::KeyRing,
     replay::ReplayLedger,
-    service::{ExchangeError, ExchangeService},
+    service::{EXCHANGE_DURATION_BUCKET_SECONDS, ExchangeError, ExchangeService},
     workload::{
         ReviewError, ReviewedWorkload, TokenReviewer, WorkloadExchangeError,
         WorkloadExchangeService,
@@ -243,17 +243,26 @@ async fn no_content() -> StatusCode {
 
 async fn readiness<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 'static>(
     State(state): State<AppState<L, R>>,
-) -> StatusCode {
+) -> Response {
     let now = Utc::now();
-    if !state.service.keys.is_ready_at(now)
-        || state
-            .workload
-            .as_ref()
-            .is_some_and(|workload| !workload.keys.is_ready_at(now))
-    {
-        return StatusCode::SERVICE_UNAVAILABLE;
+    let mut failed_checks = Vec::new();
+    if !state.service.keys.is_ready_at(now) {
+        failed_checks.push("github_signing_key");
     }
-    StatusCode::NO_CONTENT
+    if state.service.verifier.check_ready().await.is_err() {
+        failed_checks.push("github_jwks");
+    }
+    if state.service.ledger.check_ready().await.is_err() {
+        failed_checks.push("replay_ledger");
+    }
+    if state
+        .workload
+        .as_ref()
+        .is_some_and(|workload| !workload.keys.is_ready_at(now))
+    {
+        failed_checks.push("workload_signing_key");
+    }
+    readiness_response(failed_checks)
 }
 
 async fn workload_readiness<
@@ -261,17 +270,34 @@ async fn workload_readiness<
     B: ReplayLedger + Clone + 'static,
 >(
     State(state): State<WorkloadAppState<R, B>>,
-) -> StatusCode {
+) -> Response {
     let now = Utc::now();
-    if !state.workload.keys.is_ready_at(now)
-        || state
-            .browser_hop1
-            .as_ref()
-            .is_some_and(|browser| !browser.keys.is_ready_at(now))
-    {
-        return StatusCode::SERVICE_UNAVAILABLE;
+    let mut failed_checks = Vec::new();
+    if !state.workload.keys.is_ready_at(now) {
+        failed_checks.push("workload_signing_key");
     }
-    StatusCode::NO_CONTENT
+    if state
+        .browser_hop1
+        .as_ref()
+        .is_some_and(|browser| !browser.keys.is_ready_at(now))
+    {
+        failed_checks.push("browser_signing_key");
+    }
+    readiness_response(failed_checks)
+}
+
+fn readiness_response(failed_checks: Vec<&'static str>) -> Response {
+    if failed_checks.is_empty() {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "status": "not_ready",
+            "failed_checks": failed_checks,
+        })),
+    )
+        .into_response()
 }
 
 async fn metrics<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 'static>(
@@ -279,35 +305,126 @@ async fn metrics<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + '
 ) -> String {
     let metrics = &state.service.metrics;
     let now = Utc::now();
-    let mut output = format!(
-        "github_oidc_exchange_requests_total {}\n\
-         github_oidc_exchange_issued_total {}\n\
-         github_oidc_exchange_denied_total {}\n\
-         github_oidc_exchange_replayed_total {}\n\
-         github_oidc_exchange_errors_total {}\n\
-         github_oidc_exchange_signing_key_seconds_until_expiry {}\n",
+    let mut output = String::new();
+    append_metric(
+        &mut output,
+        "github_oidc_exchange_requests_total",
+        "GitHub OIDC exchange requests received.",
+        "counter",
         metrics.requests.load(Ordering::Relaxed),
+    );
+    append_metric(
+        &mut output,
+        "github_oidc_exchange_issued_total",
+        "GitHub OIDC exchanges that issued a token.",
+        "counter",
         metrics.issued.load(Ordering::Relaxed),
+    );
+    append_metric(
+        &mut output,
+        "github_oidc_exchange_denied_total",
+        "GitHub OIDC exchanges denied with an authentication response.",
+        "counter",
         metrics.denied.load(Ordering::Relaxed),
+    );
+    append_metric(
+        &mut output,
+        "github_oidc_exchange_replayed_total",
+        "GitHub OIDC assertions denied because their JTI was already used.",
+        "counter",
         metrics.replayed.load(Ordering::Relaxed),
+    );
+    append_metric(
+        &mut output,
+        "github_oidc_exchange_errors_total",
+        "GitHub OIDC exchanges that failed because a dependency was unavailable.",
+        "counter",
         metrics.errors.load(Ordering::Relaxed),
+    );
+    append_metric(
+        &mut output,
+        "github_oidc_exchange_jwks_refresh_failures_total",
+        "GitHub JWKS refresh attempts that failed.",
+        "counter",
+        state.service.verifier.refresh_failures(),
+    );
+    append_metric(
+        &mut output,
+        "github_oidc_exchange_jwks_age_seconds",
+        "Seconds since the last successful GitHub JWKS refresh.",
+        "gauge",
+        state.service.verifier.cache_age_seconds().await,
+    );
+    append_metric(
+        &mut output,
+        "github_oidc_exchange_signing_key_seconds_until_expiry",
+        "Seconds until the active GitHub exchange signing key expires.",
+        "gauge",
         state.service.keys.current_key_seconds_until_expiry(now),
     );
+    append_duration_histogram(&mut output, metrics);
     if let Some(workload) = state.workload {
-        output.push_str(&format!(
-            "github_oidc_exchange_workload_requests_total {}\n\
-             github_oidc_exchange_workload_issued_total {}\n\
-             github_oidc_exchange_workload_denied_total {}\n\
-             github_oidc_exchange_workload_errors_total {}\n\
-             github_oidc_exchange_workload_signing_key_seconds_until_expiry {}\n",
-            workload.metrics.requests.load(Ordering::Relaxed),
-            workload.metrics.issued.load(Ordering::Relaxed),
-            workload.metrics.denied.load(Ordering::Relaxed),
-            workload.metrics.errors.load(Ordering::Relaxed),
+        for (name, help, value) in [
+            (
+                "github_oidc_exchange_workload_requests_total",
+                "Kubernetes workload exchange requests received.",
+                workload.metrics.requests.load(Ordering::Relaxed),
+            ),
+            (
+                "github_oidc_exchange_workload_issued_total",
+                "Kubernetes workload exchanges that issued a token.",
+                workload.metrics.issued.load(Ordering::Relaxed),
+            ),
+            (
+                "github_oidc_exchange_workload_denied_total",
+                "Kubernetes workload exchanges denied with an authentication response.",
+                workload.metrics.denied.load(Ordering::Relaxed),
+            ),
+            (
+                "github_oidc_exchange_workload_errors_total",
+                "Kubernetes workload exchanges that failed because a dependency was unavailable.",
+                workload.metrics.errors.load(Ordering::Relaxed),
+            ),
+        ] {
+            append_metric(&mut output, name, help, "counter", value);
+        }
+        append_metric(
+            &mut output,
+            "github_oidc_exchange_workload_signing_key_seconds_until_expiry",
+            "Seconds until the active workload exchange signing key expires.",
+            "gauge",
             workload.keys.current_key_seconds_until_expiry(now),
-        ));
+        );
     }
     output
+}
+
+fn append_metric(output: &mut String, name: &str, help: &str, metric_type: &str, value: u64) {
+    let _ = writeln!(output, "# HELP {name} {help}");
+    let _ = writeln!(output, "# TYPE {name} {metric_type}");
+    let _ = writeln!(output, "{name} {value}");
+}
+
+fn append_duration_histogram(output: &mut String, metrics: &crate::service::Metrics) {
+    const LABELS: [&str; 8] = ["0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "5"];
+    let (buckets, count, sum_micros) = metrics.duration_snapshot();
+    let name = "github_oidc_exchange_duration_seconds";
+    let _ = writeln!(
+        output,
+        "# HELP {name} End-to-end GitHub OIDC exchange latency in seconds."
+    );
+    let _ = writeln!(output, "# TYPE {name} histogram");
+    for ((label, upper_bound), value) in LABELS
+        .into_iter()
+        .zip(EXCHANGE_DURATION_BUCKET_SECONDS)
+        .zip(buckets)
+    {
+        debug_assert_eq!(label.parse::<f64>().ok(), Some(upper_bound));
+        let _ = writeln!(output, "{name}_bucket{{le=\"{label}\"}} {value}");
+    }
+    let _ = writeln!(output, "{name}_bucket{{le=\"+Inf\"}} {count}");
+    let _ = writeln!(output, "{name}_sum {:.6}", sum_micros as f64 / 1_000_000.0);
+    let _ = writeln!(output, "{name}_count {count}");
 }
 
 async fn workload_exchange<
