@@ -4,6 +4,30 @@ set -euo pipefail
 bash scripts/validate-ci-tools.sh
 bash scripts/test-portable-release.sh
 bash scripts/test-docs-drift.sh
+bash scripts/test-release-contract-assets.sh
+bash scripts/check-public-release-boundary.sh
+bash scripts/test-public-release-boundary.sh
+
+artifacthub_metadata=charts/github-oidc-exchange/artifacthub-repo.yml
+[[ -f "$artifacthub_metadata" ]]
+grep -Fxq 'repositoryID: a17f530a-c2fc-49b7-a137-285b41c1dd68' \
+  "$artifacthub_metadata"
+! grep -Eq '^[[:space:]]*owners:' "$artifacthub_metadata"
+
+chart_metadata=charts/github-oidc-exchange/Chart.yaml
+for expected in \
+  'home: https://github.com/apelogic-ai/github-oidc-exchange' \
+  'https://github.com/apelogic-ai/github-oidc-exchange' \
+  'icon: https://avatars.githubusercontent.com/u/227278099?v=4' \
+  'name: HyperShell' \
+  'url: https://hypershell.ai' \
+  'artifacthub.io/license: MIT' \
+  'artifacthub.io/links: |' \
+  'artifacthub.io/images: |' \
+  'image: replace-with-release-image' \
+  'https://github.com/apelogic-ai/github-oidc-exchange/issues'; do
+  grep -Fq "$expected" "$chart_metadata"
+done
 
 # The published source, package, and chart must advertise the same license.
 [[ -f LICENSE ]]
@@ -11,8 +35,14 @@ grep -Fq 'MIT License' LICENSE
 grep -Fq 'license = "MIT"' Cargo.toml
 grep -Fq 'artifacthub.io/license: MIT' charts/github-oidc-exchange/Chart.yaml
 
-grep -Fq -- \
-  'cargo build --locked --release --bin github-oidc-exchange' Dockerfile
+for expected in \
+  'cargo build --locked --release' \
+  '--bin github-oidc-exchange' \
+  '--bin keyring-tool' \
+  'target/release/github-oidc-exchange target/release/keyring-tool' \
+  'target/release/keyring-tool /usr/local/bin/keyring-tool'; do
+  grep -Fq -- "$expected" Dockerfile
+done
 if grep -Fq -- 'test-support' Dockerfile ||
   grep -R -n -E 'integration-fixture|MemoryReplayLedger' Cargo.toml src Dockerfile; then
   printf 'release image must exclude fixture-only replay implementations\n' >&2
@@ -35,6 +65,10 @@ required=(
   'workflow_dispatch:'
   'packages: write'
   'runs-on: ubuntu-24.04-arm'
+  'image=ghcr.io/%s/github-oidc-exchange'
+  'chart=ghcr.io/%s/charts/github-oidc-exchange'
+  'DOCKER_BUILD_RECORD_UPLOAD: "false"'
+  'DOCKER_BUILD_SUMMARY: "false"'
   'Build and publish native amd64 image candidate'
   'Build and publish native arm64 image candidate'
   'Compose native multi-platform image candidate'
@@ -52,35 +86,43 @@ required=(
   '--type slsaprovenance1'
   'CANDIDATE_TAG: candidate-'
   'CHART_CANDIDATE_TAG: candidate-'
+  'oras manifest fetch --descriptor "$IMAGE_REFERENCE:$VERSION"'
+  'oras manifest fetch --descriptor "$CHART_REFERENCE:$VERSION"'
   'oras push --image-spec v1.0'
   'org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY'
-  'aws ecr describe-images'
-  'Promote verified image candidate'
-  'Promote verified chart candidate'
+  'Scan native amd64 image digest with Trivy'
+  'Scan native arm64 image digest with Trivy'
+  '${{ env.IMAGE_REFERENCE }}@${{ needs.build-amd64.outputs.digest }}'
+  '${{ env.IMAGE_REFERENCE }}@${{ needs.build-arm64.outputs.digest }}'
+  'Publish signed version tags'
+  'oras tag "$IMAGE_REFERENCE@${{ steps.image.outputs.digest }}" "$VERSION"'
   'oras tag "$CHART_REFERENCE@${{ steps.chart.outputs.digest }}" "$VERSION"'
-  'PUBLIC_IMAGE_REFERENCE=ghcr.io/'
-  'PUBLIC_CHART_REFERENCE=ghcr.io/'
   'Authenticate to GitHub Container Registry'
-  'Mirror verified immutable ECR artifacts to GHCR'
-  'Verify mirrored GHCR packages remain public'
-  'Sign, attest, and verify public GHCR artifacts'
-  'output-file: ${{ runner.temp }}/public-image.spdx.json'
-  'output-file: ${{ runner.temp }}/public-chart.spdx.json'
+  'Publish Artifact Hub repository metadata'
+  '$CHART_REFERENCE:artifacthub.io'
+  'application/vnd.cncf.artifacthub.config.v1+yaml'
+  'application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml'
+  'steps.artifacthub.outputs.digest'
+  'Verify GHCR packages remain public'
+  'Sign, attest, and verify immutable GHCR artifacts'
+  'dist/public-image-signature.sigstore.json'
+  'dist/public-chart-signature.sigstore.json'
+  'output-file: ${{ runner.temp }}/image.spdx.json'
+  'output-file: ${{ runner.temp }}/chart.spdx.json'
   'Verify anonymous exact-digest GHCR pulls'
-  'oras cp "$source_image" "$PUBLIC_IMAGE_REFERENCE:$VERSION"'
-  'oras cp "$source_chart" "$PUBLIC_CHART_REFERENCE:$VERSION"'
   'docker logout ghcr.io || true'
   'helm registry logout ghcr.io || true'
   'oras logout ghcr.io || true'
   'public_image_digest:$public_image_digest'
   'public_chart_digest:$public_chart_digest'
   'anonymous_pull_verified:true'
-  'manifest_preserving_mirror:true'
+  'direct_publish:true'
   'image_platforms:$platforms[0]'
   'release_url:$release_url'
   'workflow_run_url:$workflow_run_url'
   '[[ -s "docs/releases/v$REQUESTED_VERSION.md" ]]'
   'gh release create "v$VERSION"'
+  'bash scripts/stage-release-contract-assets.sh dist'
   '--notes-file "docs/releases/v$VERSION.md"'
   '--arg policy_contract "$policy_contract"'
   '--arg identity_contract "$identity_contract"'
@@ -90,6 +132,9 @@ required=(
   'identity_contract:$identity_contract'
   'supported_policy_contracts:[$policy_contract,$source_auth_policy_contract]'
   'supported_identity_contracts:[$identity_contract,$source_auth_identity_contract]'
+  'bash scripts/check-public-release-boundary.sh'
+  '--evidence dist/release.slsa.json'
+  '--evidence dist/release-manifest.json'
 )
 
 for contract in "${required[@]}"; do
@@ -103,37 +148,6 @@ fi
 
 for architecture in amd64 arm64; do
   grep -Fq -- "image-platform-$architecture.digest" "$workflow"
-  grep -Fq -- "architecture == \$architecture" "$workflow"
-done
-grep -Fq -- 'scan="$RUNNER_TEMP/image.ecr-scan-$architecture.json"' "$workflow"
-
-for private_output in \
-  'dist/image.ecr-scan-' \
-  'dist/image.trivy.json' \
-  'dist/chart.trivy.json' \
-  'dist/image.spdx.json' \
-  'dist/chart.spdx.json' \
-  'dist/chart-candidate.json' \
-  'dist/chart-config.json'; do
-  if grep -Fq -- "$private_output" "$workflow"; then
-    printf 'private release evidence must not be written to the public dist directory: %s\n' \
-      "$private_output" >&2
-    exit 1
-  fi
-done
-
-for private_manifest_field in \
-  '--arg ecr_' \
-  'ecr_image:' \
-  'ecr_chart:' \
-  'ecr_image_digest:' \
-  'ecr_chart_digest:' \
-  'byte_identical_to_ecr:'; do
-  if grep -Fq -- "$private_manifest_field" "$workflow"; then
-    printf 'public release manifest retains a private-registry field: %s\n' \
-      "$private_manifest_field" >&2
-    exit 1
-  fi
 done
 
 grep -Fq -- 'kube_version="$(sed -n' "$workflow"
@@ -157,6 +171,15 @@ grep -Fq -- '.Chart.Version | replace "+" "_"' \
 render_dir="$(mktemp -d)"
 trap 'rm -rf "$render_dir"' EXIT
 cp -R charts/github-oidc-exchange "$render_dir/chart"
+artifacthub_test_digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+artifacthub_test_image="ghcr.io/apelogic-ai/github-oidc-exchange@$artifacthub_test_digest"
+[[ "$(grep -Fc 'image: replace-with-release-image' "$render_dir/chart/Chart.yaml")" == 1 ]]
+sed -i.bak \
+  "s|image: replace-with-release-image|image: $artifacthub_test_image|" \
+  "$render_dir/chart/Chart.yaml"
+! grep -Fq 'replace-with-release-image' "$render_dir/chart/Chart.yaml"
+grep -Fq "image: $artifacthub_test_image" "$render_dir/chart/Chart.yaml"
+helm show chart "$render_dir/chart" | grep -Fq "$artifacthub_test_image"
 sed -i.bak \
   "s/^version: .*/version: ${package_version}+flux.test/" \
   "$render_dir/chart/Chart.yaml"
@@ -202,6 +225,17 @@ for annotation in github-policy github-keyring workload-policy workload-tls; do
   original="$(grep -F -- "checksum/$annotation:" "$render_dir/workload.yaml")"
   changed="$(grep -F -- "checksum/$annotation:" "$render_dir/workload-changed.yaml")"
   [[ "$original" == "$changed" ]]
+done
+
+helm template reloader "$render_dir/chart" \
+  --namespace github-oidc-exchange \
+  -f charts/github-oidc-exchange/ci/workload-values.yaml \
+  --set rolloutAutomation.reloader.enabled=true \
+  >"$render_dir/reloader.yaml"
+for expected in \
+  'configmap.reloader.stakater.com/reload: "github-oidc-exchange-policy,github-oidc-exchange-workload-policy"' \
+  'secret.reloader.stakater.com/reload: "github-oidc-exchange-keyring,github-oidc-exchange-workload-rsa-keyring,github-oidc-exchange-server-tls"'; do
+  grep -Fq -- "$expected" "$render_dir/reloader.yaml"
 done
 
 if helm template missing-workload-checksum "$render_dir/chart" \
@@ -328,35 +362,30 @@ if grep -Fq -- 'helm push' "$workflow"; then
   exit 1
 fi
 
-if grep -Fq -- 'aws ecr put-image' "$workflow" ||
-  grep -Fq -- '--output text > /tmp/chart-manifest.json' "$workflow"; then
-  printf 'chart promotion must preserve the verified OCI manifest digest\n' >&2
+if grep -Fq -- 'oras cp' "$workflow"; then
+  printf 'release artifacts must be published directly to GHCR\n' >&2
   exit 1
 fi
 
 amd64_candidate_line="$(grep -n 'Build and publish native amd64 image candidate' "$workflow" | cut -d: -f1)"
 arm64_candidate_line="$(grep -n 'Build and publish native arm64 image candidate' "$workflow" | cut -d: -f1)"
 image_candidate_line="$(grep -n 'Compose native multi-platform image candidate' "$workflow" | cut -d: -f1)"
+amd64_scan_line="$(grep -n 'Scan native amd64 image digest with Trivy' "$workflow" | cut -d: -f1)"
+arm64_scan_line="$(grep -n 'Scan native arm64 image digest with Trivy' "$workflow" | cut -d: -f1)"
 chart_candidate_line="$(grep -n 'Publish unique immutable chart candidate' "$workflow" | cut -d: -f1)"
-verification_line="$(grep -n 'Sign, attest, and verify immutable candidate artifacts' "$workflow" | cut -d: -f1)"
-image_promotion_line="$(grep -n 'Promote verified image candidate' "$workflow" | cut -d: -f1)"
-chart_promotion_line="$(grep -n 'Promote verified chart candidate' "$workflow" | cut -d: -f1)"
-public_mirror_line="$(grep -n 'Mirror verified immutable ECR artifacts to GHCR' "$workflow" | cut -d: -f1)"
-public_visibility_line="$(grep -n 'Verify mirrored GHCR packages remain public' "$workflow" | cut -d: -f1)"
-public_sign_line="$(grep -n 'Sign, attest, and verify public GHCR artifacts' "$workflow" | cut -d: -f1)"
+verification_line="$(grep -n 'Sign, attest, and verify immutable GHCR artifacts' "$workflow" | cut -d: -f1)"
+publish_line="$(grep -n 'Publish signed version tags' "$workflow" | cut -d: -f1)"
+public_visibility_line="$(grep -n 'Verify GHCR packages remain public' "$workflow" | cut -d: -f1)"
 anonymous_verify_line="$(grep -n 'Verify anonymous exact-digest GHCR pulls' "$workflow" | cut -d: -f1)"
 release_line="$(grep -n 'gh release create' "$workflow" | cut -d: -f1)"
-[[ "$image_candidate_line" -lt "$verification_line" ]]
 [[ "$amd64_candidate_line" -lt "$image_candidate_line" ]]
 [[ "$arm64_candidate_line" -lt "$image_candidate_line" ]]
+[[ "$image_candidate_line" -lt "$amd64_scan_line" ]]
+[[ "$image_candidate_line" -lt "$arm64_scan_line" ]]
+[[ "$amd64_scan_line" -lt "$verification_line" ]]
+[[ "$arm64_scan_line" -lt "$verification_line" ]]
 [[ "$chart_candidate_line" -lt "$verification_line" ]]
-[[ "$verification_line" -lt "$image_promotion_line" ]]
-[[ "$verification_line" -lt "$chart_promotion_line" ]]
-[[ "$image_promotion_line" -lt "$release_line" ]]
-[[ "$chart_promotion_line" -lt "$release_line" ]]
-[[ "$image_promotion_line" -lt "$public_mirror_line" ]]
-[[ "$chart_promotion_line" -lt "$public_mirror_line" ]]
-[[ "$public_mirror_line" -lt "$public_visibility_line" ]]
-[[ "$public_visibility_line" -lt "$public_sign_line" ]]
-[[ "$public_sign_line" -lt "$anonymous_verify_line" ]]
+[[ "$verification_line" -lt "$publish_line" ]]
+[[ "$publish_line" -lt "$public_visibility_line" ]]
+[[ "$public_visibility_line" -lt "$anonymous_verify_line" ]]
 [[ "$anonymous_verify_line" -lt "$release_line" ]]

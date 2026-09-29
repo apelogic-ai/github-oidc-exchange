@@ -1,4 +1,4 @@
-# Integration guide — github-oidc-exchange 0.7.2
+# Integration guide — github-oidc-exchange 0.7.3
 
 This guide connects GitHub Actions to Identity and then to Steward through
 steward-run. It complements the [quickstart](quickstart.md),
@@ -117,7 +117,7 @@ kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
   --from-file=policy.json=./private/policy-v6.json
 ```
 
-Set both fields explicitly:
+Set all three fields explicitly in one Helm revision:
 
 ```yaml
 config:
@@ -128,7 +128,7 @@ rolloutRevisions:
 ```
 
 Do not modify or delete the v5 ConfigMap. Follow the
-[0.7.2 upgrade guide](upgrade-v0.7.2.md) for preflight and atomic rollback.
+[0.7.3 upgrade guide](upgrade-v0.7.3.md) for preflight and atomic rollback.
 
 ## 4. Prove exchange behavior
 
@@ -192,7 +192,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: ORG/steward-run/.github/workflows/steward-task.yml@REVIEWED_40_HEX_COMMIT
+    uses: ORG/steward-run/.github/workflows/steward-task-customer.yml@REVIEWED_40_HEX_COMMIT
     with:
       runner-label: steward-run
       workflow: REVIEWED_STEWARD_WORKFLOW_REFERENCE
@@ -208,6 +208,13 @@ uses its `token_endpoint` and `github_oidc_audience`. The reusable workflow
 requests GitHub OIDC, exchanges it for the fixed Steward token, and sends that
 token to Steward. The caller therefore does not pass Identity's endpoint or
 input audience in the normal path.
+
+`steward-api-url` must equal Steward's `taskIdentity.resource` exactly;
+trailing-slash and other string differences are rejected. The pinned
+[Steward 0.3.2 values contract](https://github.com/apelogic-ai/steward/blob/v0.3.2/charts/steward/values.yaml)
+and
+[steward-run 0.7.2 discovery contract](https://github.com/apelogic-ai/steward-run/blob/v0.7.2/docs/installation.md#authentication-discovery-contract)
+are authoritative for the two sides of this join.
 
 The optional `identity-exchange-url` and `identity-exchange-audience` inputs
 are deprecated compatibility controls. A nonempty URL bypasses discovery; if

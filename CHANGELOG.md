@@ -9,12 +9,36 @@ signatures, and public-registry attestations.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-28
+
+### Added
+
+- Added opt-in named ConfigMap/Secret rollout automation for clusters with an
+  operator-managed Stakater Reloader controller.
+- Shipped the offline `keyring-tool` in the signed runtime image and attached
+  policy schemas and examples to both release paths.
+- Added organization-maintained Artifact Hub chart metadata and automated
+  publication of the repository verification artifact.
+
 ### Changed
 
 - Advanced the application and chart development version to `0.7.3-dev`
   after tagging 0.7.2.
 - Updated CI fixtures and chart/release validation to use the published 0.7.2
   multi-platform image digest.
+
+### Fixed
+
+- Made the baseline rollout revision defaults schema-valid while preserving
+  explicit revisions as the controller-free configuration rollout mechanism.
+- Made Kubernetes API-server egress ports and CIDRs configurable, allowing TCP
+  443 and 6443 plus IPv4 and IPv6 by default, with explicit NodeLocal DNSCache
+  and additional proxy-egress controls.
+- Added a Kubernetes 1.36 NetworkPolicy regression that proves Lease traffic
+  reaches an API server after Service DNAT.
+- Corrected the pinned steward-run workflow, Steward workload-exchange
+  namespace pairing, v6 activation and rollback steps, discovery field names,
+  Helm release name, and signing-key rotation guidance.
 
 ## [0.7.2] - 2026-09-28
 
@@ -291,7 +315,8 @@ signatures, and public-registry attestations.
   short-lived EKS-compatible ES256 token issuance.
 - Added signed image/chart release validation with immutable artifact digests.
 
-[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.6.0...v0.7.0

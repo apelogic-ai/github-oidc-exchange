@@ -30,7 +30,7 @@
       "sha": "git:sha1:123456789abcdef0123456789abcdef012345678"
     },
     "reusableWorkflow": {
-      "ref": "apelogic-ai/steward-run/.github/workflows/steward-task.yml@refs/heads/main",
+      "ref": "apelogic-ai/steward-run/.github/workflows/steward-task-customer.yml@refs/heads/main",
       "sha": "git:sha1:23456789abcdef0123456789abcdef0123456789"
     }
   }

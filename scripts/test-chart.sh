@@ -116,8 +116,92 @@ fi
 grep -Fq 'config.issuerUrl' "$scratch/path-issuer.err"
 helm template baseline "$chart" --namespace identity \
   -f "$chart/ci/test-values.yaml" >"$scratch/baseline.yaml"
+! grep -Fq 'reloader.stakater.com/reload' "$scratch/baseline.yaml"
+helm template reloader-baseline "$chart" --namespace identity \
+  -f "$chart/ci/test-values.yaml" \
+  --set rolloutAutomation.reloader.enabled=true >"$scratch/reloader-baseline.yaml"
+grep -Fq 'configmap.reloader.stakater.com/reload: "github-oidc-exchange-policy"' \
+  "$scratch/reloader-baseline.yaml"
+grep -Fq 'secret.reloader.stakater.com/reload: "github-oidc-exchange-keyring"' \
+  "$scratch/reloader-baseline.yaml"
 helm template workload "$chart" --namespace identity \
   -f "$chart/ci/workload-values.yaml" >"$scratch/workload.yaml"
+helm template reloader-workload "$chart" --namespace identity \
+  -f "$chart/ci/workload-values.yaml" \
+  --set rolloutAutomation.reloader.enabled=true >"$scratch/reloader-workload.yaml"
+grep -Fq 'configmap.reloader.stakater.com/reload: "github-oidc-exchange-policy,github-oidc-exchange-workload-policy"' \
+  "$scratch/reloader-workload.yaml"
+grep -Fq 'secret.reloader.stakater.com/reload: "github-oidc-exchange-keyring,github-oidc-exchange-workload-rsa-keyring,github-oidc-exchange-server-tls"' \
+  "$scratch/reloader-workload.yaml"
+
+helm template reloader-browser "$chart" --namespace identity \
+  -f "$chart/ci/workload-values.yaml" \
+  --set rolloutAutomation.reloader.enabled=true \
+  --set browserHop1.enabled=true \
+  --set-string browserHop1.stewardIssuer=https://steward.test.invalid \
+  --set-string browserHop1.assertionAudience=browser-hop1 \
+  --set-string browserHop1.outputAudience=https://mcp-gw.test.invalid \
+  --set-string browserHop1.stewardJwksConfigMapName=steward-public-jwks \
+  --set-string rolloutRevisions.browserHop1Jwks=rev-1 \
+  >"$scratch/reloader-browser.yaml"
+grep -Fq 'configmap.reloader.stakater.com/reload: "github-oidc-exchange-policy,github-oidc-exchange-workload-policy,steward-public-jwks"' \
+  "$scratch/reloader-browser.yaml"
+
+grep -Fq 'cidr: 0.0.0.0/0' "$scratch/baseline.yaml"
+grep -Fq 'cidr: ::/0' "$scratch/baseline.yaml"
+grep -Fq 'port: 443' "$scratch/baseline.yaml"
+grep -Fq 'port: 6443' "$scratch/baseline.yaml"
+
+helm template network-egress "$chart" --namespace identity \
+  -f "$chart/ci/test-values.yaml" \
+  --set-json 'networkPolicy.httpsEgressCidrs=["192.0.2.0/24","2001:db8::/32"]' \
+  --set-json 'networkPolicy.apiServerCidrs=["10.96.0.1/32","fd00::1/128"]' \
+  --set-json 'networkPolicy.apiServerPorts=[7443]' \
+  --set-json 'networkPolicy.dnsIpBlocks=["169.254.20.10/32","fd00::a/128"]' \
+  --set-json 'networkPolicy.extraEgress=[{"to":[{"ipBlock":{"cidr":"198.51.100.10/32"}}],"ports":[{"port":3128,"protocol":"TCP"}]}]' \
+  --show-only templates/networkpolicy.yaml >"$scratch/network-egress.yaml"
+for contract in \
+  'cidr: 192.0.2.0/24' \
+  'cidr: 2001:db8::/32' \
+  'cidr: 10.96.0.1/32' \
+  'cidr: fd00::1/128' \
+  'cidr: 169.254.20.10/32' \
+  'cidr: fd00::a/128' \
+  'cidr: 198.51.100.10/32' \
+  'port: 7443' \
+  'port: 3128'; do
+  grep -Fq "$contract" "$scratch/network-egress.yaml"
+done
+if grep -Fq 'port: 6443' "$scratch/network-egress.yaml"; then
+  printf 'custom API-server port list must replace the defaults\n' >&2
+  exit 1
+fi
+
+for empty_network_value in httpsEgressCidrs apiServerCidrs apiServerPorts; do
+  if helm lint "$chart" -f "$chart/ci/test-values.yaml" --strict \
+    --set-json "networkPolicy.${empty_network_value}=[]" \
+    >"$scratch/empty-network-value.err" 2>&1; then
+    printf 'chart must reject an empty networkPolicy.%s\n' "$empty_network_value" >&2
+    exit 1
+  fi
+  grep -Fq "networkPolicy.${empty_network_value}" "$scratch/empty-network-value.err"
+done
+for invalid_api_port in 0 65536; do
+  if helm lint "$chart" -f "$chart/ci/test-values.yaml" --strict \
+    --set-json "networkPolicy.apiServerPorts=[$invalid_api_port]" \
+    >"$scratch/invalid-api-port.err" 2>&1; then
+    printf 'chart must reject API-server port %s\n' "$invalid_api_port" >&2
+    exit 1
+  fi
+  grep -Fq 'networkPolicy.apiServerPorts' "$scratch/invalid-api-port.err"
+done
+if helm lint "$chart" -f "$chart/ci/test-values.yaml" --strict \
+  --set-json 'networkPolicy.dnsIpBlocks=["not-a-cidr"]' \
+  >"$scratch/invalid-dns-cidr.err" 2>&1; then
+  printf 'chart must reject an invalid NodeLocal DNS CIDR\n' >&2
+  exit 1
+fi
+grep -Fq 'networkPolicy.dnsIpBlocks' "$scratch/invalid-dns-cidr.err"
 
 grep -A1 -Fq 'name: EXPECTED_POLICY_VERSION
               value: "github-oidc-exchange.apelogic.io/v5"' "$scratch/baseline.yaml"

@@ -95,6 +95,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Install pinned Kind
-        run: go install sigs.k8s.io/kind@v0.31.0
+        run: go install sigs.k8s.io/kind@v0.33.0
       - name: Verify Kubernetes Lease replay semantics against Kind
         run: PATH="$(go env GOPATH)/bin:$PATH" bash scripts/test-kubernetes-lease-replay-kind.sh

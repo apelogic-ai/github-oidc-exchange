@@ -41,6 +41,11 @@ rolloutRevisions:
   githubPolicy: rev-1
   githubKeyring: rev-1
 
+rolloutAutomation:
+  reloader:
+    # Enable only after installing and governing Stakater Reloader cluster-wide.
+    enabled: false
+
 # Gateway API is preferred. The Gateway and its TLS policy are platform-owned;
 # this route owns only the four public Identity paths. Replace the parent ref
 # with the platform Gateway listener that accepts this namespace and hostname.
@@ -60,6 +65,11 @@ networkPolicy:
   # cluster. Do not use 0.0.0.0/0 for an identity issuer.
   ingressCidrs:
     - 10.0.0.0/16
+  # Keep both ports unless the cluster API endpoint contract proves a narrower
+  # set. Include pre- and post-DNAT endpoint CIDRs when narrowing the defaults.
+  apiServerPorts:
+    - 443
+    - 6443
 
 resources:
   requests:

@@ -5,11 +5,13 @@ validator="scripts/validate-release.sh"
 required_tools=(
   awk
   bash
+  cmp
   cp
   cut
   grep
   head
   helm
+  jq
   mktemp
   sed
 )

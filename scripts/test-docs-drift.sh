@@ -2,14 +2,14 @@
 set -euo pipefail
 
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-released_version="0.7.2"
+released_version="0.7.3"
 lock_version="$(awk '
   /^name = "github-oidc-exchange"$/ { package = 1; next }
   package && /^version = "/ { gsub(/^version = "|"$/, ""); print; exit }
 ' Cargo.lock)"
 chart_version="$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)"
 app_version="$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc-exchange/Chart.yaml | head -1)"
-[[ "$version" == "0.7.3-dev" ]]
+[[ "$version" == "0.7.3" ]]
 [[ "$lock_version" == "$version" ]]
 [[ "$chart_version" == "$version" ]]
 [[ "$app_version" == "$version" ]]
@@ -27,9 +27,9 @@ current_docs=(
   docs/integration.md
   docs/consumer-contract-v1.md
   docs/steward-openshell-workload-pairing.md
-  docs/upgrade-v0.7.2.md
+  docs/upgrade-v0.7.3.md
   docs/source-authentication-documentation-inventory.md
-  docs/releases/v0.7.2.md
+  docs/releases/v0.7.3.md
   charts/github-oidc-exchange/README.md
 )
 for document in "${current_docs[@]}"; do
@@ -43,7 +43,19 @@ grep -Fq 'release-manifest.json' "$production_example"
 for document in docs/installation.md charts/github-oidc-exchange/README.md; do
   grep -Fq 'networkPolicy.metricsNamespaceSelector' "$document"
   grep -Fq 'networkPolicy.metricsPodSelector' "$document"
+  grep -Fq 'networkPolicy.apiServerCidrs' "$document"
+  grep -Fq 'networkPolicy.apiServerPorts' "$document"
+  grep -Fq 'networkPolicy.dnsIpBlocks' "$document"
+  grep -Fq 'networkPolicy.extraEgress' "$document"
 done
+for expected in 'rolloutAutomation.reloader.enabled' \
+  'configmap.reloader.stakater.com/reload' \
+  'secret.reloader.stakater.com/reload'; do
+  grep -Fq "$expected" charts/github-oidc-exchange/templates/deployment.yaml \
+    docs/installation.md charts/github-oidc-exchange/README.md
+done
+grep -Fq 'githubPolicy: rev-1' charts/github-oidc-exchange/values.yaml
+grep -Fq 'githubKeyring: rev-1' charts/github-oidc-exchange/values.yaml
 
 v5_policy="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
 v6_policy="$(sed -n 's/^pub const SOURCE_AUTH_POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
@@ -116,14 +128,19 @@ for expected in \
 done
 grep -Fq -- '--valid-for-days' docs/installation.md src/bin/keyring-tool.rs
 grep -Fq 'export-jwks' docs/installation.md src/bin/keyring-tool.rs
+grep -Fq '/usr/local/bin/keyring-tool' Dockerfile README.md docs/installation.md
+grep -Fq -- '--entrypoint /usr/local/bin/keyring-tool' docs/installation.md
+grep -Fq -- '--pattern policy-contract.example.json' docs/quickstart.md
+grep -Fq -- '--entrypoint /usr/local/bin/keyring-tool' docs/quickstart.md
+! grep -Fq 'cargo run --locked --bin keyring-tool' docs/quickstart.md
 for expected in 'static verifier' 'mounted JWKS' 'before Identity activates' \
   'Identity does not call'; do
   grep -Fq "$expected" docs/installation.md docs/consumer-contract-v1.md
 done
 
 for document in README.md docs/installation.md docs/integration.md \
-  docs/consumer-contract-v1.md docs/upgrade-v0.7.2.md \
-  docs/releases/v0.7.2.md charts/github-oidc-exchange/README.md; do
+  docs/consumer-contract-v1.md docs/upgrade-v0.7.3.md \
+  docs/releases/v0.7.3.md charts/github-oidc-exchange/README.md; do
   grep -Fq "$v5_policy" "$document"
   grep -Fq "$v6_policy" "$document"
   grep -Fq "$v2_identity" "$document"
@@ -155,7 +172,7 @@ for phrase in \
   'Steward performs any user binding' \
   'Task authority'; do
   grep -Fqi "$phrase" README.md docs/installation.md docs/integration.md \
-    docs/consumer-contract-v1.md docs/upgrade-v0.7.2.md
+    docs/consumer-contract-v1.md docs/upgrade-v0.7.3.md
 done
 
 grep -Fq 'policyContract: github-oidc-exchange.apelogic.io/v5' \
@@ -164,15 +181,16 @@ grep -Fq 'policyContract: github-oidc-exchange.apelogic.io/v5' \
   charts/github-oidc-exchange/values.example.yaml
 grep -Fq 'name: EXPECTED_POLICY_VERSION' \
   charts/github-oidc-exchange/templates/deployment.yaml
-grep -Fq 'github-oidc-exchange-policy` (v5)' docs/upgrade-v0.7.2.md
-grep -Fq 'github-oidc-exchange-policy-v6' docs/upgrade-v0.7.2.md
+grep -Fq 'github-oidc-exchange-policy` (`github-oidc-exchange.apelogic.io/v5`)' \
+  docs/upgrade-v0.7.3.md
+grep -Fq 'github-oidc-exchange-policy-v6' docs/upgrade-v0.7.3.md
 
 release_notes="docs/releases/v$released_version.md"
 for expected in \
   'continues to issue the unchanged' \
   'Explicit values plus separate policy object' \
-  'supported_policy_contracts' \
-  'supported_identity_contracts' \
+  'policy_versions_supported' \
+  'identity_contracts_supported' \
   'github_oidc_audience' \
   'manifest-preserving mirror' \
   'release-manifest.json' \
@@ -181,25 +199,27 @@ for expected in \
   'SLSA provenance' \
   'cosign verify-blob' \
   'cosign verify-attestation' \
-  'public GitHub release assets no longer contain private-registry' \
-  'It contains no `ecr_*` fields' \
+  'publishes those artifacts directly in GHCR' \
   '/README.md)' \
   '/charts/github-oidc-exchange/values.schema.json)' \
-  '../upgrade-v0.7.2.md)'; do
+  '../upgrade-v0.7.3.md)'; do
   grep -Fq "$expected" "$release_notes"
 done
+! grep -Fq 'supported_policy_contracts' "$release_notes"
+! grep -Fq 'supported_identity_contracts' "$release_notes"
 ! grep -Eq '"?ecr_(image|chart|image_digest|chart_digest)"?[[:space:]]*:' \
   "$release_notes"
 
 # Historical guides keep their historical contract and point to current docs.
 for document in docs/upgrade-v0.5.0.md docs/upgrade-v0.5.1.md \
   docs/upgrade-v0.6.0.md docs/upgrade-v0.7.0.md docs/upgrade-v0.7.1.md \
+  docs/upgrade-v0.7.2.md \
   docs/releases/v0.5.0.md docs/releases/v0.5.1.md \
   docs/releases/v0.6.0.md docs/releases/v0.7.0.md \
-  docs/releases/v0.7.1.md; do
+  docs/releases/v0.7.1.md docs/releases/v0.7.2.md; do
   grep -Fq 'Historical' "$document"
   grep -Fq 'consumer-contract-v1.md' "$document" || \
-    grep -Fq 'upgrade-v0.7.2.md' "$document"
+    grep -Fq 'upgrade-v0.7.3.md' "$document"
 done
 
 # Current relative Markdown links must resolve. URL, mail, and page-only links
@@ -260,6 +280,39 @@ done
 ! grep -Fq 'reusable workflow requires both exchange inputs' \
   docs/installation.md docs/integration.md docs/consumer-contract-v1.md
 
+grep -Fq 'IDENTITY_RELEASE=identity' docs/upgrade-v0.7.3.md
+! grep -Fq 'IDENTITY_RELEASE=github-oidc-exchange' docs/upgrade-v0.7.3.md
+grep -Fq 'IDENTITY_KUBECONFIG=/absolute/path/to/cluster-kubeconfig' \
+  docs/upgrade-v0.7.3.md
+grep -Fq 'IDENTITY_CONTEXT=platform-context' docs/upgrade-v0.7.3.md
+for expected in \
+  '## Optional v6 activation' \
+  '### Prepare the separate v6 policy' \
+  '### Activate all three values atomically' \
+  'policyContract: github-oidc-exchange.apelogic.io/v6' \
+  'policyConfigMapName: github-oidc-exchange-policy-v6' \
+  'githubPolicy: v6-rev-1' \
+  '### Roll back v6 activation atomically'; do
+  grep -Fq "$expected" docs/upgrade-v0.7.3.md
+done
+grep -Fq 'Set all three fields explicitly' docs/integration.md
+! grep -Fq 'requires both `config.policyContract`' README.md
+grep -Fq "jq -e '.keys | length >= 2'" docs/installation.md
+for document in docs/installation.md docs/upgrade-v0.7.1.md; do
+  for expected in '120-second token lifetime' 'allowed clock skew' \
+    'verifier refresh or static reload' 'operational rollback window'; do
+    grep -Fq "$expected" "$document"
+  done
+done
+
+workflow_path='.github/workflows/steward-task-customer.yml'
+grep -Fq "$workflow_path@REVIEWED_40_HEX_COMMIT" docs/integration.md
+jq -e --arg path "apelogic-ai/steward-run/$workflow_path@refs/heads/main" \
+  '.source_provenance.reusableWorkflow.ref == $path' \
+  docs/steward-task-v3.example.json >/dev/null
+! grep -Fq '.github/workflows/steward-task.yml@' \
+  docs/integration.md docs/steward-task-v3.example.json
+
 workload_pairing=docs/steward-openshell-workload-pairing.md
 for expected in \
   'apelogic-workload-exchange' \
@@ -269,6 +322,8 @@ for expected in \
   'openshell-admin' \
   'openshell-user' \
   'server.oidc.audience' \
+  'networkPolicy.identityExchangeNamespace' \
+  'identityExchangeNamespace: identity' \
   'rolloutRevisions.workloadPolicy'; do
   grep -Fq "$expected" "$workload_pairing"
 done

@@ -1,7 +1,7 @@
-# Installation guide — github-oidc-exchange 0.7.2
+# Installation guide — github-oidc-exchange 0.7.3
 
-This is the canonical operator guide for application **0.7.2**, Helm chart
-**0.7.2**, and the [Identity consumer contracts](consumer-contract-v1.md).
+This is the canonical operator guide for application **0.7.3**, Helm chart
+**0.7.3**, and the [Identity consumer contracts](consumer-contract-v1.md).
 It installs Identity in an operator-owned Kubernetes cluster from fork-owned
 artifacts. No ApeLogic account, cloud credential, external secret controller,
 GitHub OAuth App, or database is required. The baseline exchanges GitHub
@@ -17,11 +17,11 @@ the [baseline quickstart](quickstart.md), then return here for operations and
 optional features. Use the [integration guide](integration.md) for claim
 observation, exchange smoke, and Steward integration.
 
-Application 0.7.2 supports `github-oidc-exchange.apelogic.io/v5` and
+Application 0.7.3 supports `github-oidc-exchange.apelogic.io/v5` and
 `github-oidc-exchange.apelogic.io/v6`. The chart defaults to v5 and an existing
 v5 ConfigMap, preserving `steward-task-v2` behavior. Policy v6 is an explicit
 opt-in that issues `steward-task-v3`; activate it with a separately named
-ConfigMap using the [0.7.2 upgrade procedure](upgrade-v0.7.2.md).
+ConfigMap using the [0.7.3 upgrade procedure](upgrade-v0.7.3.md).
 Existing older installations must first follow their version-specific guides.
 
 ## Prerequisites and decisions
@@ -41,6 +41,15 @@ When enabling `serviceMonitor`, set both
 `networkPolicy.metricsPodSelector` to nonempty label maps that select only the
 trusted monitoring Pods. Metrics share port 8080 with the GitHub exchange, so
 the chart rejects empty selectors that would admit every namespace or Pod.
+
+The default egress policy permits dual-stack HTTPS on TCP 443 and Kubernetes
+API access on TCP 443 and 6443. Some CNIs enforce policy before Service DNAT;
+others enforce it against the translated API-server endpoint. When tightening
+`networkPolicy.apiServerCidrs`, include every address visible in both cases and
+retain every endpoint port in `networkPolicy.apiServerPorts`. Configure
+literal NodeLocal DNSCache addresses through `networkPolicy.dnsIpBlocks`.
+Nonstandard proxy destinations require complete, narrow rules in
+`networkPolicy.extraEgress`; do not place proxy credentials in chart values.
 
 Use an explicit kubeconfig and context for **every** command; do not use an
 ambient context. In the examples below choose a real, isolated target:
@@ -104,7 +113,7 @@ pulls are intended; verify visibility separately. For another operator-owned
 OCI registry, authenticate with that registry's own account and run:
 
 ```sh
-export IDENTITY_VERSION=0.7.2
+export IDENTITY_VERSION=0.7.3
 export IDENTITY_IMAGE_REPO=registry.example.org/team/github-oidc-exchange
 export IDENTITY_CHART_REPO=registry.example.org/team/charts/github-oidc-exchange
 cargo fmt --all -- --check
@@ -171,6 +180,13 @@ jq -e '.chart|contains("@sha256:")' ./dist/release-manifest.json >/dev/null
 GHCR image and chart packages public for anonymous cluster pulls, or create a
 registry pull Secret and reference only its name in values.
 
+The release also attaches `policy-contract.schema.json`,
+`policy-contract.example.json`, `policy-contract-v6.schema.json`,
+`policy-contract-v6.example.json`, and
+`workload-policy-contract.example.json`. The exact image reference contains
+the offline key administrator at `/usr/local/bin/keyring-tool`; it does not
+require a Rust toolchain or source checkout.
+
 ## 2. Prepare policy and signing files privately
 
 Create a private directory (`umask` also protects temporary editor files).
@@ -201,6 +217,28 @@ jq empty ./private/policy-v6.json
 cargo run --locked --bin keyring-tool -- generate-es256 \
   ./private/issuer-keyring.json issuer-2026-09-a --valid-for-days 90
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
+```
+
+When consuming the 0.7.3 or later release artifacts, download the policy files
+above and run the same operations from the verified image digest. Run as the
+invoking host user so atomic mode-0600 output on the private bind mount is not
+owned by a container-only UID:
+
+```sh
+export IDENTITY_IMAGE_REFERENCE="$(jq -er .image ./dist/release-manifest.json)"
+run_keyring_tool() {
+  docker run --rm --user "$(id -u):$(id -g)" \
+    --mount type=bind,src="$PWD/private",dst=/work \
+    --entrypoint /usr/local/bin/keyring-tool \
+    "$IDENTITY_IMAGE_REFERENCE" "$@"
+}
+run_keyring_tool generate-es256 \
+  /work/issuer-keyring.json issuer-2026-09-a --valid-for-days 90
+run_keyring_tool validate-es256 /work/issuer-keyring.json
+# When workload exchange is enabled:
+run_keyring_tool generate-rsa \
+  /work/workload-keyring.json workload-2026-09-a --valid-for-days 90
+run_keyring_tool validate-rsa /work/workload-keyring.json
 ```
 
 GitHub's ordinary `sub` is `repo:ORG/REPO:ref:refs/heads/BRANCH` for a branch
@@ -363,6 +401,35 @@ config:
 The chart passes the selected contract through `EXPECTED_POLICY_VERSION` and
 the process refuses to start if the mounted document has another version.
 
+### Choose one projected-input rollout mechanism
+
+Identity validates policy, keyring, TLS, and optional verifier files only at
+process startup. Kubernetes updates projected files in existing Pods without
+restarting the process, so changing an external ConfigMap or Secret must also
+trigger a complete Deployment rollout. Choose one mechanism:
+
+- Controller-free default: keep `rolloutAutomation.reloader.enabled=false`,
+  change only the matching `rolloutRevisions` value in the same reviewed
+  change as the external object, apply the Helm release, and wait for every
+  replica.
+- Operator-managed automation: install and govern
+  [Stakater Reloader](https://github.com/stakater/Reloader), configure its
+  annotation keys to their standard names, and set
+  `rolloutAutomation.reloader.enabled=true`. The chart adds named watch
+  annotations `configmap.reloader.stakater.com/reload` and
+  `secret.reloader.stakater.com/reload` for exactly the mounted policy
+  ConfigMaps, keyring/TLS Secrets, and optional browser JWKS ConfigMap.
+  Reloader then initiates the rolling restart when one changes.
+
+The chart does not install Reloader or grant it cluster RBAC. In GitOps
+environments, use Reloader's annotations rollout strategy and verify that the
+controller mutation is not reverted before new Pods become ready. Helm
+`lookup` content hashes are intentionally not used: these objects are
+externally owned, and cluster-dependent rendering would make offline and Flux
+output disagree. Even with automation enabled, retain explicit revision
+values for reviewed object-name or policy-contract switches and always wait
+for `kubectl rollout status` before acceptance.
+
 ```sh
 umask 077
 cp charts/github-oidc-exchange/values.example.yaml ./private/values.yaml
@@ -394,13 +461,13 @@ helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
 ```
 
 Validate discovery/JWKS and a fresh exchange again. There is no database
-migration; keep the same namespace to preserve replay Leases. A 0.7.2
+migration; keep the same namespace to preserve replay Leases. A 0.7.3
 application upgrade that retains v5 is safe to roll back normally. After v6
 activation, an older binary cannot read v6: roll back the chart/application
-and `policyContract`/`policyConfigMapName` together to the retained v5 object.
+and all three policy-selection values together to the retained v5 object.
 Never perform an image-only rollback while v6 remains mounted. The exact
 preflight, activation, and rollback sequence is in the
-[0.7.2 upgrade guide](upgrade-v0.7.2.md).
+[0.7.3 upgrade guide](upgrade-v0.7.3.md).
 
 ## 5. Enable optional workload exchange
 
@@ -452,8 +519,9 @@ restart and JWKS to publish both `kid`s. Then activate the new key, project
 again, bump the revision again, and verify new tokens use the new `kid` while
 old tokens still validate. If activation fails, `activate-es256 ... OLD_KID`
 and reproject/bump the revision; the overlap keeps both old and new tokens
-verifiable. Wait at least five minutes after the last old signing event and
-confirm all consumers have refreshed JWKS before retiring the old key.
+verifiable. Retire the old key only after the 120-second token lifetime,
+allowed clock skew, every verifier refresh or static reload, and the
+operational rollback window have all elapsed.
 
 ```sh
 set +x
@@ -463,7 +531,7 @@ cargo run --locked --bin keyring-tool -- add-es256 \
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
 cargo run --locked --bin keyring-tool -- export-jwks \
   ./private/issuer-keyring.json > ./private/issuer-jwks.json
-jq -e '.keys | length == 2' ./private/issuer-jwks.json >/dev/null
+jq -e '.keys | length >= 2' ./private/issuer-jwks.json >/dev/null
 identity_keyring_rv="$(kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" \
   -n "$IDENTITY_NAMESPACE" get secret github-oidc-exchange-keyring \
   -o jsonpath='{.metadata.resourceVersion}')"
@@ -477,7 +545,7 @@ kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$I
 # complete that verifier's documented reload/rollout mechanism.
 cargo run --locked --bin keyring-tool -- activate-es256 ./private/issuer-keyring.json issuer-next
 # Reproject, bump revision to rev-3, upgrade/wait; rollback activation by selecting OLD_KID if needed.
-# After the overlap/grace window only:
+# After the token, skew, verifier-refresh, and rollback windows only:
 cargo run --locked --bin keyring-tool -- retire-es256 ./private/issuer-keyring.json issuer-2026-09-a
 ```
 

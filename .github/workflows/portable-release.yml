@@ -192,12 +192,20 @@ jobs:
           docker buildx imagetools create --tag "$IMAGE:$VERSION" \
             "$IMAGE@${{ needs.build-amd64.outputs.digest }}" \
             "$IMAGE@${{ needs.build-arm64.outputs.digest }}"
+          image_digest="$(oras manifest fetch --descriptor "$IMAGE:$VERSION" | jq -r '.digest')"
+          [[ "$image_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          artifacthub_image="$IMAGE@$image_digest"
+          sed -i "s|image: replace-with-release-image|image: $artifacthub_image|" \
+            charts/github-oidc-exchange/Chart.yaml
+          if grep -Fq 'replace-with-release-image' charts/github-oidc-exchange/Chart.yaml; then
+            printf 'Artifact Hub image sentinel was not replaced\n' >&2
+            exit 1
+          fi
+          grep -Fq "image: $artifacthub_image" charts/github-oidc-exchange/Chart.yaml
           helm package charts/github-oidc-exchange --destination "$RUNNER_TEMP"
           helm push "$RUNNER_TEMP/github-oidc-exchange-$VERSION.tgz" \
             "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts"
-          image_digest="$(oras manifest fetch --descriptor "$IMAGE:$VERSION" | jq -r '.digest')"
           chart_digest="$(oras manifest fetch --descriptor "$CHART:$VERSION" | jq -r '.digest')"
-          [[ "$image_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           [[ "$chart_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           printf 'IMAGE_DIGEST=%s\nCHART_DIGEST=%s\n' "$image_digest" "$chart_digest" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/chart-scan"
@@ -251,6 +259,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          release_assets="$RUNNER_TEMP/release-contracts"
+          mkdir -p "$release_assets"
+          bash scripts/stage-release-contract-assets.sh "$release_assets"
           policy_contract="$(sed -n 's/^pub const POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
           identity_contract="$(sed -n 's/^pub const IDENTITY_CONTRACT: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
           source_auth_policy_contract="$(sed -n 's/^pub const SOURCE_AUTH_POLICY_VERSION: &str = "\([^"]*\)";/\1/p' src/lib.rs)"
@@ -278,4 +289,5 @@ jobs:
             --title "github-oidc-exchange v$VERSION" \
             --notes-file "docs/releases/v$VERSION.md" \
             "$RUNNER_TEMP/release-manifest.json" \
-            "$RUNNER_TEMP/release-manifest.sigstore.json"
+            "$RUNNER_TEMP/release-manifest.sigstore.json" \
+            "$release_assets"/*

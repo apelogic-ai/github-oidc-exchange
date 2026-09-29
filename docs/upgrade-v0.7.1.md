@@ -1,9 +1,9 @@
 # Upgrade to 0.7.1 — key lifecycle and network policy
 
-> Historical guide for the 0.7.1 boundary. For current 0.7.2 installation,
+> Historical guide for the 0.7.1 boundary. For current 0.7.3 installation,
 > integration guidance, and rollback, use the
 > [installation guide](installation.md) and
-> [0.7.2 upgrade guide](upgrade-v0.7.2.md).
+> [0.7.3 upgrade guide](upgrade-v0.7.3.md).
 
 Application/chart 0.7.1 adds runtime signing-key expiry enforcement,
 pre-expiry readiness, public expiry metrics, `keyring-tool export-jwks`, and a
@@ -118,8 +118,9 @@ accepts both `kid`s. Identity does not call, restart, or depend on Steward;
 the signed JWKS handoff is the boundary.
 
 After activation, verify a new token through every relying party. Retire the
-old key only after the 120-second token lifetime, clock skew, refresh, and
-rollback windows. Export and publish the retired public set again. The exact
+old key only after the 120-second token lifetime, allowed clock skew, every
+verifier refresh or static reload, and the operational rollback window have
+all elapsed. Export and publish the retired public set again. The exact
 Secret and ConfigMap replacement commands are in the
 [installation runbook](installation.md#6-rotation-recovery-uninstall).
 

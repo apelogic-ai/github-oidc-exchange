@@ -1,22 +1,23 @@
-# Baseline deployment quickstart — github-oidc-exchange 0.7.2
+# Baseline deployment quickstart — github-oidc-exchange 0.7.3
 
-This path installs the 0.7.2 chart with the unchanged v5 policy and
+This path installs the 0.7.3 chart with the unchanged v5 policy and
 `steward-task-v2` output. It assumes an existing Kubernetes cluster, HTTPS
 Gateway, DNS/certificate, and a published immutable image/chart handoff.
 Use the [installation guide](installation.md) for other exposure modes,
 private registries, rotation, optional workload exchange, and uninstall.
 
 The v6 source-authentication policy is not enabled by this quickstart. After a
-v5 deployment passes, use the [0.7.2 upgrade guide](upgrade-v0.7.2.md) to opt
+v5 deployment passes, use the [0.7.3 upgrade guide](upgrade-v0.7.3.md) to opt
 in with a separate v6 ConfigMap and atomic rollback plan.
 
 ## 1. Pin the environment and artifacts
 
-Required tools: Rust 1.95, Helm 3.17+, `kubectl`, `jq`, `oras`, and an explicit
-kubeconfig/context. Start from the reviewed 0.7.2 source.
+Required tools: Docker, Helm 3.17+, `kubectl`, `gh`, `jq`, `oras`, and an
+explicit kubeconfig/context. Start from the reviewed 0.7.3 source; no Rust
+toolchain is required for this release-consumer path.
 
 ```sh
-export IDENTITY_VERSION=0.7.2
+export IDENTITY_VERSION=0.7.3
 export IDENTITY_KUBECONFIG=/absolute/path/to/cluster-kubeconfig
 export IDENTITY_CONTEXT=platform-context
 export IDENTITY_NAMESPACE=identity
@@ -35,7 +36,9 @@ Download the release handoff and resolve immutable references:
 umask 077
 install -d -m 0700 ./private ./dist
 gh release download "v$IDENTITY_VERSION" --repo "$IDENTITY_FORK" \
-  --pattern release-manifest.json --dir ./dist
+  --pattern release-manifest.json \
+  --pattern policy-contract.example.json \
+  --dir ./dist
 export IDENTITY_IMAGE_REFERENCE="$(jq -er .image ./dist/release-manifest.json)"
 export IDENTITY_CHART_REFERENCE="$(jq -er .chart ./dist/release-manifest.json)"
 export IDENTITY_IMAGE_REPOSITORY="${IDENTITY_IMAGE_REFERENCE%@*}"
@@ -57,11 +60,16 @@ identity values with claims observed from the real workflow as described in
 the [integration guide](integration.md).
 
 ```sh
-install -m 0600 docs/policy-contract.example.json ./private/policy-v5.json
-cargo run --locked --bin keyring-tool -- generate-es256 \
-  ./private/issuer-keyring.json issuer-0.7.2-a
-cargo run --locked --bin keyring-tool -- validate-es256 \
-  ./private/issuer-keyring.json
+install -m 0600 ./dist/policy-contract.example.json ./private/policy-v5.json
+run_keyring_tool() {
+  docker run --rm --user "$(id -u):$(id -g)" \
+    --mount type=bind,src="$PWD/private",dst=/work \
+    --entrypoint /usr/local/bin/keyring-tool \
+    "$IDENTITY_IMAGE_REFERENCE" "$@"
+}
+run_keyring_tool generate-es256 \
+  /work/issuer-keyring.json issuer-0.7.3-a --valid-for-days 90
+run_keyring_tool validate-es256 /work/issuer-keyring.json
 jq -e '.version == "github-oidc-exchange.apelogic.io/v5"' \
   ./private/policy-v5.json >/dev/null
 

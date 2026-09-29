@@ -63,7 +63,8 @@ const AUDIENCE: &str = "apelogic-github-identity-exchange";
 const SUBJECT: &str = "repo:apelogic-ai@227278099/steward-run@1320906141:ref:refs/heads/main";
 const CALLER_WORKFLOW: &str =
     "apelogic-ai/steward-run/.github/workflows/roundtrip.yml@refs/heads/main";
-const WORKFLOW: &str = "apelogic-ai/steward-run/.github/workflows/steward-task.yml@refs/heads/main";
+const WORKFLOW: &str =
+    "apelogic-ai/steward-run/.github/workflows/steward-task-customer.yml@refs/heads/main";
 const TRIGGERED_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 const CALLER_WORKFLOW_SHA: &str = "123456789abcdef0123456789abcdef012345678";
 const REUSABLE_WORKFLOW_SHA: &str = "23456789abcdef0123456789abcdef0123456789";

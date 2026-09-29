@@ -1,4 +1,4 @@
-# github-oidc-exchange Helm chart 0.7.2
+# github-oidc-exchange Helm chart 0.7.3
 
 Read the [installation guide](../../docs/installation.md) before deploying.
 The [quickstart](../../docs/quickstart.md) covers the default v5 path; the
@@ -8,7 +8,7 @@ token verification.
 
 ## GitHub policy selection
 
-Chart/application 0.7.2 supports both policies:
+Chart/application 0.7.3 supports both policies:
 
 | `config.policyContract` | Policy object | Output |
 | --- | --- | --- |
@@ -21,7 +21,7 @@ match. An application upgrade with the default and existing v5 ConfigMap is
 behavior-preserving. Never modify the v5 object to activate v6. Create a
 separate v6 ConfigMap, change `policyContract`, `policyConfigMapName`, and
 `rolloutRevisions.githubPolicy` in one Helm revision. Roll back that Helm
-revision as a unit. See the [0.7.2 upgrade guide](../../docs/upgrade-v0.7.2.md).
+revision as a unit. See the [0.7.3 upgrade guide](../../docs/upgrade-v0.7.3.md).
 
 The chart deliberately fails validation until the operator supplies an
 immutable image digest, HTTPS issuer, dedicated GitHub OIDC input audience,
@@ -66,8 +66,28 @@ Steward JWKS ConfigMap.
 with the public exchange handler, so select only the trusted monitoring Pods;
 the chart rejects selectors that would admit every namespace or Pod.
 
+The default egress policy is dual-stack. It permits HTTPS on TCP 443 and
+Kubernetes API access on TCP 443 and 6443 through
+`networkPolicy.httpsEgressCidrs`, `networkPolicy.apiServerCidrs`, and
+`networkPolicy.apiServerPorts`. Keep both API-server ports unless the cluster's
+pre- and post-DNAT endpoint contract proves a narrower set. Add literal
+NodeLocal DNSCache CIDRs to `networkPolicy.dnsIpBlocks`. Use
+`networkPolicy.extraEgress` for complete, narrowly scoped rules such as an
+HTTPS proxy on a nonstandard port.
+
 Chart values contain object references only, never private key, policy, TLS,
-or registry credential contents. Projected inputs do not hot-reload. After a
-verified object change, bump only its corresponding `rolloutRevisions` value
-and wait for rollout. Preserve key overlap and both versioned policy objects
-through the rollback window.
+or registry credential contents. Projected inputs do not hot-reload. The
+controller-free default requires changing the corresponding
+`rolloutRevisions` value after a verified object update and waiting for the
+Deployment rollout.
+
+Clusters with an operator-managed
+[Stakater Reloader](https://github.com/stakater/Reloader) may instead set
+`rolloutAutomation.reloader.enabled=true`. The chart then annotates the
+Deployment with `configmap.reloader.stakater.com/reload` and
+`secret.reloader.stakater.com/reload`, listing the exact referenced object
+names. Changes to policy, signing keys, workload TLS, or optional browser JWKS
+then trigger a rolling restart. The chart does not install or grant RBAC to
+Reloader. Keep the explicit revisions for reviewed object-name or
+policy-contract switches, and preserve key overlap and both versioned policy
+objects through rollback.

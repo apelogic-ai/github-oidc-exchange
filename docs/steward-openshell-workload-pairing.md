@@ -4,7 +4,7 @@ This guide pairs Identity's optional Kubernetes workload exchange with the
 Steward controller and OpenShell. It is a cross-product configuration map, not
 a runtime dependency from Identity to Steward: Steward presents a Kubernetes
 credential to Identity, Identity validates it with TokenReview and issues a
-bounded token, and OpenShell verifies that token. Identity 0.7.2 and later
+bounded token, and OpenShell verifies that token. Identity 0.7.3 and later
 support this contract.
 
 The standard contract has these exact joins:
@@ -94,17 +94,24 @@ config:
     workloadExchangeEndpoint: https://github-oidc-exchange.identity.svc.cluster.local:8443/v1/workload/exchange
     workloadExchangeServerName: github-oidc-exchange.identity.svc.cluster.local
 
+networkPolicy:
+  identityExchangeNamespace: identity
+
 workloadExchangeTrust:
   kind: ConfigMap
   name: steward-workload-exchange-ca
   caCertificate: ca.crt
 ```
 
-Here `identity` is the Identity namespace. The serving certificate selected by
-Identity's `workloadExchange.tls.secretName` must cover the exact
+Here `identity` is the Identity namespace. It must match both the Service DNS
+name and Steward's `networkPolicy.identityExchangeNamespace`; otherwise the
+controller egress policy blocks port 8443. The serving certificate selected
+by Identity's `workloadExchange.tls.secretName` must cover the exact
 `workloadExchangeServerName`, and Steward's public CA ConfigMap must validate
 that chain. The workload endpoint stays cluster-internal and must not be added
-to Ingress or HTTPRoute.
+to Ingress or HTTPRoute. See the pinned
+[Steward 0.3.2 values contract](https://github.com/apelogic-ai/steward/blob/v0.3.2/charts/steward/values.yaml)
+for the paired namespace setting.
 
 ## OpenShell values
 

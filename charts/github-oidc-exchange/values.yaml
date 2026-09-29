@@ -33,12 +33,20 @@ config:
   keyExpiryReadinessThresholdSeconds: 604800
 
 rolloutRevisions:
-  githubPolicy: ""
-  githubKeyring: ""
+  # Required controller-free rollout triggers. Change only the entry whose
+  # referenced object changed, unless rolloutAutomation.reloader is enabled.
+  githubPolicy: rev-1
+  githubKeyring: rev-1
   workloadPolicy: ""
   workloadRsaKeyring: ""
   workloadTls: ""
   browserHop1Jwks: ""
+
+rolloutAutomation:
+  reloader:
+    # Requires an operator-managed Stakater Reloader controller that recognizes
+    # the standard named ConfigMap and Secret annotations.
+    enabled: false
 
 workloadExchange:
   enabled: false
@@ -108,6 +116,26 @@ networkPolicy:
     kubernetes.io/metadata.name: kube-system
   dnsPodSelector:
     k8s-app: kube-dns
+  # Optional literal NodeLocal DNSCache addresses, for example
+  # 169.254.20.10/32 or fd00::a/128. Selector-based cluster DNS remains on.
+  dnsIpBlocks: []
+  # GitHub OIDC discovery/JWKS and other required HTTPS destinations. The
+  # dual-stack defaults preserve the chart's existing unrestricted HTTPS
+  # egress while making IPv6 usable.
+  httpsEgressCidrs:
+    - 0.0.0.0/0
+    - ::/0
+  # Include both the kubernetes Service address as observed before DNAT and
+  # API-server endpoint addresses as observed after DNAT when narrowing these.
+  apiServerCidrs:
+    - 0.0.0.0/0
+    - ::/0
+  apiServerPorts:
+    - 443
+    - 6443
+  # Additional complete NetworkPolicy egress rules, such as an HTTPS proxy on
+  # a nonstandard port. Prefer narrow CIDRs and ports.
+  extraEgress: []
   metricsNamespaceSelector: {} # mandatory nonempty when serviceMonitor.enabled=true
   metricsPodSelector: {} # mandatory nonempty when serviceMonitor.enabled=true
 
