@@ -57,6 +57,10 @@ check_registry_reference() {
   fi
 }
 
+if ((${#evidence_files[@]} == 0)); then
+  exit 0
+fi
+
 for file in "${evidence_files[@]}"; do
   if [[ ! -f "$file" ]]; then
     printf 'release evidence does not exist: %s\n' "$file" >&2

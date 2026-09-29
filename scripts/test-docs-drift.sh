@@ -199,8 +199,7 @@ for expected in \
   'SLSA provenance' \
   'cosign verify-blob' \
   'cosign verify-attestation' \
-  'public GitHub release assets no longer contain private-registry' \
-  'It contains no `ecr_*` fields' \
+  'publishes those artifacts directly in GHCR' \
   '/README.md)' \
   '/charts/github-oidc-exchange/values.schema.json)' \
   '../upgrade-v0.7.3.md)'; do

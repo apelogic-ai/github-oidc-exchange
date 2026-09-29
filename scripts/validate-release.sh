@@ -360,35 +360,30 @@ if grep -Fq -- 'helm push' "$workflow"; then
   exit 1
 fi
 
-if grep -Fq -- 'aws ecr put-image' "$workflow" ||
-  grep -Fq -- '--output text > /tmp/chart-manifest.json' "$workflow"; then
-  printf 'chart promotion must preserve the verified OCI manifest digest\n' >&2
+if grep -Fq -- 'oras cp' "$workflow"; then
+  printf 'release artifacts must be published directly to GHCR\n' >&2
   exit 1
 fi
 
 amd64_candidate_line="$(grep -n 'Build and publish native amd64 image candidate' "$workflow" | cut -d: -f1)"
 arm64_candidate_line="$(grep -n 'Build and publish native arm64 image candidate' "$workflow" | cut -d: -f1)"
 image_candidate_line="$(grep -n 'Compose native multi-platform image candidate' "$workflow" | cut -d: -f1)"
+amd64_scan_line="$(grep -n 'Scan native amd64 image digest with Trivy' "$workflow" | cut -d: -f1)"
+arm64_scan_line="$(grep -n 'Scan native arm64 image digest with Trivy' "$workflow" | cut -d: -f1)"
 chart_candidate_line="$(grep -n 'Publish unique immutable chart candidate' "$workflow" | cut -d: -f1)"
-verification_line="$(grep -n 'Sign, attest, and verify immutable candidate artifacts' "$workflow" | cut -d: -f1)"
-image_promotion_line="$(grep -n 'Promote verified image candidate' "$workflow" | cut -d: -f1)"
-chart_promotion_line="$(grep -n 'Promote verified chart candidate' "$workflow" | cut -d: -f1)"
-public_mirror_line="$(grep -n 'Mirror verified immutable ECR artifacts to GHCR' "$workflow" | cut -d: -f1)"
-public_visibility_line="$(grep -n 'Verify mirrored GHCR packages remain public' "$workflow" | cut -d: -f1)"
-public_sign_line="$(grep -n 'Sign, attest, and verify public GHCR artifacts' "$workflow" | cut -d: -f1)"
+verification_line="$(grep -n 'Sign, attest, and verify immutable GHCR artifacts' "$workflow" | cut -d: -f1)"
+publish_line="$(grep -n 'Publish signed version tags' "$workflow" | cut -d: -f1)"
+public_visibility_line="$(grep -n 'Verify GHCR packages remain public' "$workflow" | cut -d: -f1)"
 anonymous_verify_line="$(grep -n 'Verify anonymous exact-digest GHCR pulls' "$workflow" | cut -d: -f1)"
 release_line="$(grep -n 'gh release create' "$workflow" | cut -d: -f1)"
-[[ "$image_candidate_line" -lt "$verification_line" ]]
 [[ "$amd64_candidate_line" -lt "$image_candidate_line" ]]
 [[ "$arm64_candidate_line" -lt "$image_candidate_line" ]]
+[[ "$image_candidate_line" -lt "$amd64_scan_line" ]]
+[[ "$image_candidate_line" -lt "$arm64_scan_line" ]]
+[[ "$amd64_scan_line" -lt "$verification_line" ]]
+[[ "$arm64_scan_line" -lt "$verification_line" ]]
 [[ "$chart_candidate_line" -lt "$verification_line" ]]
-[[ "$verification_line" -lt "$image_promotion_line" ]]
-[[ "$verification_line" -lt "$chart_promotion_line" ]]
-[[ "$image_promotion_line" -lt "$release_line" ]]
-[[ "$chart_promotion_line" -lt "$release_line" ]]
-[[ "$image_promotion_line" -lt "$public_mirror_line" ]]
-[[ "$chart_promotion_line" -lt "$public_mirror_line" ]]
-[[ "$public_mirror_line" -lt "$public_visibility_line" ]]
-[[ "$public_visibility_line" -lt "$public_sign_line" ]]
-[[ "$public_sign_line" -lt "$anonymous_verify_line" ]]
+[[ "$verification_line" -lt "$publish_line" ]]
+[[ "$publish_line" -lt "$public_visibility_line" ]]
+[[ "$public_visibility_line" -lt "$anonymous_verify_line" ]]
 [[ "$anonymous_verify_line" -lt "$release_line" ]]

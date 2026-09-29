@@ -58,17 +58,21 @@ ci_trivy="$(line_number "$ci" 'uses: aquasecurity/trivy-action')"
 (( ci_build < ci_smoke && ci_smoke < ci_trivy ))
 
 release_contract="$(line_number "$release" 'bash scripts/validate-runtime-smoke.sh')"
-release_auth="$(line_number "$release" 'uses: aws-actions/configure-aws-credentials')"
+release_auth="$(line_number "$release" 'name: Authenticate to GitHub Container Registry')"
 release_amd64_candidate="$(line_number "$release" 'name: Build and publish native amd64 image candidate')"
 release_amd64_smoke="$(line_number "$release" 'SMOKE_PLATFORM=linux/amd64 bash scripts/smoke-release-container.sh')"
 release_arm64_candidate="$(line_number "$release" 'name: Build and publish native arm64 image candidate')"
 release_arm64_smoke="$(line_number "$release" 'SMOKE_PLATFORM=linux/arm64 bash scripts/smoke-release-container.sh')"
 release_compose="$(line_number "$release" 'name: Compose native multi-platform image candidate')"
-release_sign="$(line_number "$release" 'name: Sign, attest, and verify immutable candidate artifacts')"
-release_promote="$(line_number "$release" 'name: Promote verified image candidate')"
+release_amd64_scan="$(line_number "$release" 'name: Scan native amd64 image digest with Trivy')"
+release_arm64_scan="$(line_number "$release" 'name: Scan native arm64 image digest with Trivy')"
+release_sign="$(line_number "$release" 'name: Sign, attest, and verify immutable GHCR artifacts')"
+release_publish="$(line_number "$release" 'name: Publish signed version tags')"
 release_handoff="$(line_number "$release" 'name: Publish signed release handoff')"
 (( release_contract < release_auth ))
 (( release_amd64_candidate < release_amd64_smoke ))
 (( release_arm64_candidate < release_arm64_smoke ))
 (( release_amd64_smoke < release_compose && release_arm64_smoke < release_compose ))
-(( release_compose < release_sign && release_compose < release_promote && release_compose < release_handoff ))
+(( release_compose < release_amd64_scan && release_compose < release_arm64_scan ))
+(( release_amd64_scan < release_sign && release_arm64_scan < release_sign ))
+(( release_sign < release_publish && release_publish < release_handoff ))
