@@ -169,7 +169,7 @@ jq -n '{
   version: "github-oidc-exchange.apelogic.io/v5",
   service_group: "agents.apelogic.ai/service-principal:steward-run",
   acting_group_prefix: "agents.apelogic.ai/acting-user:",
-  allowed_email_domains: ["apelogic.ai"],
+  allowed_email_domains: ["example.com"],
   repositories: [{
     owner_id: "227278099",
     repository_id: "1320906141",
@@ -177,7 +177,7 @@ jq -n '{
     events: ["workflow_dispatch"],
     refs: ["refs/heads/main"]
   }],
-  actors: {"16106037": {email: "leo@apelogic.ai", canonical_user_id: "usr_0123456789abcdef0123456789abcdef", verified: true}}
+  actors: {"12345678": {email: "developer@example.com", canonical_user_id: "usr_0123456789abcdef0123456789abcdef", verified: true}}
 }' > "$app_dir/policy.json"
 
 jq '
