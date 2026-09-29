@@ -1,4 +1,4 @@
-# github-oidc-exchange Helm chart 0.7.4
+# github-oidc-exchange Helm chart 0.7.5
 
 Read the [installation guide](../../docs/installation.md) before deploying.
 The [quickstart](../../docs/quickstart.md) covers the default v5 path; the
@@ -8,7 +8,7 @@ token verification.
 
 ## GitHub policy selection
 
-Chart/application 0.7.4 supports both policies:
+Chart/application 0.7.5 supports both policies:
 
 | `config.policyContract` | Policy object | Output |
 | --- | --- | --- |
@@ -21,7 +21,7 @@ match. An application upgrade with the default and existing v5 ConfigMap is
 behavior-preserving. Never modify the v5 object to activate v6. Create a
 separate v6 ConfigMap, change `policyContract`, `policyConfigMapName`, and
 `rolloutRevisions.githubPolicy` in one Helm revision. Roll back that Helm
-revision as a unit. See the [0.7.4 upgrade guide](../../docs/upgrade-v0.7.4.md).
+revision as a unit. See the [0.7.5 upgrade guide](../../docs/upgrade-v0.7.5.md).
 
 The chart deliberately fails validation until the operator supplies an
 immutable image digest, HTTPS issuer, dedicated GitHub OIDC input audience,

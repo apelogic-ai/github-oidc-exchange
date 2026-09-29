@@ -34,10 +34,11 @@ fi
 
 for forbidden in \
   '(^|[^[:alnum:]_])(vars|secrets)[.](ecr|aws)_' \
+  "(vars|secrets)[[:space:]]*\\[[[:space:]]*['\"](ecr|aws)_[^'\"]*['\"][[:space:]]*\\]" \
   'amazonaws[.]com' \
   'configure-aws-credentials' \
   'amazon-ecr-login' \
-  '(^|[[:space:]])aws[[:space:]]+ecr([[:space:]]|$)'; do
+  "(^|[^[:alnum:]_])['\"]?aws['\"]?([[:space:]]+[^[:space:]]+){0,8}[[:space:]]+ecr([[:space:]]|$)"; do
   if grep -R -n -i -E "$forbidden" "$workflow_root"; then
     printf 'workflow contains a forbidden registry dependency matching: %s\n' \
       "$forbidden" >&2
@@ -100,9 +101,8 @@ for file in "${evidence_files[@]}"; do
     ' "$file")
   fi
 
-  # Scheme-qualified references are always host references, even when they
-  # have no path. Bare references must include a path so dotted prose such as
-  # version numbers and file names is not mistaken for a registry host.
+  # Scheme-qualified references are always host references, even without a
+  # path. Bare host/path references are checked separately from bare hosts.
   while IFS= read -r reference; do
     [[ -n "$reference" ]] || continue
     check_public_reference "$file" "$reference"
@@ -112,4 +112,17 @@ for file in "${evidence_files[@]}"; do
     [[ -n "$reference" ]] || continue
     check_public_reference "$file" "$reference"
   done < <(grep -Eo '([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?/[[:alnum:]_.:@+?=&%/-]+' "$file" || true)
+
+  # A bare host has no scheme or path. Exclude common file extensions so
+  # release-manifest.json and README.md are not mistaken for hosts; numeric
+  # version strings do not match because the final label must be alphabetic.
+  while IFS= read -r reference; do
+    [[ -n "$reference" ]] || continue
+    case "${reference,,}" in
+      *.md | *.json | *.yml | *.yaml | *.toml | *.txt | *.tgz | *.tar | *.gz | *.lock | *.sig)
+        continue
+        ;;
+    esac
+    check_public_reference "$file" "$reference"
+  done < <(grep -Eo '([[:alnum:]-]+\.)+[[:alpha:]][[:alpha:]-]*' "$file" || true)
 done

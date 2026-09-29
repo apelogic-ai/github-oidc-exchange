@@ -101,6 +101,19 @@ impl ReplayLedger for TestReplayLedger {
     }
 }
 
+#[derive(Clone)]
+struct UnreadyReplayLedger;
+
+impl ReplayLedger for UnreadyReplayLedger {
+    async fn use_once(&self, _jti: &str, _expires_at: i64) -> Result<(), ReplayError> {
+        Ok(())
+    }
+
+    async fn check_ready(&self) -> Result<(), ReplayError> {
+        Err(ReplayError::Unavailable)
+    }
+}
+
 fn policy() -> Policy {
     Policy {
         version: POLICY_VERSION.to_owned(),
@@ -113,6 +126,8 @@ fn policy() -> Policy {
             subjects: Some(vec![SUBJECT.to_owned()]),
             events: Some(vec!["workflow_dispatch".to_owned()]),
             refs: Some(vec!["refs/heads/main".to_owned()]),
+            job_workflow_refs: None,
+            job_workflow_shas: None,
         }],
         actors: Some(HashMap::from([(
             "12345".to_owned(),
@@ -137,6 +152,8 @@ fn source_auth_policy() -> Policy {
             subjects: None,
             events: None,
             refs: None,
+            job_workflow_refs: None,
+            job_workflow_shas: None,
         }],
         actors: None,
     }
@@ -621,6 +638,27 @@ async fn rejected_assertions_never_enter_identity_logs() -> Result<(), Box<dyn s
             .await,
         Err(ExchangeError::Unauthorized)
     );
+
+    let mut unauthorized = claims();
+    unauthorized.repository = "apelogic-ai/other".to_owned();
+    unauthorized.repository_id = "999".to_owned();
+    unauthorized.sub = "repo:apelogic-ai/other:ref:refs/heads/main".to_owned();
+    unauthorized.workflow_ref =
+        "apelogic-ai/other/.github/workflows/roundtrip.yml@refs/heads/main".to_owned();
+    unauthorized.jti = "valid-but-policy-unauthorized".to_owned();
+    let unauthorized_assertion = signed_github_assertion(&unauthorized, &encoding)?;
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(logs.clone())
+        .finish();
+    assert_eq!(
+        service
+            .exchange(&unauthorized_assertion)
+            .with_subscriber(subscriber)
+            .await,
+        Err(ExchangeError::Unauthorized)
+    );
     let captured = String::from_utf8(
         logs.0
             .lock()
@@ -628,7 +666,11 @@ async fn rejected_assertions_never_enter_identity_logs() -> Result<(), Box<dyn s
             .clone(),
     )?;
     assert!(!captured.contains(&assertion));
+    assert!(!captured.contains(&unauthorized_assertion));
     assert!(!captured.contains("source_provenance"));
+    assert!(captured.contains("exchange_denied"));
+    assert!(captured.contains("assertion_invalid"));
+    assert!(captured.contains("policy_unauthorized"));
     Ok(())
 }
 
@@ -683,6 +725,7 @@ async fn unavailable_github_keys_log_the_failure_stage_and_cause()
             .clone(),
     )?;
     assert!(captured.contains("exchange_failed"));
+    assert!(captured.contains("github_jwks_unavailable"));
     assert!(captured.contains("while fetching the GitHub JWKS:"));
     assert!(captured.contains("client error (Connect)"));
     assert!(!captured.contains(&assertion));
@@ -975,7 +1018,6 @@ fn policy_schema_and_runtime_agree_on_v5_shape_and_removed_fields()
     for (field, value) in [
         ("profile", serde_json::json!("task")),
         ("workflow_refs", serde_json::json!([CALLER_WORKFLOW])),
-        ("job_workflow_refs", serde_json::json!([WORKFLOW])),
     ] {
         let mut removed = serde_json::to_value(policy())?;
         removed["repositories"][0]
@@ -990,6 +1032,30 @@ fn policy_schema_and_runtime_agree_on_v5_shape_and_removed_fields()
             policy_file_error(&removed)?
                 .to_string()
                 .contains("unknown field")
+        );
+    }
+
+    for (field, value) in [
+        ("job_workflow_refs", serde_json::json!([WORKFLOW])),
+        (
+            "job_workflow_shas",
+            serde_json::json!([REUSABLE_WORKFLOW_SHA]),
+        ),
+    ] {
+        let mut v6_only = serde_json::to_value(policy())?;
+        v6_only["repositories"][0]
+            .as_object_mut()
+            .ok_or("repository fixture must be an object")?
+            .insert(field.to_owned(), value);
+        assert!(!policy_schema_accepts(
+            "docs/policy-contract.schema.json",
+            &v6_only
+        )?);
+        assert_eq!(
+            policy_file_error(&v6_only)?,
+            PolicyError::Invalid(
+                "job workflow selectors are supported only by policy v6".to_owned()
+            )
         );
     }
 
@@ -1272,6 +1338,104 @@ fn source_auth_policy_enforces_every_configured_compatibility_selector()
         .repositories
         .push(duplicate.repositories[0].clone());
     assert!(duplicate.validate().is_err());
+    Ok(())
+}
+
+#[test]
+fn source_auth_owner_scope_is_explicit_bounded_and_preserves_concrete_repository()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut owner_policy = source_auth_policy();
+    let rule = &mut owner_policy.repositories[0];
+    rule.repository_id = "*".to_owned();
+    rule.subjects = Some(vec![
+        "repo:apelogic-ai@227278099/new-repository@24681012:ref:refs/heads/main".to_owned(),
+    ]);
+    rule.events = Some(vec!["workflow_dispatch".to_owned()]);
+    rule.refs = Some(vec!["refs/heads/main".to_owned()]);
+    rule.job_workflow_refs = Some(vec![WORKFLOW.to_owned()]);
+    rule.job_workflow_shas = Some(vec![REUSABLE_WORKFLOW_SHA.to_owned()]);
+    owner_policy.validate()?;
+    assert!(policy_schema_accepts(
+        "docs/policy-contract-v6.schema.json",
+        &serde_json::to_value(&owner_policy)?
+    )?);
+
+    let mut admitted = claims();
+    admitted.repository = "apelogic-ai/new-repository".to_owned();
+    admitted.repository_id = "24681012".to_owned();
+    admitted.sub =
+        "repo:apelogic-ai@227278099/new-repository@24681012:ref:refs/heads/main".to_owned();
+    let identity = owner_policy.authorize(&admitted)?;
+    assert_eq!(identity.repository, "227278099/24681012");
+
+    for rejected in [
+        {
+            let mut value = admitted.clone();
+            value.repository_owner_id = "999".to_owned();
+            value
+        },
+        {
+            let mut value = admitted.clone();
+            value.sub = "repo:apelogic-ai/new-repository:ref:refs/heads/main".to_owned();
+            value
+        },
+        {
+            let mut value = admitted.clone();
+            value.event_name = "push".to_owned();
+            value
+        },
+        {
+            let mut value = admitted.clone();
+            value.git_ref = "refs/heads/feature".to_owned();
+            value
+        },
+        {
+            let mut value = admitted.clone();
+            value.job_workflow_ref = CALLER_WORKFLOW.to_owned();
+            value
+        },
+        {
+            let mut value = admitted.clone();
+            value.job_workflow_sha = TRIGGERED_SHA.to_owned();
+            value
+        },
+    ] {
+        assert_eq!(
+            owner_policy.authorize(&rejected),
+            Err(PolicyError::Unauthorized)
+        );
+    }
+
+    let mut overlap = owner_policy.clone();
+    let mut exact = overlap.repositories[0].clone();
+    exact.repository_id = "24681012".to_owned();
+    overlap.repositories.push(exact);
+    assert!(overlap.validate().is_err());
+
+    let mut wildcard_owner = owner_policy.clone();
+    wildcard_owner.repositories[0].owner_id = "*".to_owned();
+    assert!(wildcard_owner.validate().is_err());
+
+    let mut legacy = policy();
+    legacy.repositories[0].repository_id = "*".to_owned();
+    assert!(legacy.validate().is_err());
+
+    let mut malformed_ref = owner_policy.clone();
+    malformed_ref.repositories[0].job_workflow_refs = Some(vec!["not-a-workflow".to_owned()]);
+    assert!(!policy_schema_accepts(
+        "docs/policy-contract-v6.schema.json",
+        &serde_json::to_value(&malformed_ref)?
+    )?);
+    assert!(malformed_ref.validate().is_err());
+
+    let mut malformed_sha = owner_policy;
+    malformed_sha.repositories[0].job_workflow_shas =
+        Some(vec!["23456789ABCDEF0123456789ABCDEF0123456789".to_owned()]);
+    assert!(!policy_schema_accepts(
+        "docs/policy-contract-v6.schema.json",
+        &serde_json::to_value(&malformed_sha)?
+    )?);
+    assert!(malformed_sha.validate().is_err());
     Ok(())
 }
 
@@ -1666,6 +1830,13 @@ async fn readiness_and_metrics_expose_the_active_signing_key_expiry()
         .oneshot(Request::get("/readyz").body(Body::empty())?)
         .await?;
     assert_eq!(readiness.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let readiness_body: serde_json::Value =
+        serde_json::from_slice(&readiness.into_body().collect().await?.to_bytes())?;
+    assert_eq!(readiness_body["status"], "not_ready");
+    assert_eq!(
+        readiness_body["failed_checks"],
+        serde_json::json!(["github_signing_key"])
+    );
     let liveness = application
         .clone()
         .oneshot(Request::get("/healthz").body(Body::empty())?)
@@ -1676,6 +1847,11 @@ async fn readiness_and_metrics_expose_the_active_signing_key_expiry()
         .await?;
     assert_eq!(metrics.status(), StatusCode::OK);
     let body = String::from_utf8(metrics.into_body().collect().await?.to_bytes().to_vec())?;
+    assert!(body.contains("# HELP github_oidc_exchange_requests_total"));
+    assert!(body.contains("# TYPE github_oidc_exchange_requests_total counter"));
+    assert!(body.contains("# HELP github_oidc_exchange_duration_seconds"));
+    assert!(body.contains("# TYPE github_oidc_exchange_duration_seconds histogram"));
+    assert!(body.contains("github_oidc_exchange_duration_seconds_bucket{le=\"+Inf\"} 0"));
     let seconds = body
         .lines()
         .find_map(|line| {
@@ -1684,6 +1860,42 @@ async fn readiness_and_metrics_expose_the_active_signing_key_expiry()
         .ok_or("missing key-expiry gauge")?
         .parse::<u64>()?;
     assert!((1..=600).contains(&seconds));
+    Ok(())
+}
+
+#[tokio::test]
+async fn readiness_reports_each_unavailable_dependency_by_stable_name()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let application = github_oidc_exchange::http::router(ExchangeService {
+        verifier: GitHubVerifier::with_test_jwks_url(
+            AUDIENCE.to_owned(),
+            "http://127.0.0.1:9/jwks".to_owned(),
+        )?,
+        policy: Arc::new(source_auth_policy()),
+        ledger: Arc::new(UnreadyReplayLedger),
+        keys: Arc::new(keyring()?),
+        issuer: "https://identity.example.invalid".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    });
+    let response = application
+        .clone()
+        .oneshot(Request::get("/readyz").body(Body::empty())?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: serde_json::Value =
+        serde_json::from_slice(&response.into_body().collect().await?.to_bytes())?;
+    assert_eq!(body["status"], "not_ready");
+    assert_eq!(
+        body["failed_checks"],
+        serde_json::json!(["github_jwks", "replay_ledger"])
+    );
+    let liveness = application
+        .oneshot(Request::get("/healthz").body(Body::empty())?)
+        .await?;
+    assert_eq!(liveness.status(), StatusCode::NO_CONTENT);
     Ok(())
 }
 
@@ -1797,15 +2009,18 @@ async fn source_auth_policy_emits_v3_without_unmapped_entitlements()
     let keyring = keyring()?;
     let jwks: JwkSet = serde_json::from_value(serde_json::to_value(keyring.jwks())?)?;
     let output_key = DecodingKey::from_jwk(&jwks.keys[0])?;
+    let metrics = Arc::new(Metrics::default());
+    let mut owner_policy = source_auth_policy();
+    owner_policy.repositories[0].repository_id = "*".to_owned();
     let service = ExchangeService {
         verifier,
-        policy: Arc::new(source_auth_policy()),
+        policy: Arc::new(owner_policy),
         ledger: Arc::new(TestReplayLedger::default()),
         keys: Arc::new(keyring),
         issuer: "https://identity.example.invalid".to_owned(),
         output_audience: "steward-task-api".to_owned(),
         token_ttl: Duration::from_secs(120),
-        metrics: Arc::new(Metrics::default()),
+        metrics: metrics.clone(),
     };
     let mut asserted = serde_json::to_value(claims())?;
     let asserted_object = asserted
@@ -1824,6 +2039,7 @@ async fn source_auth_policy_emits_v3_without_unmapped_entitlements()
     let output = service
         .exchange(&signed_github_assertion(&asserted, &encoding)?)
         .await?;
+    assert_eq!(metrics.duration_snapshot().1, 1);
 
     let mut validation = Validation::new(Algorithm::ES256);
     validation.set_issuer(&["https://identity.example.invalid"]);

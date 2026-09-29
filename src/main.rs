@@ -42,10 +42,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log_startup_failure("GitHub authorization policy", failure);
     })?;
     if policy.version != config.expected_policy_version {
-        return Err(std::io::Error::other(
-            "loaded policy version does not match EXPECTED_POLICY_VERSION",
-        )
-        .into());
+        let failure =
+            std::io::Error::other("loaded policy version does not match EXPECTED_POLICY_VERSION");
+        log_startup_failure("GitHub authorization policy contract", &failure);
+        return Err(failure.into());
     }
     let policy = Arc::new(policy);
     let keys = Arc::new(

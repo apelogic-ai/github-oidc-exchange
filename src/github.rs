@@ -197,6 +197,17 @@ impl GitHubVerifier {
         self.refresh().await
     }
 
+    pub async fn check_ready(&self) -> Result<(), VerifyError> {
+        let now = Utc::now().timestamp();
+        {
+            let cache = self.cache.read().await;
+            if !cache.keys.is_empty() && now.saturating_sub(cache.fetched_at) < 300 {
+                return Ok(());
+            }
+        }
+        self.refresh().await
+    }
+
     async fn key(&self, kid: &str) -> Result<DecodingKey, VerifyError> {
         #[cfg(feature = "test-support")]
         if self.key_source == KeySource::Injected {

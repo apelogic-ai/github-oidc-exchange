@@ -1,9 +1,11 @@
-# Integration guide — github-oidc-exchange 0.7.4
+# Integration guide — github-oidc-exchange 0.7.5
 
 This guide connects GitHub Actions to Identity and then to Steward through
 steward-run. It complements the [quickstart](quickstart.md),
 [installation guide](installation.md), and normative
 [consumer contracts](consumer-contract-v1.md).
+Operational probes, log reasons, and metrics are defined by the
+[operator observability contract](operator-observability-contract-v1.md).
 
 ## 1. Discover the exchange contract
 
@@ -66,6 +68,24 @@ The reusable workflow exposes only an allowlisted claim projection. Review:
 Remove the probe after verification. Never print, upload, or retain the raw
 assertion.
 
+GitHub's classic branch subject is
+`repo:ORG/REPO:ref:refs/heads/BRANCH`. A repository with an immutable-ID
+subject template may emit
+`repo:ORG@<owner-id>/REPO@<repo-id>:ref:refs/heads/BRANCH` instead. Check the
+live customization with `gh api repos/OWNER/REPO/actions/oidc/customization/sub`;
+custom templates can select different keys or ordering, so only the probed
+exact `sub` belongs in a `subjects` selector.
+
+The corresponding selector fragments are deliberately literal:
+
+```json
+{"subjects":["repo:ORG/REPO:ref:refs/heads/main"]}
+```
+
+```json
+{"subjects":["repo:ORG@123456/REPO@789012:ref:refs/heads/main"]}
+```
+
 ## 3. Select and install a policy
 
 The chart defaults to v5. Choose exactly one path.
@@ -95,14 +115,37 @@ config:
 
 ### Opt in to v6 and `steward-task-v3`
 
-Copy `docs/policy-contract-v6.example.json`. The minimal v6 rule admits only
-the exact signed numeric owner/repository pair. Omitted actors, subjects,
-events, and refs mean Identity does not choose which actors, branches, tags,
-pull requests, events, or workflow subjects may submit from that repository.
-Signed provenance is still checked and preserved.
+Copy `docs/policy-contract-v6.example.json`. The default v6 rule admits only
+the exact signed numeric owner/repository pair. To deliberately admit every
+repository under one immutable owner, retain its numeric `owner_id` and set
+`repository_id` to `"*"`. Do not combine that owner-wide rule with exact rules
+for the same owner. Omitted actors or selectors mean Identity does not choose
+which actors, branches, tags, pull requests, events, or workflow subjects may
+submit. Signed provenance is still checked and preserves the concrete
+repository ID. This wider trust boundary includes repositories created after
+the policy was deployed; use exact repository IDs unless that behavior is
+intended.
 
-Add a repository compatibility selector only when Identity must retain that
-exact restriction. Actor compatibility is an all-or-none bundle:
+For example, this v6 repository entry admits one immutable owner while keeping
+an exact event, branch, reusable-workflow reference, and reusable-workflow
+commit boundary:
+
+```json
+{
+  "owner_id": "227278099",
+  "repository_id": "*",
+  "events": ["workflow_dispatch"],
+  "refs": ["refs/heads/main"],
+  "job_workflow_refs": [
+    "apelogic-ai/identity-workflows/.github/workflows/exchange.yml@refs/heads/main"
+  ],
+  "job_workflow_shas": ["23456789abcdef0123456789abcdef0123456789"]
+}
+```
+
+Add `subjects`, `events`, `refs`, `job_workflow_refs`, or
+`job_workflow_shas` only when Identity must retain that exact restriction.
+Actor compatibility is an all-or-none bundle:
 `actors`, `allowed_email_domains`, and `acting_group_prefix` must either all be
 present or all be absent. When present, only mapped verified actors are
 accepted and Identity emits a complete v2-compatible email/group identity.
@@ -128,7 +171,7 @@ rolloutRevisions:
 ```
 
 Do not modify or delete the v5 ConfigMap. Follow the
-[0.7.4 upgrade guide](upgrade-v0.7.4.md) for preflight and atomic rollback.
+[0.7.5 upgrade guide](upgrade-v0.7.5.md) for preflight and atomic rollback.
 
 ## 4. Prove exchange behavior
 

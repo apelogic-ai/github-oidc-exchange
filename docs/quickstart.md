@@ -1,23 +1,23 @@
-# Baseline deployment quickstart — github-oidc-exchange 0.7.4
+# Baseline deployment quickstart — github-oidc-exchange 0.7.5
 
-This path installs the 0.7.4 chart with the unchanged v5 policy and
+This path installs the 0.7.5 chart with the unchanged v5 policy and
 `steward-task-v2` output. It assumes an existing Kubernetes cluster, HTTPS
 Gateway, DNS/certificate, and a published immutable image/chart handoff.
 Use the [installation guide](installation.md) for other exposure modes,
 private registries, rotation, optional workload exchange, and uninstall.
 
 The v6 source-authentication policy is not enabled by this quickstart. After a
-v5 deployment passes, use the [0.7.4 upgrade guide](upgrade-v0.7.4.md) to opt
+v5 deployment passes, use the [0.7.5 upgrade guide](upgrade-v0.7.5.md) to opt
 in with a separate v6 ConfigMap and atomic rollback plan.
 
 ## 1. Pin the environment and artifacts
 
 Required tools: Docker, Helm 3.17+, `kubectl`, `gh`, `jq`, `oras`, and an
-explicit kubeconfig/context. Start from the reviewed 0.7.4 source; no Rust
+explicit kubeconfig/context. Start from the reviewed 0.7.5 source; no Rust
 toolchain is required for this release-consumer path.
 
 ```sh
-export IDENTITY_VERSION=0.7.4
+export IDENTITY_VERSION=0.7.5
 export IDENTITY_KUBECONFIG=/absolute/path/to/cluster-kubeconfig
 export IDENTITY_CONTEXT=platform-context
 export IDENTITY_NAMESPACE=identity
@@ -68,7 +68,7 @@ run_keyring_tool() {
     "$IDENTITY_IMAGE_REFERENCE" "$@"
 }
 run_keyring_tool generate-es256 \
-  /work/issuer-keyring.json issuer-0.7.4-a --valid-for-days 90
+  /work/issuer-keyring.json issuer-0.7.5-a --valid-for-days 90
 run_keyring_tool validate-es256 /work/issuer-keyring.json
 jq -e '.version == "github-oidc-exchange.apelogic.io/v5"' \
   ./private/policy-v5.json >/dev/null

@@ -2,14 +2,14 @@
 set -euo pipefail
 
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-released_version="0.7.4"
+released_version="0.7.5"
 lock_version="$(awk '
   /^name = "github-oidc-exchange"$/ { package = 1; next }
   package && /^version = "/ { gsub(/^version = "|"$/, ""); print; exit }
 ' Cargo.lock)"
 chart_version="$(sed -n 's/^version: //p' charts/github-oidc-exchange/Chart.yaml | head -1)"
 app_version="$(sed -n 's/^appVersion: "\([^"]*\)"/\1/p' charts/github-oidc-exchange/Chart.yaml | head -1)"
-[[ "$version" == "0.7.4" ]]
+[[ "$version" == "$released_version" ]]
 [[ "$lock_version" == "$version" ]]
 [[ "$chart_version" == "$version" ]]
 [[ "$app_version" == "$version" ]]
@@ -27,9 +27,9 @@ current_docs=(
   docs/integration.md
   docs/consumer-contract-v1.md
   docs/steward-openshell-workload-pairing.md
-  docs/upgrade-v0.7.4.md
+  docs/upgrade-v0.7.5.md
   docs/source-authentication-documentation-inventory.md
-  docs/releases/v0.7.4.md
+  docs/releases/v0.7.5.md
   charts/github-oidc-exchange/README.md
 )
 for document in "${current_docs[@]}"; do
@@ -92,6 +92,9 @@ jq -e '
   (.properties.repositories.items.required | index("refs") | not) and
   (.oneOf | length == 2) and
   (.properties.repositories.items.properties.owner_id.pattern == "^[1-9][0-9]{0,19}$") and
+  (.properties.repositories.items.properties.repository_id.oneOf[1].const == "*") and
+  (.properties.repositories.items.properties.job_workflow_refs["$ref"] == "#/$defs/workflowRefs") and
+  (.properties.repositories.items.properties.job_workflow_shas["$ref"] == "#/$defs/gitSha1s") and
   (.properties.actors.patternProperties | has("^[1-9][0-9]{0,19}$"))
 ' docs/policy-contract-v6.schema.json >/dev/null
 jq -e '
@@ -139,8 +142,8 @@ for expected in 'static verifier' 'mounted JWKS' 'before Identity activates' \
 done
 
 for document in README.md docs/installation.md docs/integration.md \
-  docs/consumer-contract-v1.md docs/upgrade-v0.7.4.md \
-  docs/releases/v0.7.4.md charts/github-oidc-exchange/README.md; do
+  docs/consumer-contract-v1.md docs/upgrade-v0.7.5.md \
+  docs/releases/v0.7.5.md charts/github-oidc-exchange/README.md; do
   grep -Fq "$v5_policy" "$document"
   grep -Fq "$v6_policy" "$document"
   grep -Fq "$v2_identity" "$document"
@@ -172,7 +175,7 @@ for phrase in \
   'Steward performs any user binding' \
   'Task authority'; do
   grep -Fqi "$phrase" README.md docs/installation.md docs/integration.md \
-    docs/consumer-contract-v1.md docs/upgrade-v0.7.4.md
+    docs/consumer-contract-v1.md docs/upgrade-v0.7.4.md docs/upgrade-v0.7.5.md
 done
 
 grep -Fq 'policyContract: github-oidc-exchange.apelogic.io/v5' \
@@ -181,29 +184,25 @@ grep -Fq 'policyContract: github-oidc-exchange.apelogic.io/v5' \
   charts/github-oidc-exchange/values.example.yaml
 grep -Fq 'name: EXPECTED_POLICY_VERSION' \
   charts/github-oidc-exchange/templates/deployment.yaml
-grep -Fq 'github-oidc-exchange-policy` (`github-oidc-exchange.apelogic.io/v5`)' \
-  docs/upgrade-v0.7.4.md
-grep -Fq 'github-oidc-exchange-policy-v6' docs/upgrade-v0.7.4.md
+grep -Fq 'github-oidc-exchange.apelogic.io/v5' docs/upgrade-v0.7.5.md
+grep -Fq 'github-oidc-exchange.apelogic.io/v6' docs/upgrade-v0.7.5.md
 
 release_notes="docs/releases/v$released_version.md"
 for expected in \
-  'unchanged token contract' \
-  'Explicit values plus separate policy object' \
-  'candidate-*' \
-  'exchange_failed' \
-  'single-architecture' \
-  'manifest_preserving_mirror' \
-  'direct_publish' \
+  'non-breaking' \
+  'repository_id` to `"*"' \
+  'concrete signed' \
+  'job_workflow_refs' \
+  'one-hour JWKS cache' \
+  'github_jwks' \
+  'replay_ledger' \
+  'latency histogram' \
+  'public-boundary guard' \
   'release-manifest.json' \
-  'native amd64 and arm64 platform digests' \
-  'SPDX SBOM' \
-  'SLSA provenance' \
-  'cosign verify-blob' \
-  'cosign verify-attestation' \
-  'publish directly to' \
-  '/README.md)' \
-  '/charts/github-oidc-exchange/values.schema.json)' \
-  '../upgrade-v0.7.4.md)'; do
+  'release-manifest.sigstore.json' \
+  'public-image-signature.sigstore.json' \
+  'public-chart-signature.sigstore.json' \
+  '../upgrade-v0.7.5.md)'; do
   grep -Fq "$expected" "$release_notes"
 done
 ! grep -Fq 'supported_policy_contracts' "$release_notes"
@@ -282,19 +281,18 @@ done
 ! grep -Fq 'reusable workflow requires both exchange inputs' \
   docs/installation.md docs/integration.md docs/consumer-contract-v1.md
 
-grep -Fq 'IDENTITY_RELEASE=identity' docs/upgrade-v0.7.4.md
-! grep -Fq 'IDENTITY_RELEASE=github-oidc-exchange' docs/upgrade-v0.7.4.md
+grep -Fq 'IDENTITY_RELEASE=identity' docs/upgrade-v0.7.5.md
+! grep -Fq 'IDENTITY_RELEASE=github-oidc-exchange' docs/upgrade-v0.7.5.md
 grep -Fq 'IDENTITY_KUBECONFIG=/absolute/path/to/cluster-kubeconfig' \
-  docs/upgrade-v0.7.4.md
-grep -Fq 'IDENTITY_CONTEXT=platform-context' docs/upgrade-v0.7.4.md
+  docs/upgrade-v0.7.5.md
+grep -Fq 'IDENTITY_CONTEXT=platform-context' docs/upgrade-v0.7.5.md
 for expected in \
   'github-oidc-exchange.apelogic.io/v6' \
-  'github-oidc-exchange-policy-v6' \
-  'cosign verify-attestation' \
-  'kubernetes.default.svc.cluster.local' \
-  'exchange_failed' \
+  'repository_id: "*"' \
+  'github_oidc_exchange_duration_seconds' \
+  'operator-observability-contract-v1.md' \
   'helm rollback "$IDENTITY_RELEASE" PREVIOUS_REVISION'; do
-  grep -Fq "$expected" docs/upgrade-v0.7.4.md
+  grep -Fq "$expected" docs/upgrade-v0.7.5.md
 done
 grep -Fq 'Set all three fields explicitly' docs/integration.md
 ! grep -Fq 'requires both `config.policyContract`' README.md
@@ -325,8 +323,22 @@ for expected in \
   'server.oidc.audience' \
   'networkPolicy.identityExchangeNamespace' \
   'identityExchangeNamespace: identity' \
-  'rolloutRevisions.workloadPolicy'; do
+  'rolloutRevisions.workloadPolicy' \
+  'rollout restart statefulset/openshell' \
+  'system:serviceaccount:openshell:openshell-operator' \
+  'create token openshell-operator' \
+  'OPENSHELL_NO_BROWSER=1' \
+  'oidc_token.json'; do
   grep -Fq "$expected" "$workload_pairing"
+done
+
+observability=docs/operator-observability-contract-v1.md
+for expected in \
+  'startup_failed' 'github_signing_key' 'github_jwks' 'replay_ledger' \
+  'assertion_invalid' 'policy_unauthorized' 'github_jwks_unavailable' \
+  'replay_ledger_unavailable' 'signing_unavailable' \
+  'github_oidc_exchange_duration_seconds' '# HELP' '# TYPE'; do
+  grep -Fq "$expected" "$observability"
 done
 jq -e '
   .version == "github-oidc-exchange.apelogic.io/workload-policy-v1" and
@@ -358,7 +370,7 @@ current_surfaces=(
   charts/github-oidc-exchange/examples/production-values.yaml
 )
 if grep -R -n -E \
-  'bootstrap_group|service-envelope-bootstrap|workflow_refs|job_workflow_refs|IdentityProfile|BOOTSTRAP_PREFIX' \
+  "bootstrap_group|service-envelope-bootstrap|[\"']workflow_refs[\"']|IdentityProfile|BOOTSTRAP_PREFIX" \
   "${current_surfaces[@]}"; then
   printf 'current code and docs retain retired contract fields\n' >&2
   exit 1

@@ -1,6 +1,6 @@
 # Identity consumer contracts
 
-Status: released with application/chart **0.7.4**. This document defines the
+Status: released with application/chart **0.7.5**. This document defines the
 normative GitHub exchange protocol and the two supported Steward token
 contracts. It does not deploy a consumer. See the
 [integration guide](integration.md) for end-to-end examples.
@@ -9,8 +9,8 @@ contracts. It does not deploy a consumer. See the
 
 | Application/chart | Selected policy | Output contract | Status |
 | --- | --- | --- | --- |
-| 0.7.4 / 0.7.4 | `github-oidc-exchange.apelogic.io/v5` | `steward-task-v2` | Default; behavior and token claims preserved |
-| 0.7.4 / 0.7.4 | `github-oidc-exchange.apelogic.io/v6` | `steward-task-v3` | Explicit opt-in |
+| 0.7.5 / 0.7.5 | `github-oidc-exchange.apelogic.io/v5` | `steward-task-v2` | Default; behavior and token claims preserved |
+| 0.7.5 / 0.7.5 | `github-oidc-exchange.apelogic.io/v6` | `steward-task-v3` | Explicit opt-in |
 | 0.7.2 / 0.7.2 | v5 | v2 | Historical pair; same runtime token contracts |
 | 0.7.2 / 0.7.2 | v6 | v3 | Historical pair; same runtime token contracts |
 | 0.7.1 / 0.7.1 | v5 | v2 | Historical pair; same runtime token contracts |
@@ -23,7 +23,7 @@ contracts. It does not deploy a consumer. See the
 
 Do not combine an older application with v6. Activation and rollback use the
 application/chart revision and policy reference as one unit, with distinct v5
-and v6 ConfigMaps. See the [0.7.4 upgrade guide](upgrade-v0.7.4.md).
+and v6 ConfigMaps. See the [0.7.5 upgrade guide](upgrade-v0.7.5.md).
 
 ## Common protocol
 
@@ -56,13 +56,16 @@ the existing v2 consumer.
 
 ## `steward-task-v3` under policy v6
 
-Policy v6 always requires numeric repository owner and repository IDs.
-`subjects`, `events`, and `refs` on a repository rule are optional exact
-selectors. `actors`, `allowed_email_domains`, and `acting_group_prefix` form
-one optional all-or-none actor-compatibility bundle.
+Policy v6 always requires a numeric repository owner ID. A repository rule
+uses either one numeric repository ID (the default) or `"*"` to admit every
+repository under that exact owner. Owner-wide and exact rules cannot overlap
+for the same owner. `subjects`, `events`, `refs`, `job_workflow_refs`, and
+`job_workflow_shas` are optional exact selectors on either rule type.
+`actors`, `allowed_email_domains`, and `acting_group_prefix` form one optional
+all-or-none actor-compatibility bundle.
 
 When a selector is present, Identity validates and enforces it. When
-`subjects`, `events`, or `refs` are absent, Identity does not decide which
+these selectors are absent, Identity does not decide which
 workflow subjects, events, branches, tags, or pull requests may submit a run.
 When the actor compatibility bundle is absent, any positive canonical numeric
 actor from the admitted numeric repository can be authenticated without an
@@ -110,7 +113,7 @@ The internal workload endpoint is
 `POST https://{service}.{namespace}.svc.cluster.local:8443/v1/workload/exchange`.
 It uses Kubernetes TokenReview with an exact configured input audience and
 issues RS256 `openshell-workload-v1` tokens. It is never routed publicly and
-is unchanged in 0.7.4. The standard Steward/OpenShell values and exact
+is unchanged in 0.7.5. The standard Steward/OpenShell values and exact
 cross-product joins are documented in the
 [workload-exchange pairing guide](steward-openshell-workload-pairing.md).
 

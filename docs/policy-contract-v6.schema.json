@@ -28,10 +28,17 @@
         "required": ["owner_id", "repository_id"],
         "properties": {
           "owner_id": {"type": "string", "pattern": "^[1-9][0-9]{0,19}$"},
-          "repository_id": {"type": "string", "pattern": "^[1-9][0-9]{0,19}$"},
+          "repository_id": {
+            "oneOf": [
+              {"type": "string", "pattern": "^[1-9][0-9]{0,19}$"},
+              {"const": "*"}
+            ]
+          },
           "subjects": {"$ref": "#/$defs/subjects"},
           "events": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
-          "refs": {"$ref": "#/$defs/nonEmptyUniqueStrings"}
+          "refs": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
+          "job_workflow_refs": {"$ref": "#/$defs/workflowRefs"},
+          "job_workflow_shas": {"$ref": "#/$defs/gitSha1s"}
         },
         "additionalProperties": false
       }
@@ -84,6 +91,25 @@
         "minLength": 6,
         "maxLength": 2048,
         "pattern": "^repo:[!-~]+$"
+      }
+    },
+    "workflowRefs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "maxLength": 2048,
+        "pattern": "^[!-~]+/\\.github/workflows/[!-~]+@[!-~]+$"
+      }
+    },
+    "gitSha1s": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}$"
       }
     }
   },
