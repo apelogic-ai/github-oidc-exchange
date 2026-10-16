@@ -913,11 +913,6 @@ fn rsa_keyring_near_expiry(
 #[derive(Clone)]
 enum MockReview {
     Accept(String),
-    AcceptWith {
-        username: String,
-        jti: String,
-        expires_at: i64,
-    },
     Invalid,
     Unavailable,
 }
@@ -927,29 +922,36 @@ struct MockReviewer {
     outcome: MockReview,
 }
 
+#[derive(Serialize)]
+struct ProjectedSourceClaims<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    jti: Option<&'a str>,
+    exp: i64,
+}
+
+fn projected_source_token(
+    jti: Option<&str>,
+    exp: i64,
+) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(encode(
+        &Header::new(Algorithm::HS256),
+        &ProjectedSourceClaims { jti, exp },
+        &EncodingKey::from_secret(b"token-review-authenticates-this-test-source"),
+    )?)
+}
+
 impl TokenReviewer for MockReviewer {
     async fn review(
         &self,
         token: String,
         audience: String,
     ) -> Result<ReviewedWorkload, ReviewError> {
-        if token != "projected-source-token" || audience != WORKLOAD_INPUT_AUDIENCE {
+        if token.is_empty() || audience != WORKLOAD_INPUT_AUDIENCE {
             return Err(ReviewError::Invalid);
         }
         match &self.outcome {
             MockReview::Accept(username) => Ok(ReviewedWorkload {
                 username: username.clone(),
-                jti: "projected-source-token-jti".to_owned(),
-                expires_at: get_current_timestamp() as i64 + 600,
-            }),
-            MockReview::AcceptWith {
-                username,
-                jti,
-                expires_at,
-            } => Ok(ReviewedWorkload {
-                username: username.clone(),
-                jti: jti.clone(),
-                expires_at: *expires_at,
             }),
             MockReview::Invalid => Err(ReviewError::Invalid),
             MockReview::Unavailable => Err(ReviewError::Unavailable),
@@ -2389,7 +2391,7 @@ async fn workload_exchange_emits_only_server_selected_rs256_profile()
         token_ttl: Duration::from_secs(120),
         metrics: metrics.clone(),
     };
-    let output = service.exchange("projected-source-token").await?;
+    let output = service.exchange("reviewed-non-jwt-source-token").await?;
     assert_eq!(jsonwebtoken::decode_header(&output)?.alg, Algorithm::RS256);
     let mut validation = Validation::new(Algorithm::RS256);
     validation.set_issuer(&["https://identity.example.invalid"]);
@@ -2430,7 +2432,11 @@ async fn workload_task_exchange_matches_steward_pure_service_reader_contract()
         metrics: Arc::new(WorkloadMetrics::default()),
     };
 
-    let output = service.exchange("projected-source-token").await?;
+    let source = projected_source_token(
+        Some("projected-source-token-jti"),
+        get_current_timestamp() as i64 + 600,
+    )?;
+    let output = service.exchange(&source).await?;
     let header = jsonwebtoken::decode_header(&output)?;
     assert_eq!(header.alg, Algorithm::ES256);
     assert_eq!(header.kid.as_deref(), Some("current"));
@@ -2473,7 +2479,7 @@ async fn workload_task_exchange_matches_steward_pure_service_reader_contract()
     );
 
     assert_eq!(
-        service.exchange("projected-source-token").await,
+        service.exchange(&source).await,
         Err(WorkloadExchangeError::Unauthorized),
         "the authenticated projected-token jti must be single-use"
     );
@@ -2487,28 +2493,29 @@ async fn workload_task_exchange_refuses_unbound_wrong_audience_and_expired_sourc
     let task_keys = Arc::new(keyring()?);
     let policy = Arc::new(task_workload_policy());
     let now = get_current_timestamp() as i64;
-    for (reviewer, input_audience) in [
+    let valid_source = projected_source_token(Some("valid-source-jti"), now + 600)?;
+    let expired_source = projected_source_token(Some("expired-source-jti"), now - 1)?;
+    for (reviewer, input_audience, assertion) in [
         (
             MockReviewer {
                 outcome: MockReview::Accept("system:serviceaccount:example:unbound".to_owned()),
             },
             WORKLOAD_INPUT_AUDIENCE,
+            valid_source.clone(),
         ),
         (
             MockReviewer {
                 outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
             },
             "wrong-workload-audience",
+            valid_source.clone(),
         ),
         (
             MockReviewer {
-                outcome: MockReview::AcceptWith {
-                    username: WORKLOAD_USERNAME.to_owned(),
-                    jti: "expired-source-jti".to_owned(),
-                    expires_at: now - 1,
-                },
+                outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
             },
             WORKLOAD_INPUT_AUDIENCE,
+            expired_source,
         ),
     ] {
         let service = WorkloadExchangeService {
@@ -2525,7 +2532,7 @@ async fn workload_task_exchange_refuses_unbound_wrong_audience_and_expired_sourc
             metrics: Arc::new(WorkloadMetrics::default()),
         };
         assert_eq!(
-            service.exchange("projected-source-token").await,
+            service.exchange(&assertion).await,
             Err(WorkloadExchangeError::Unauthorized)
         );
     }
@@ -2545,7 +2552,7 @@ async fn workload_task_exchange_refuses_unbound_wrong_audience_and_expired_sourc
         metrics: Arc::new(WorkloadMetrics::default()),
     };
     assert_eq!(
-        unavailable.exchange("projected-source-token").await,
+        unavailable.exchange(&valid_source).await,
         Err(WorkloadExchangeError::Unavailable),
         "task exchange must fail closed when replay state is unavailable"
     );
@@ -2578,7 +2585,7 @@ async fn workload_task_exchange_refuses_unbound_wrong_audience_and_expired_sourc
         token_ttl: Duration::from_secs(120),
         metrics: Arc::new(WorkloadMetrics::default()),
     };
-    let output = service.exchange("projected-source-token").await?;
+    let output = service.exchange(&valid_source).await?;
     let header = jsonwebtoken::decode_header(&output)?;
     let jwks: JwkSet = serde_json::from_value(serde_json::to_value(task_keys.jwks())?)?;
     let output_key = DecodingKey::from_jwk(
@@ -2603,6 +2610,52 @@ async fn workload_task_exchange_refuses_unbound_wrong_audience_and_expired_sourc
             .iter()
             .all(|group| { group != "agents.apelogic.ai/service-principal:automation-worker" }),
         "a service account bound to another service must not receive target-service authority"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_source_claims_do_not_change_the_non_task_workload_contract()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source_without_jti = projected_source_token(None, get_current_timestamp() as i64 + 600)?;
+    let keys = Arc::new(rsa_keyring_with_bits(3072)?);
+    let task_keys = Arc::new(keyring()?);
+    let service = WorkloadExchangeService {
+        reviewer: MockReviewer {
+            outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
+        },
+        policy: Arc::new(workload_policy()),
+        keys: keys.clone(),
+        task_keys: task_keys.clone(),
+        ledger: Arc::new(TestReplayLedger::default()),
+        issuer: "https://identity.example.invalid".to_owned(),
+        input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
+        output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        task_output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(WorkloadMetrics::default()),
+    };
+    let output = service.exchange(&source_without_jti).await?;
+    assert_eq!(jsonwebtoken::decode_header(&output)?.alg, Algorithm::RS256);
+
+    let task_service = WorkloadExchangeService {
+        reviewer: MockReviewer {
+            outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
+        },
+        policy: Arc::new(task_workload_policy()),
+        keys,
+        task_keys,
+        ledger: Arc::new(TestReplayLedger::default()),
+        issuer: "https://identity.example.invalid".to_owned(),
+        input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
+        output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        task_output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(WorkloadMetrics::default()),
+    };
+    assert_eq!(
+        task_service.exchange(&source_without_jti).await,
+        Err(WorkloadExchangeError::Unauthorized)
     );
     Ok(())
 }

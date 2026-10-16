@@ -13,16 +13,7 @@ container="github-oidc-exchange-smoke-$$"
 mock_pid=""
 workload_auth_name=Authorization
 workload_auth_scheme=Bearer
-workload_source_token="$(python3 -c '
-import base64
-import json
-import time
-
-encode = lambda value: base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).decode().rstrip("=")
-header = encode({"alg": "RS256", "typ": "JWT"})
-claims = encode({"jti": "workload-smoke-jti", "exp": int(time.time()) + 600})
-print(f"{header}.{claims}.signature")
-')"
+workload_source_token=projected-source-token
 mkdir -p "$app_dir"
 
 cleanup() {
@@ -154,7 +145,7 @@ class TokenReviewHandler(BaseHandler):
             "authorization": self.headers.get("authorization") == "Bearer projected-service-account-token",
             "apiVersion": request.get("apiVersion") == "authentication.k8s.io/v1",
             "kind": request.get("kind") == "TokenReview",
-            "source_token": request.get("spec", {}).get("token") == sys.argv[5],
+            "source_token": request.get("spec", {}).get("token") == "projected-source-token",
             "audience": request.get("spec", {}).get("audiences") == ["apelogic-workload-exchange"],
         }
         record("tokenreview request " + " ".join(f"{name}={str(value).lower()}" for name, value in checks.items()))
@@ -178,7 +169,7 @@ with os.fdopen(descriptor, "w", encoding="utf-8") as output:
     output.write(f"tokenreview={token_review.server_port}\n")
 os.replace(temporary, coordination)
 token_review.serve_forever()
-' "$app_dir/tls.crt" "$app_dir/tls.key" "$tmp/mock-events" "$tmp/mock-ports" "$workload_source_token" &
+' "$app_dir/tls.crt" "$app_dir/tls.key" "$tmp/mock-events" "$tmp/mock-ports" &
 mock_pid="$!"
 
 for _ in $(seq 1 50); do

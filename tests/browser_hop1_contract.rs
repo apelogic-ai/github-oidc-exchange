@@ -30,7 +30,7 @@ use github_oidc_exchange::{
         WorkloadMetrics, WorkloadPolicy,
     },
 };
-use jsonwebtoken::{Algorithm, EncodingKey, Header, decode, encode, get_current_timestamp};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, decode, encode};
 use p256::{SecretKey, elliptic_curve::sec1::ToEncodedPoint, pkcs8::EncodePrivateKey};
 use tempfile::NamedTempFile;
 use tower::ServiceExt;
@@ -261,8 +261,6 @@ impl TokenReviewer for StewardApiReviewer {
         if token == "projected-steward-token" && audience == "identity-workload" {
             Ok(ReviewedWorkload {
                 username: "system:serviceaccount:steward:steward-apiserver".to_owned(),
-                jti: "projected-steward-token-jti".to_owned(),
-                expires_at: get_current_timestamp() as i64 + 600,
             })
         } else {
             Err(ReviewError::Invalid)

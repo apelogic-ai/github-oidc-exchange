@@ -175,8 +175,6 @@ fn canonical_user_id(value: &str) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReviewedWorkload {
     pub username: String,
-    pub jti: String,
-    pub expires_at: i64,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -320,21 +318,7 @@ impl TokenReviewer for KubernetesTokenReviewer {
             .json::<TokenReviewResponse>()
             .await
             .map_err(|_| ReviewError::Unavailable)?;
-        let username = validate_token_review(response, &audience)?;
-        // TokenReview authenticated this exact compact JWT before these claims are read. They are
-        // used only for expiry and one-time-use enforcement, never to select the workload identity.
-        let claims = insecure_decode::<ProjectedTokenClaims>(&token)
-            .map_err(|_| ReviewError::Invalid)?
-            .claims;
-        if !bounded_non_whitespace(&claims.jti, 128) || claims.exp <= get_current_timestamp() as i64
-        {
-            return Err(ReviewError::Invalid);
-        }
-        Ok(ReviewedWorkload {
-            username,
-            jti: claims.jti,
-            expires_at: claims.exp,
-        })
+        validate_token_review(response, &audience).map(|username| ReviewedWorkload { username })
     }
 }
 
@@ -434,23 +418,25 @@ impl<R: TokenReviewer, L: ReplayLedger> WorkloadExchangeService<R, L> {
                     WorkloadExchangeError::Unavailable
                 }
             })?;
-        if !bounded_non_whitespace(&reviewed.jti, 128)
-            || reviewed.expires_at <= get_current_timestamp() as i64
-        {
-            self.deny("source_claims_invalid");
-            return Err(WorkloadExchangeError::Unauthorized);
-        }
         let identity = self.policy.authorize(&reviewed.username).map_err(|_| {
             self.deny("workload_unmapped");
             WorkloadExchangeError::Unauthorized
         })?;
         let now = get_current_timestamp();
         let token = if let Some(task) = identity.task {
-            match self
-                .ledger
-                .use_once(&reviewed.jti, reviewed.expires_at)
-                .await
-            {
+            // TokenReview authenticated this exact compact JWT before these claims are read. They
+            // are used only for task-profile expiry and replay, never to select the identity.
+            let claims = insecure_decode::<ProjectedTokenClaims>(assertion)
+                .map_err(|_| {
+                    self.deny("source_claims_invalid");
+                    WorkloadExchangeError::Unauthorized
+                })?
+                .claims;
+            if !bounded_non_whitespace(&claims.jti, 128) || claims.exp <= now as i64 {
+                self.deny("source_claims_invalid");
+                return Err(WorkloadExchangeError::Unauthorized);
+            }
+            match self.ledger.use_once(&claims.jti, claims.exp).await {
                 Ok(()) => {}
                 Err(ReplayError::Replayed) => {
                     self.deny("source_replay");
