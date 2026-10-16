@@ -74,6 +74,15 @@ jq -e --arg version "$v6_policy" '.properties.version.const == $version' \
   docs/policy-contract-v6.schema.json >/dev/null
 jq -e --arg version "$v6_policy" '.version == $version' \
   docs/policy-contract-v6.example.json >/dev/null
+jq -e '
+  .properties.version.const == "github-oidc-exchange.apelogic.io/oidc-policy-v1" and
+  (.properties.providers.items.properties.bindings.items.properties.claims.required | index("sub"))
+' docs/oidc-policy-contract.schema.json >/dev/null
+jq -e '
+  .version == "github-oidc-exchange.apelogic.io/oidc-policy-v1" and
+  .providers[0].bindings[0].claims.sub and
+  .providers[0].bindings[0].task.owner_canonical_user_id
+' docs/oidc-policy-contract.example.json >/dev/null
 
 # v5 remains strict; v6 requires only the repository boundary and represents
 # actor compatibility dependencies in the schema.
@@ -129,6 +138,12 @@ for expected in \
   'github_oidc_exchange_jwks_age_seconds' \
   'github_oidc_exchange_signing_key_seconds_until_expiry' \
   'github_oidc_exchange_workload_signing_key_seconds_until_expiry'; do
+  grep -Fq "$expected" src/http.rs src/config.rs docs/installation.md \
+    charts/github-oidc-exchange/templates/deployment.yaml
+done
+for expected in 'GENERIC_OIDC_ENABLED' 'GENERIC_OIDC_POLICY_FILE' \
+  'generic_oidc_providers' \
+  'github_oidc_exchange_generic_oidc_ready_providers'; do
   grep -Fq "$expected" src/http.rs src/config.rs docs/installation.md \
     charts/github-oidc-exchange/templates/deployment.yaml
 done
@@ -246,22 +261,23 @@ done
 
 for name in github-oidc-exchange-keyring github-oidc-exchange-policy \
   github-oidc-exchange-policy-v6 github-oidc-exchange-workload-rsa-keyring \
-  github-oidc-exchange-workload-policy github-oidc-exchange-server-tls; do
+  github-oidc-exchange-workload-policy github-oidc-exchange-server-tls \
+  github-oidc-exchange-oidc-policy; do
   grep -Fq "$name" docs/installation.md
 done
 for route in /.well-known/oauth-authorization-server \
   /.well-known/openid-configuration /jwks.json /v1/exchange \
-  /v1/workload/exchange; do
+  /v1/oidc/exchange /v1/workload/exchange; do
   grep -Fq "$route" docs/consumer-contract-v1.md
 done
 
 for name in github-oidc-exchange-keyring github-oidc-exchange-policy \
   github-oidc-exchange-workload-rsa-keyring github-oidc-exchange-workload-policy \
-  github-oidc-exchange-server-tls; do
+  github-oidc-exchange-server-tls github-oidc-exchange-oidc-policy; do
   grep -Fq "$name" docs/installation.md
   grep -Fq "$name" charts/github-oidc-exchange/values.example.yaml
 done
-for key in keyring.json policy.json rsa-keyring.json workload-policy.json tls.crt tls.key; do
+for key in keyring.json policy.json oidc-policy.json rsa-keyring.json workload-policy.json tls.crt tls.key; do
   grep -Fq "$key" docs/installation.md
   grep -Fq "$key" charts/github-oidc-exchange/templates/deployment.yaml
 done
@@ -347,6 +363,8 @@ for expected in \
   'ledger_unavailable' 'signing_unavailable' \
   'github_oidc_exchange_jwks_refresh_failures_total' \
   'github_oidc_exchange_jwks_age_seconds' \
+  'generic_oidc_providers' \
+  'github_oidc_exchange_generic_oidc_ready_providers' \
   'github_oidc_exchange_duration_seconds' '# HELP' '# TYPE'; do
   grep -Fq "$expected" "$observability"
 done
@@ -386,6 +404,8 @@ current_surfaces=(
   docs/policy-contract.example.json
   docs/policy-contract-v6.schema.json
   docs/policy-contract-v6.example.json
+  docs/oidc-policy-contract.schema.json
+  docs/oidc-policy-contract.example.json
   docs/steward-task-v3.example.json
   charts/github-oidc-exchange/README.md
   charts/github-oidc-exchange/examples/production-values.yaml

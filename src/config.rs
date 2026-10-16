@@ -19,6 +19,7 @@ pub struct Config {
     pub token_ttl: Duration,
     pub key_expiry_readiness_threshold: Duration,
     pub github_jwks_max_staleness: Duration,
+    pub generic_oidc: Option<GenericOidcConfig>,
     pub workload: Option<WorkloadConfig>,
     pub browser_hop1: Option<BrowserHop1Config>,
 }
@@ -32,6 +33,11 @@ pub struct WorkloadConfig {
     pub rsa_keyring_file: PathBuf,
     pub tls_certificate_file: PathBuf,
     pub tls_private_key_file: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub struct GenericOidcConfig {
+    pub policy_file: PathBuf,
 }
 
 /// Configuration for the internal-only Steward browser-session attestation exchange.
@@ -69,6 +75,8 @@ pub enum ConfigError {
     ConflictingListenAddresses,
     #[error("WORKLOAD_EXCHANGE_ENABLED must be true or false")]
     InvalidWorkloadEnabled,
+    #[error("GENERIC_OIDC_ENABLED must be true or false")]
+    InvalidGenericOidcEnabled,
     #[error("WORKLOAD_OUTPUT_AUDIENCE must be openshell-api")]
     InvalidWorkloadOutputAudience,
     #[error("BROWSER_HOP1_ENABLED must be true or false")]
@@ -105,6 +113,7 @@ impl Config {
             .map_err(|_| ConfigError::InvalidListenAddress)?;
         let workload = WorkloadConfig::from_env(listen_address)?;
         let browser_hop1 = BrowserHop1Config::from_env(workload.is_some())?;
+        let generic_oidc = GenericOidcConfig::from_env()?;
         let github_exchange_audience = required("GITHUB_EXCHANGE_AUDIENCE")?;
         if !valid_exchange_audience(&github_exchange_audience) {
             return Err(ConfigError::InvalidGitHubExchangeAudience);
@@ -140,9 +149,28 @@ impl Config {
             token_ttl: Duration::from_secs(120),
             key_expiry_readiness_threshold,
             github_jwks_max_staleness,
+            generic_oidc,
             workload,
             browser_hop1,
         })
+    }
+}
+
+impl GenericOidcConfig {
+    fn from_env() -> Result<Option<Self>, ConfigError> {
+        let enabled = match env::var("GENERIC_OIDC_ENABLED").as_deref() {
+            Ok("true") => true,
+            Ok("false") | Err(env::VarError::NotPresent) => false,
+            Ok(_) | Err(env::VarError::NotUnicode(_)) => {
+                return Err(ConfigError::InvalidGenericOidcEnabled);
+            }
+        };
+        if !enabled {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            policy_file: PathBuf::from(required("GENERIC_OIDC_POLICY_FILE")?),
+        }))
     }
 }
 

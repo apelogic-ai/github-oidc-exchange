@@ -5,8 +5,9 @@ identity service. It verifies short-lived GitHub Actions OIDC assertions and
 issues two-minute ES256 tokens for Steward. An optional internal workload
 profile uses Kubernetes TokenReview and policy-selected bindings to issue
 RS256 OpenShell tokens or pure-service ES256 Steward task tokens. The optional
-Steward browser HOP-1 bridge is disabled by default. This service is not a
-general OAuth provider or GitHub OAuth App.
+generic OIDC profile admits exact administrator-bound service identities from
+issuers such as Jenkins. The optional Steward browser HOP-1 bridge is disabled
+by default. This service is not a general OAuth provider or GitHub OAuth App.
 
 Start with the [baseline quickstart](docs/quickstart.md). The
 [installation guide](docs/installation.md) covers artifact publication,
@@ -72,9 +73,10 @@ provenance.
 | Application and OCI Helm chart | `0.7.5` together; Kubernetes >=1.32; `linux/amd64` and `linux/arm64`. |
 | GitHub input | GitHub RS256 assertion; exact configured input audience; immutable numeric owner/repository boundary; short freshness; replay protection; internally consistent signed provenance. |
 | GitHub output | ES256; `aud=["steward-task-api"]`; 120-second TTL; `steward-task-v2` for v5 or `steward-task-v3` for v6. |
+| Generic OIDC exchange | Off by default; exact HTTPS issuer, audience, and claim bindings; RS256 source assertions; ES256 pure-service `steward-task-v2` output. Jenkins uses OIDC, never an API key. |
 | Workload exchange | Off by default; internal HTTPS port 8443; exact TokenReview audience and service-account policy; RS256 `openshell-workload-v1` or ES256 pure-service `steward-task-v2`, selected only by the binding. |
 | Browser HOP-1 | Off by default; requires workload exchange and a public Steward JWKS; see its [v1 contract](docs/browser-hop1-contract-v1.md). |
-| Public routes | `/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`, `/jwks.json`, and `/v1/exchange` only. The workload route is never public. |
+| Public routes | `/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`, `/jwks.json`, and `/v1/exchange`; enabling generic OIDC also adds `/v1/oidc/exchange`. The workload route is never public. |
 | Key expiry | Signing validity is checked on every use; readiness fails before expiry using a configurable threshold, with seconds-to-expiry gauges for ES256 and optional RSA keys. |
 
 Readiness check names, structured audit events and rejection reasons, and
@@ -84,6 +86,8 @@ Prometheus metric semantics form the stable
 The RFC 8414 and OpenID metadata endpoints return the same discovery contract:
 the exact issuer, JWKS URI, GitHub exchange endpoint, exact GitHub OIDC input
 audience, supported policy versions, and supported output identity contracts.
+When generic OIDC is enabled, metadata also advertises its separate exchange
+endpoint.
 They expose no policy contents, signing material, or identity mappings.
 `config.issuerUrl` must be an HTTPS origin without a path, query, or fragment,
 so every advertised endpoint maps directly to one of these public routes.
@@ -113,7 +117,7 @@ signed native amd64/arm64 image and chart artifacts from a fork to its GHCR.
 The same immutable image contains the offline administration binary at
 `/usr/local/bin/keyring-tool`; invoke it with an explicit entrypoint and a
 private bind mount. Each GitHub release also attaches the v5/v6 policy schemas
-and examples plus the workload-policy example.
+and examples, generic OIDC schema/example, plus the workload-policy example.
 Operators may instead use another OCI registry with equivalent release gates.
 Release identity is the exact source commit plus image/chart digests, never a
 mutable tag.

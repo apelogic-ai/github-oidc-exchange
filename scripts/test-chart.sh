@@ -126,6 +126,24 @@ grep -Fq 'secret.reloader.stakater.com/reload: "github-oidc-exchange-keyring"' \
   "$scratch/reloader-baseline.yaml"
 helm template workload "$chart" --namespace identity \
   -f "$chart/ci/workload-values.yaml" >"$scratch/workload.yaml"
+helm lint "$chart" -f "$chart/ci/test-values.yaml" \
+  -f "$chart/ci/oidc-values.yaml" --strict >/dev/null
+helm template generic-oidc "$chart" --namespace identity \
+  -f "$chart/ci/test-values.yaml" -f "$chart/ci/oidc-values.yaml" \
+  >"$scratch/generic-oidc.yaml"
+grep -A1 -Fq 'name: GENERIC_OIDC_ENABLED
+              value: "true"' "$scratch/generic-oidc.yaml"
+grep -Fq 'value: /etc/github-oidc-exchange/oidc-policy/oidc-policy.json' \
+  "$scratch/generic-oidc.yaml"
+grep -Fq 'name: github-oidc-exchange-oidc-policy' "$scratch/generic-oidc.yaml"
+grep -Fq 'key: oidc-policy.json' "$scratch/generic-oidc.yaml"
+grep -Fxq '          - path: /v1/oidc/exchange' "$scratch/generic-oidc.yaml"
+grep -Fq 'checksum/generic-oidc-policy:' "$scratch/generic-oidc.yaml"
+helm template reloader-generic-oidc "$chart" --namespace identity \
+  -f "$chart/ci/test-values.yaml" -f "$chart/ci/oidc-values.yaml" \
+  --set rolloutAutomation.reloader.enabled=true >"$scratch/reloader-generic-oidc.yaml"
+grep -Fq 'configmap.reloader.stakater.com/reload: "github-oidc-exchange-policy,github-oidc-exchange-oidc-policy"' \
+  "$scratch/reloader-generic-oidc.yaml"
 helm template reloader-workload "$chart" --namespace identity \
   -f "$chart/ci/workload-values.yaml" \
   --set rolloutAutomation.reloader.enabled=true >"$scratch/reloader-workload.yaml"
@@ -254,6 +272,8 @@ grep -A1 -Fq 'name: KEY_EXPIRY_READINESS_THRESHOLD_SECONDS
 grep -A1 -Fq 'name: GITHUB_JWKS_MAX_STALENESS_SECONDS
               value: "21600"' "$scratch/baseline.yaml"
 if grep -Fq 'name: WORKLOAD_EXCHANGE_ENABLED' "$scratch/baseline.yaml" ||
+  grep -Fq 'name: GENERIC_OIDC_ENABLED' "$scratch/baseline.yaml" ||
+  grep -Fq 'path: /v1/oidc/exchange' "$scratch/baseline.yaml" ||
   grep -Fq 'resources: ["tokenreviews"]' "$scratch/baseline.yaml" ||
   grep -Fq 'secretName: github-oidc-exchange-workload-rsa-keyring' "$scratch/baseline.yaml"; then
   printf 'baseline must not require workload inputs\n' >&2
@@ -295,6 +315,11 @@ grep -Fq 'name: acme-registry-pull' "$scratch/gateway.yaml"
 grep -Fq 'kind: HTTPRoute' "$scratch/gateway.yaml"
 ! grep -Fq 'kind: Ingress' "$scratch/gateway.yaml"
 ! grep -Fq 'path: /v1/workload/exchange' "$scratch/gateway.yaml"
+! grep -Fq 'value: /v1/oidc/exchange' "$scratch/gateway.yaml"
+helm template gateway-generic-oidc "$chart" --namespace identity \
+  -f "$stamped_production" -f "$chart/ci/oidc-values.yaml" \
+  >"$scratch/gateway-generic-oidc.yaml"
+grep -Fxq '            value: /v1/oidc/exchange' "$scratch/gateway-generic-oidc.yaml"
 
 helm template certificate "$chart" --namespace identity \
   -f "$chart/ci/test-values.yaml" \
@@ -321,6 +346,15 @@ for missing in image.repository image.digest config.issuerUrl \
     printf 'chart must reject empty %s\n' "$missing" >&2
     exit 1
   fi
+done
+for missing in genericOidc.policyConfigMapName rolloutRevisions.genericOidcPolicy; do
+  if helm lint "$chart" -f "$chart/ci/test-values.yaml" \
+    -f "$chart/ci/oidc-values.yaml" --strict --set "${missing}=" \
+    >"$scratch/missing-generic-oidc.err" 2>&1; then
+    printf 'generic OIDC must reject empty %s\n' "$missing" >&2
+    exit 1
+  fi
+  grep -Fq "$missing" "$scratch/missing-generic-oidc.err"
 done
 for invalid_threshold in 119 31536001; do
   if helm template invalid-key-expiry-threshold "$chart" \

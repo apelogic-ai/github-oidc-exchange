@@ -39,4 +39,9 @@ spec:
           - path: /v1/exchange
             pathType: Exact
             backend: *backend
+          {{- if .Values.genericOidc.enabled }}
+          - path: /v1/oidc/exchange
+            pathType: Exact
+            backend: *backend
+          {{- end }}
 {{- end }}

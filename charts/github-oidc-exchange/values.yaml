@@ -40,6 +40,7 @@ rolloutRevisions:
   # referenced object changed, unless rolloutAutomation.reloader is enabled.
   githubPolicy: rev-1
   githubKeyring: rev-1
+  genericOidcPolicy: ""
   workloadPolicy: ""
   workloadRsaKeyring: ""
   workloadTls: ""
@@ -50,6 +51,11 @@ rolloutAutomation:
     # Requires an operator-managed Stakater Reloader controller that recognizes
     # the standard named ConfigMap and Secret annotations.
     enabled: false
+
+genericOidc:
+  enabled: false
+  policyConfigMapName: ""
+  policyConfigMapKey: oidc-policy.json
 
 workloadExchange:
   enabled: false

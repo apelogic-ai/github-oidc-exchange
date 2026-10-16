@@ -1,6 +1,9 @@
 {{- include "github-oidc-exchange.validateImageDigest" . -}}
 {{- $reloaderConfigMaps := list .Values.config.policyConfigMapName -}}
 {{- $reloaderSecrets := list .Values.config.keyringSecretName -}}
+{{- if .Values.genericOidc.enabled -}}
+{{- $reloaderConfigMaps = append $reloaderConfigMaps .Values.genericOidc.policyConfigMapName -}}
+{{- end -}}
 {{- if .Values.workloadExchange.enabled -}}
 {{- $reloaderConfigMaps = append $reloaderConfigMaps .Values.workloadExchange.policyConfigMapName -}}
 {{- $reloaderSecrets = append $reloaderSecrets .Values.workloadExchange.rsaKeyringSecretName -}}
@@ -37,6 +40,9 @@ spec:
       annotations:
         checksum/github-policy: {{ printf "%s:%s:%s" .Values.config.policyConfigMapName .Values.config.policyConfigMapKey .Values.rolloutRevisions.githubPolicy | sha256sum | quote }}
         checksum/github-keyring: {{ printf "%s:%s:%s" .Values.config.keyringSecretName .Values.config.keyringSecretKey .Values.rolloutRevisions.githubKeyring | sha256sum | quote }}
+        {{- if .Values.genericOidc.enabled }}
+        checksum/generic-oidc-policy: {{ printf "%s:%s:%s" .Values.genericOidc.policyConfigMapName .Values.genericOidc.policyConfigMapKey .Values.rolloutRevisions.genericOidcPolicy | sha256sum | quote }}
+        {{- end }}
         {{- if .Values.workloadExchange.enabled }}
         checksum/workload-policy: {{ printf "%s:%s:%s" .Values.workloadExchange.policyConfigMapName .Values.workloadExchange.policyConfigMapKey .Values.rolloutRevisions.workloadPolicy | sha256sum | quote }}
         checksum/workload-rsa-keyring: {{ printf "%s:%s:%s" .Values.workloadExchange.rsaKeyringSecretName .Values.workloadExchange.rsaKeyringSecretKey .Values.rolloutRevisions.workloadRsaKeyring | sha256sum | quote }}
@@ -97,6 +103,12 @@ spec:
               value: github_oidc_exchange=info
             - name: LISTEN_ADDRESS
               value: 0.0.0.0:8080
+            {{- if .Values.genericOidc.enabled }}
+            - name: GENERIC_OIDC_ENABLED
+              value: "true"
+            - name: GENERIC_OIDC_POLICY_FILE
+              value: /etc/github-oidc-exchange/oidc-policy/oidc-policy.json
+            {{- end }}
             {{- if .Values.workloadExchange.enabled }}
             - name: WORKLOAD_EXCHANGE_ENABLED
               value: "true"
@@ -159,6 +171,11 @@ spec:
             - name: keyring
               mountPath: /etc/github-oidc-exchange/keyring
               readOnly: true
+            {{- if .Values.genericOidc.enabled }}
+            - name: generic-oidc-policy
+              mountPath: /etc/github-oidc-exchange/oidc-policy
+              readOnly: true
+            {{- end }}
             {{- if .Values.workloadExchange.enabled }}
             - name: workload-policy
               mountPath: /etc/github-oidc-exchange/workload-policy
@@ -190,6 +207,15 @@ spec:
             items:
               - key: {{ .Values.config.keyringSecretKey }}
                 path: keyring.json
+        {{- if .Values.genericOidc.enabled }}
+        - name: generic-oidc-policy
+          configMap:
+            name: {{ required "genericOidc.policyConfigMapName is required" .Values.genericOidc.policyConfigMapName }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.genericOidc.policyConfigMapKey }}
+                path: oidc-policy.json
+        {{- end }}
         {{- if .Values.workloadExchange.enabled }}
         - name: workload-policy
           configMap:

@@ -30,12 +30,36 @@ and v6 ConfigMaps. See the [0.7.5 upgrade guide](upgrade-v0.7.5.md).
 | Item | Contract |
 | --- | --- |
 | Issuer | Exact HTTPS origin in `config.issuerUrl`, without a path, query, fragment, or trailing slash. Runtime and chart validation reject path-bearing issuer URLs. Consumers pin the issuer exactly. |
-| Discovery | `GET {issuer}/.well-known/oauth-authorization-server` (RFC 8414). The retained `GET {issuer}/.well-known/openid-configuration` endpoint returns the same document. `issuer`, `jwks_uri`, `token_endpoint`, `github_oidc_exchange_endpoint`, `github_oidc_audience`, `identity_contracts_supported`, and `policy_versions_supported` are authoritative. |
+| Discovery | `GET {issuer}/.well-known/oauth-authorization-server` (RFC 8414). The retained `GET {issuer}/.well-known/openid-configuration` endpoint returns the same document. `issuer`, `jwks_uri`, `token_endpoint`, `github_oidc_exchange_endpoint`, `github_oidc_audience`, `identity_contracts_supported`, and `policy_versions_supported` are authoritative. `generic_oidc_exchange_endpoint` is present only when that profile is enabled. |
 | Public keys | `GET {issuer}/jwks.json`. ES256 P-256 keys are always present; RS256 keys appear only with workload exchange. Consumers pin the accepted algorithm per token type. |
 | GitHub exchange | `POST {issuer}/v1/exchange` with `Authorization: Bearer <GitHub OIDC JWT>` and an empty body. Success returns `access_token`, `token_type=Bearer`, and `expires_in=120` with `Cache-Control: no-store`. Rejected assertions return 401; unavailable dependencies return 503. |
 | GitHub input trust | Exact GitHub issuer `https://token.actions.githubusercontent.com`, configured `github_oidc_audience`, RS256 signature/key, bounded time claims, single-use `jti`, numeric actor/owner/repository IDs, and consistent signed provenance. The job needs `permissions: id-token: write`. |
 | Output invariants | ES256; `iss={issuer}`; `aud=["steward-task-api"]`; 120-second TTL; stable `sub=github-actions:actor:{actor_id}`; `jti`, `iat`, `nbf`, `exp`; and `source_provenance` contract `steward.source-provenance/v1`. The caller cannot select any output claim. |
 | Replay | Each accepted GitHub assertion `jti` is single-use in namespaced Kubernetes Leases. |
+
+## Optional generic OIDC contract
+
+When `genericOidc.enabled=true`, the public endpoint is
+`POST {issuer}/v1/oidc/exchange` with an empty body and
+`Authorization: Bearer <source OIDC JWT>`. Only administrator-configured HTTPS
+issuers on TCP 443, exact audiences, RS256 signatures, and non-overlapping exact
+string claim bindings are accepted. Discovery and JWKS must remain on the
+issuer's exact scheme, host, and port. Provider availability does not affect
+global `/readyz`; an assertion for an unavailable or hard-stale provider gets
+503 without disabling GitHub exchange or a different ready provider. Background
+refresh and request-triggered retries are rate-limited.
+
+The request never selects identity. The matched binding supplies the service,
+canonical owner ID, and owner email. Success emits an ES256
+`steward-task-v2` token for `steward-task-api` with exactly the bound
+`service-principal:`, `canonical-user:`, and `task-owner:` groups, and no
+`acting-user:` group or source provenance. Its opaque `sub` is derived from
+both verified source issuer and source subject, so two providers cannot collide.
+A source `jti` is single-use. When
+the source has no `jti`, the Jenkins profile requires integer `build_number`
+and uses verified issuer, subject, issued-at time, and build number as the
+single-use replay identity. Source lifetime must be at most 600 seconds.
+API keys are not accepted.
 
 `sub`, `ref`, `workflow_ref`, and `job_workflow_ref` are validated for shape
 and internal consistency and retained in signed source provenance. Their

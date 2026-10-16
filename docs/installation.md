@@ -5,7 +5,8 @@ This is the canonical operator guide for application **0.7.5**, Helm chart
 It installs Identity in an operator-owned Kubernetes cluster from fork-owned
 artifacts. No ApeLogic account, cloud credential, external secret controller,
 GitHub OAuth App, or database is required. The baseline exchanges GitHub
-Actions OIDC assertions; workload exchange and browser HOP-1 are opt-in.
+Actions OIDC assertions; generic OIDC, workload exchange, and browser HOP-1
+are opt-in.
 
 The image/chart build, template, keyring, and object-name commands are tested
 in this repository. Registry access, issuer DNS/TLS, real GitHub assertions,
@@ -91,6 +92,7 @@ it never prints Secret data.
 | --- | --- | --- |
 | `Secret/github-oidc-exchange-keyring`, `Opaque` | `keyring.json` | Always. Offline `keyring-tool` ES256 output; operator creates and rotates. Never in Helm values/Git. |
 | `ConfigMap/github-oidc-exchange-policy` (existing v5) or `ConfigMap/github-oidc-exchange-policy-v6` | `policy.json` | Always select exactly one. Retain the distinct v5 and v6 objects through activation/rollback. A v5 policy contains actor mappings; a minimal v6 policy need not. Restrict ConfigMap get/list RBAC and audit access. |
+| `ConfigMap/github-oidc-exchange-oidc-policy` | `oidc-policy.json` | Only if `genericOidc.enabled`; exact issuer/audience/claim bindings to administrator-owned service/owner identity. Contains no credentials or API keys. |
 | `Secret/github-oidc-exchange-workload-rsa-keyring`, `Opaque` | `rsa-keyring.json` | Only if `workloadExchange.enabled`; required for Steward/OpenShell profile. Offline RSA-3072 output; operator rotates. |
 | `ConfigMap/github-oidc-exchange-workload-policy` | `workload-policy.json` | Only if workload enabled. Exact admitted service-account usernames/roles; restrict ConfigMap RBAC. |
 | `Secret/github-oidc-exchange-server-tls`, `kubernetes.io/tls` | `tls.crt`, `tls.key` | Only if workload enabled. Operator PKI creates it, or chart Certificate requests it from cert-manager. SAN `github-oidc-exchange.<namespace>.svc.cluster.local`; issuer CA is separately distributed to callers. cert-manager owns renewal if selected; operator bumps rollout revision after projection. |
@@ -201,7 +203,8 @@ to the exact signed OCI digest.
 
 The release also attaches `policy-contract.schema.json`,
 `policy-contract.example.json`, `policy-contract-v6.schema.json`,
-`policy-contract-v6.example.json`, and
+`policy-contract-v6.example.json`, `oidc-policy-contract.schema.json`,
+`oidc-policy-contract.example.json`, and
 `workload-policy-contract.example.json`. The exact image reference contains
 the offline key administrator at `/usr/local/bin/keyring-tool`; it does not
 require a Rust toolchain or source checkout.
@@ -296,6 +299,15 @@ decision to every repository under one immutable owner ID. In both versions,
 the numeric IDs and signed provenance remain mandatory trust inputs.
 GitHub OAuth Apps do not participate in this flow.
 
+If enabling generic OIDC, prepare its separate exact-binding policy:
+
+```sh
+install -m 0600 docs/oidc-policy-contract.example.json ./private/oidc-policy.json
+# Privately edit exact issuer, audience, signed string claims, and the
+# administrator-owned service/owner block. Never add credentials or API keys.
+jq empty ./private/oidc-policy.json
+```
+
 If enabling workload exchange, prepare its separate policy and keyring:
 
 ```sh
@@ -356,6 +368,10 @@ kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$I
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
   create secret generic github-oidc-exchange-keyring --type=Opaque \
   --from-file=keyring.json=./private/issuer-keyring.json
+# Generic OIDC mode only:
+kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
+  create configmap github-oidc-exchange-oidc-policy \
+  --from-file=oidc-policy.json=./private/oidc-policy.json
 # Workload mode only:
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
   create configmap github-oidc-exchange-workload-policy \
@@ -385,8 +401,9 @@ bash scripts/check-install-inputs.sh "$IDENTITY_KUBECONFIG" "$IDENTITY_CONTEXT" 
   "$IDENTITY_NAMESPACE"
 ```
 
-Add `--workload` and/or `--public-tls identity-public-tls` to the checker only
-when those objects are expected. For cert-manager-provisioned workload TLS,
+Add `--generic-oidc-policy github-oidc-exchange-oidc-policy`, `--workload`,
+and/or `--public-tls identity-public-tls` to the checker only when those
+objects are expected. For cert-manager-provisioned workload TLS,
 use `--workload --skip-workload-tls` before Helm install, then rerun
 `--workload` after Certificate readiness. A missing key/type/name/namespace
 fails without showing values.
@@ -505,6 +522,45 @@ and all three policy-selection values together to the retained v5 object.
 Never perform an image-only rollback while v6 remains mounted. The exact
 preflight, activation, and rollback sequence is in the
 [0.7.5 upgrade guide](upgrade-v0.7.5.md).
+
+### Enable optional generic OIDC exchange
+
+Copy and privately edit `docs/oidc-policy-contract.example.json`, validate it
+against `docs/oidc-policy-contract.schema.json`, and review each exact binding.
+The request and source token never select service, owner, email, or groups.
+Then create the `oidc-policy.json` ConfigMap shown above and set:
+
+```yaml
+genericOidc:
+  enabled: true
+  policyConfigMapName: github-oidc-exchange-oidc-policy
+  policyConfigMapKey: oidc-policy.json
+rolloutRevisions:
+  genericOidcPolicy: oidc-rev-1
+```
+
+The chart adds `/v1/oidc/exchange` to the selected public route and projects
+the policy read-only. Permit DNS and HTTPS egress to each issuer; discovery and
+JWKS must use the issuer's exact scheme and host on TCP 443. For Jenkins, configure
+the OIDC Provider issuer `<jenkins>/oidc`, a dedicated audience, the default
+job-URL `sub`, signed integer `build_number`, and token lifetime at most 600
+seconds. Jenkins uses OIDC only; do not create an API key. The complete caller
+profile and private token-handling example are in the
+[integration guide](integration.md#jenkins-oidc-provider-profile).
+
+Generic-provider state does not affect `/readyz`, which protects the existing
+GitHub exchange from an optional issuer outage and performs no generic-provider
+network work. The background refresh loop starts after the public listener is
+bound. An assertion for a provider without a usable key set receives 503, while
+other ready providers continue verifying requests. Generic caches use the same
+five-minute soft refresh and `GITHUB_JWKS_MAX_STALENESS_SECONDS` hard bound as
+GitHub keys. Observe
+`github_oidc_exchange_generic_oidc_providers` and
+`github_oidc_exchange_generic_oidc_ready_providers`, the per-provider
+`github_oidc_exchange_generic_oidc_provider_ready{issuer_hash=...}` gauge, plus the generic OIDC
+request/issued/denied/replayed/error counters. After any policy update, bump
+only `rolloutRevisions.genericOidcPolicy` (or use the documented Reloader
+integration) and verify exact-claim refusals before admitting production work.
 
 ## 5. Enable optional workload exchange
 
@@ -634,6 +690,8 @@ Pod has not restarted. Scrape and alert on these gauges:
 - `github_oidc_exchange_signing_key_seconds_until_expiry`
 - `github_oidc_exchange_workload_signing_key_seconds_until_expiry` (only when
   workload exchange is enabled)
+- `github_oidc_exchange_generic_oidc_ready_providers` and
+  `github_oidc_exchange_generic_oidc_providers` (only when generic OIDC is enabled)
 
 Alert before the readiness window—for example, warning below 14 days and
 critical below seven days with the default threshold—and treat an absent
@@ -714,6 +772,7 @@ or raw authorization headers in evidence. Set `set +x` in token-handling jobs.
 | TLS/route | Probe `$IDENTITY_ISSUER/.well-known/oauth-authorization-server` and `$IDENTITY_ISSUER/.well-known/openid-configuration` with `curl -fsS -o /dev/null -w '%{http_code}\n'`; run `openssl s_client -connect HOST:443 -servername HOST </dev/null` (inspect summary only). | Both metadata routes return HTTP 200 with a valid trusted external chain/SAN; neither workload path nor health/metrics is publicly routed. Ingress or Gateway reports accepted/ready; cert-manager Certificate `Ready=True` if used. |
 | Discovery/JWKS | Fetch both metadata documents, require them to be equal, and require exact issuer/JWKS/exchange URLs, exact `github_oidc_audience`, both entries in `identity_contracts_supported`, and both entries in `policy_versions_supported`; fetch JWKS and require an ES256 EC key. | Predicates pass; metadata contains no policy contents, identity mappings, or key material. Record only public `kid` values. |
 | Real admitted GitHub OIDC | From an admitted repository job with `id-token: write`, request a fresh assertion using the discovered audience; POST it as Bearer to `/v1/exchange`, save the response mode 0600, and verify status 200, `token_type=Bearer`, `expires_in=120`, signature, issuer, audience, selected contract, and source provenance. | v5 yields unchanged `steward-task-v2`; minimal v6 yields `steward-task-v3` with `actor_login` and no `email`, `email_verified`, or `groups`. The optional complete compatibility bundle yields all three legacy identity claims together. Replay returns 401. |
+| Generic OIDC enabled | From an exactly bound issuer identity, POST a fresh RS256 assertion to `/v1/oidc/exchange`; repeat with an unbound or foreign identity, replayed `jti`/derived key, expired assertion, and wrong audience. | Admitted assertion returns ES256 `steward-task-v2` for `steward-task-api` with only bound service/canonical/task-owner groups. Refusals return 401; unavailable provider keys return 503. No API key is accepted. |
 | Negative GitHub admission | With fresh signed assertions, test wrong issuer/audience/signature/algorithm/key ID, expired/not-yet-valid times, malformed actor ID, wrong numeric owner/repository IDs, inconsistent provenance, and replay. Under v5 also test subject/event/ref/actor. Under v6 test only optional selectors that are present. | Each applicable denial returns 401. A 503 is dependency failure, not denial evidence. Omitted v6 selectors deliberately do not reject that dimension. |
 | Key rotation | Perform add/activate/rollback/retire sequence above; compare only public JWKS `kid`s and new token header `kid` in private test tooling. | Overlap publishes both keys, activation changes signer, rollback can select old signer while both verify, retirement occurs only after token TTL plus skew and consumer refresh. |
 | Workload enabled | From an admitted caller Pod with a projected token for exact `inputAudience` and mounted public CA, POST empty body to internal `:8443/v1/workload/exchange`; verify the policy-selected output signature, issuer, audience, and claims with JWKS. Repeat with wrong projected audience, an expired or replayed projected token, and an unmapped service account; verify TLS with wrong CA fails. | OpenShell binding: 200/RS256/`openshell-workload-v1`. Task binding: 200/ES256/`steward-task-v2`, fixed `steward-task-api`, pure-service owner groups, no acting user. Refusals return 401; wrong CA/SAN fails TLS. TokenReview permission `yes`; port 8443 unreachable from nonselected Pods. |

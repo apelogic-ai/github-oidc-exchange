@@ -3,7 +3,7 @@
   "title": "github-oidc-exchange chart values",
   "description": "Values for a fail-closed GitHub and Kubernetes workload OIDC exchange issuer.",
   "type": "object",
-  "required": ["replicaCount", "image", "serviceAccount", "config", "rolloutRevisions", "rolloutAutomation", "workloadExchange", "service", "networkPolicy", "resources"],
+  "required": ["replicaCount", "image", "serviceAccount", "config", "rolloutRevisions", "rolloutAutomation", "genericOidc", "workloadExchange", "service", "networkPolicy", "resources"],
   "properties": {
     "replicaCount": {"type": "integer", "minimum": 2},
     "image": {
@@ -81,10 +81,11 @@
     },
     "rolloutRevisions": {
       "type": "object",
-      "required": ["githubPolicy", "githubKeyring", "workloadPolicy", "workloadRsaKeyring", "workloadTls", "browserHop1Jwks"],
+      "required": ["githubPolicy", "githubKeyring", "genericOidcPolicy", "workloadPolicy", "workloadRsaKeyring", "workloadTls", "browserHop1Jwks"],
       "properties": {
         "githubPolicy": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
         "githubKeyring": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+        "genericOidcPolicy": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"},
         "workloadPolicy": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"},
         "workloadRsaKeyring": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"},
         "workloadTls": {"type": "string", "pattern": "^(|[a-z0-9][a-z0-9._-]{0,63})$"},
@@ -103,6 +104,16 @@
           },
           "additionalProperties": false
         }
+      },
+      "additionalProperties": false
+    },
+    "genericOidc": {
+      "type": "object",
+      "required": ["enabled", "policyConfigMapName", "policyConfigMapKey"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "policyConfigMapName": {"type": "string"},
+        "policyConfigMapKey": {"const": "oidc-policy.json"}
       },
       "additionalProperties": false
     },
@@ -361,6 +372,30 @@
         "properties": {
           "httpRoute": {
             "properties": {"enabled": {"const": false}}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "genericOidc": {
+            "properties": {"enabled": {"const": true}},
+            "required": ["enabled"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "genericOidc": {
+            "properties": {
+              "policyConfigMapName": {"type": "string", "minLength": 1}
+            }
+          },
+          "rolloutRevisions": {
+            "properties": {
+              "genericOidcPolicy": {"pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}
+            }
           }
         }
       }

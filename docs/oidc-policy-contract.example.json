@@ -1,0 +1,21 @@
+{
+  "version": "github-oidc-exchange.apelogic.io/oidc-policy-v1",
+  "providers": [
+    {
+      "issuer": "https://ci.example.invalid/oidc",
+      "audience": "identity-oidc-exchange",
+      "bindings": [
+        {
+          "claims": {
+            "sub": "https://ci.example.invalid/job/release/"
+          },
+          "task": {
+            "service": "automation-worker",
+            "owner_canonical_user_id": "usr_0123456789abcdef0123456789abcdef",
+            "owner_email": "owner@example.invalid"
+          }
+        }
+      ]
+    }
+  ]
+}
