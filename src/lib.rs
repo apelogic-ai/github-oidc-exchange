@@ -3,6 +3,7 @@ pub mod config;
 pub mod github;
 pub mod http;
 pub mod keys;
+pub mod oidc;
 pub mod policy;
 pub mod replay;
 pub mod service;

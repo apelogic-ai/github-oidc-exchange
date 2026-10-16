@@ -2780,6 +2780,16 @@ async fn workload_http_contract_is_empty_body_only_and_preserves_github_es256()
         .await?;
     assert_eq!(public_workload_route.status(), StatusCode::NOT_FOUND);
 
+    let public_oidc_route = public_application
+        .clone()
+        .oneshot(Request::post("/v1/oidc/exchange").body(Body::empty())?)
+        .await?;
+    assert_eq!(
+        public_oidc_route.status(),
+        StatusCode::NOT_FOUND,
+        "generic OIDC remains opt-in and does not change the existing public router"
+    );
+
     let internal_discovery_route = workload_application
         .clone()
         .oneshot(Request::get("/.well-known/openid-configuration").body(Body::empty())?)
@@ -2791,6 +2801,16 @@ async fn workload_http_contract_is_empty_body_only_and_preserves_github_es256()
         .oneshot(Request::get("/.well-known/oauth-authorization-server").body(Body::empty())?)
         .await?;
     assert_eq!(internal_rfc8414_route.status(), StatusCode::NOT_FOUND);
+
+    let internal_oidc_route = workload_application
+        .clone()
+        .oneshot(Request::post("/v1/oidc/exchange").body(Body::empty())?)
+        .await?;
+    assert_eq!(
+        internal_oidc_route.status(),
+        StatusCode::NOT_FOUND,
+        "the generic OIDC route is never added to the internal workload router"
+    );
 
     let rejected_body = workload_application
         .clone()

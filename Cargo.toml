@@ -48,6 +48,11 @@ name = "browser_hop1_contract"
 path = "tests/browser_hop1_contract.rs"
 required-features = ["test-support"]
 
+[[test]]
+name = "oidc_contract"
+path = "tests/oidc_contract.rs"
+required-features = ["test-support"]
+
 [lints.rust]
 unsafe_code = "forbid"
 
