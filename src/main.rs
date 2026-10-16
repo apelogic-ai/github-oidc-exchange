@@ -112,9 +112,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })?,
             ),
             keys: workload_keys,
+            task_keys: keys.clone(),
+            ledger: ledger.clone(),
             issuer: service.issuer.clone(),
             input_audience: workload_config.input_audience,
             output_audience: workload_config.output_audience,
+            task_output_audience: service.output_audience.clone(),
             token_ttl: service.token_ttl,
             metrics: Arc::new(WorkloadMetrics::default()),
         };

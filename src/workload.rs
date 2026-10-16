@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-use jsonwebtoken::get_current_timestamp;
+use jsonwebtoken::{dangerous::insecure_decode, get_current_timestamp};
 use reqwest::{Certificate, Client, Url};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -19,7 +19,11 @@ use thiserror::Error;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::{WORKLOAD_IDENTITY_CONTRACT, WORKLOAD_POLICY_VERSION, keys::RsaKeyRing};
+use crate::{
+    IDENTITY_CONTRACT, WORKLOAD_IDENTITY_CONTRACT, WORKLOAD_POLICY_VERSION,
+    keys::{KeyRing, RsaKeyRing},
+    replay::{ReplayError, ReplayLedger},
+};
 
 const MAX_ASSERTION_BYTES: usize = 32 * 1024;
 const TOKEN_REVIEW_PATH: &str = "/apis/authentication.k8s.io/v1/tokenreviews";
@@ -38,7 +42,18 @@ pub struct WorkloadPolicy {
 pub struct WorkloadIdentity {
     pub username: String,
     pub subject: String,
+    #[serde(default)]
     pub roles: Vec<String>,
+    #[serde(default)]
+    pub task: Option<WorkloadTaskBinding>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkloadTaskBinding {
+    pub service: String,
+    pub owner_canonical_user_id: String,
+    pub owner_email: String,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -90,14 +105,23 @@ impl WorkloadPolicy {
                 ));
             }
             let unique_roles: HashSet<&str> = identity.roles.iter().map(String::as_str).collect();
-            if identity.roles.is_empty()
+            if (identity.roles.is_empty() && identity.task.is_none())
                 || unique_roles.len() != identity.roles.len()
                 || identity.roles.iter().any(|role| {
                     role.is_empty() || role.contains(char::is_whitespace) || role.contains('*')
                 })
             {
                 return Err(invalid_policy(
-                    "roles must contain unique non-empty exact values",
+                    "roles must contain unique non-empty exact values for non-task identities",
+                ));
+            }
+            if let Some(task) = &identity.task
+                && (!bounded_non_whitespace(&task.service, 128)
+                    || !canonical_user_id(&task.owner_canonical_user_id)
+                    || !canonical_email(&task.owner_email))
+            {
+                return Err(invalid_policy(
+                    "task bindings require an exact service, canonical user ID, and owner email",
                 ));
             }
         }
@@ -125,9 +149,34 @@ fn invalid_policy(message: &str) -> WorkloadPolicyError {
     WorkloadPolicyError::Invalid(message.to_owned())
 }
 
+fn bounded_non_whitespace(value: &str, maximum: usize) -> bool {
+    !value.is_empty() && value.len() <= maximum && !value.chars().any(char::is_whitespace)
+}
+
+fn canonical_email(value: &str) -> bool {
+    let Some((local, domain)) = value.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && domain.contains('.')
+        && !value.contains(char::is_whitespace)
+        && value == value.to_ascii_lowercase()
+}
+
+fn canonical_user_id(value: &str) -> bool {
+    value.strip_prefix("usr_").is_some_and(|suffix| {
+        suffix.len() == 32
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReviewedWorkload {
     pub username: String,
+    pub jti: String,
+    pub expires_at: i64,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -230,6 +279,12 @@ struct TokenReviewUser {
     username: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct ProjectedTokenClaims {
+    jti: String,
+    exp: i64,
+}
+
 impl TokenReviewer for KubernetesTokenReviewer {
     async fn review(
         &self,
@@ -265,14 +320,28 @@ impl TokenReviewer for KubernetesTokenReviewer {
             .json::<TokenReviewResponse>()
             .await
             .map_err(|_| ReviewError::Unavailable)?;
-        validate_token_review(response, &audience)
+        let username = validate_token_review(response, &audience)?;
+        // TokenReview authenticated this exact compact JWT before these claims are read. They are
+        // used only for expiry and one-time-use enforcement, never to select the workload identity.
+        let claims = insecure_decode::<ProjectedTokenClaims>(&token)
+            .map_err(|_| ReviewError::Invalid)?
+            .claims;
+        if !bounded_non_whitespace(&claims.jti, 128) || claims.exp <= get_current_timestamp() as i64
+        {
+            return Err(ReviewError::Invalid);
+        }
+        Ok(ReviewedWorkload {
+            username,
+            jti: claims.jti,
+            expires_at: claims.exp,
+        })
     }
 }
 
 fn validate_token_review(
     response: TokenReviewResponse,
     audience: &str,
-) -> Result<ReviewedWorkload, ReviewError> {
+) -> Result<String, ReviewError> {
     let status = response.status.ok_or(ReviewError::Invalid)?;
     let exact_audience = matches!(
         status.audiences.as_deref(),
@@ -286,17 +355,20 @@ fn validate_token_review(
         .and_then(|user| user.username)
         .filter(|username| !username.is_empty())
         .ok_or(ReviewError::Invalid)?;
-    Ok(ReviewedWorkload { username })
+    Ok(username)
 }
 
 #[derive(Clone)]
-pub struct WorkloadExchangeService<R> {
+pub struct WorkloadExchangeService<R, L> {
     pub reviewer: R,
     pub policy: Arc<WorkloadPolicy>,
     pub keys: Arc<RsaKeyRing>,
+    pub task_keys: Arc<KeyRing>,
+    pub ledger: Arc<L>,
     pub issuer: String,
     pub input_audience: String,
     pub output_audience: String,
+    pub task_output_audience: String,
     pub token_ttl: Duration,
     pub metrics: Arc<WorkloadMetrics>,
 }
@@ -330,7 +402,22 @@ struct WorkloadOutputClaims {
     identity_contract: &'static str,
 }
 
-impl<R: TokenReviewer> WorkloadExchangeService<R> {
+#[derive(Serialize)]
+struct WorkloadTaskOutputClaims {
+    iss: String,
+    sub: String,
+    aud: Vec<String>,
+    exp: u64,
+    iat: u64,
+    nbf: u64,
+    jti: String,
+    email: String,
+    email_verified: bool,
+    groups: Vec<String>,
+    identity_contract: &'static str,
+}
+
+impl<R: TokenReviewer, L: ReplayLedger> WorkloadExchangeService<R, L> {
     pub async fn exchange(&self, assertion: &str) -> Result<String, WorkloadExchangeError> {
         self.metrics.requests.fetch_add(1, Ordering::Relaxed);
         let reviewed = self
@@ -347,28 +434,76 @@ impl<R: TokenReviewer> WorkloadExchangeService<R> {
                     WorkloadExchangeError::Unavailable
                 }
             })?;
+        if !bounded_non_whitespace(&reviewed.jti, 128)
+            || reviewed.expires_at <= get_current_timestamp() as i64
+        {
+            self.deny("source_claims_invalid");
+            return Err(WorkloadExchangeError::Unauthorized);
+        }
         let identity = self.policy.authorize(&reviewed.username).map_err(|_| {
             self.deny("workload_unmapped");
             WorkloadExchangeError::Unauthorized
         })?;
         let now = get_current_timestamp();
-        let token = self
-            .keys
-            .sign(&WorkloadOutputClaims {
-                iss: self.issuer.clone(),
-                sub: identity.subject,
-                aud: vec![self.output_audience.clone()],
-                exp: now + self.token_ttl.as_secs(),
-                iat: now,
-                nbf: now.saturating_sub(5),
-                jti: Uuid::new_v4().to_string(),
-                roles: identity.roles,
-                identity_contract: WORKLOAD_IDENTITY_CONTRACT,
-            })
-            .map_err(|_| {
-                self.fail("signing_unavailable");
-                WorkloadExchangeError::Unavailable
-            })?;
+        let token = if let Some(task) = identity.task {
+            match self
+                .ledger
+                .use_once(&reviewed.jti, reviewed.expires_at)
+                .await
+            {
+                Ok(()) => {}
+                Err(ReplayError::Replayed) => {
+                    self.deny("source_replay");
+                    return Err(WorkloadExchangeError::Unauthorized);
+                }
+                Err(ReplayError::Unavailable | ReplayError::Configuration(_)) => {
+                    self.fail("ledger_unavailable");
+                    return Err(WorkloadExchangeError::Unavailable);
+                }
+            }
+            self.task_keys
+                .sign(&WorkloadTaskOutputClaims {
+                    iss: self.issuer.clone(),
+                    sub: identity.subject,
+                    aud: vec![self.task_output_audience.clone()],
+                    exp: now + self.token_ttl.as_secs(),
+                    iat: now,
+                    nbf: now.saturating_sub(5),
+                    jti: Uuid::new_v4().to_string(),
+                    email: task.owner_email.clone(),
+                    email_verified: true,
+                    groups: vec![
+                        format!("agents.apelogic.ai/service-principal:{}", task.service),
+                        format!(
+                            "agents.apelogic.ai/canonical-user:{}",
+                            task.owner_canonical_user_id
+                        ),
+                        format!("agents.apelogic.ai/task-owner:{}", task.owner_email),
+                    ],
+                    identity_contract: IDENTITY_CONTRACT,
+                })
+                .map_err(|_| {
+                    self.fail("signing_unavailable");
+                    WorkloadExchangeError::Unavailable
+                })?
+        } else {
+            self.keys
+                .sign(&WorkloadOutputClaims {
+                    iss: self.issuer.clone(),
+                    sub: identity.subject,
+                    aud: vec![self.output_audience.clone()],
+                    exp: now + self.token_ttl.as_secs(),
+                    iat: now,
+                    nbf: now.saturating_sub(5),
+                    jti: Uuid::new_v4().to_string(),
+                    roles: identity.roles,
+                    identity_contract: WORKLOAD_IDENTITY_CONTRACT,
+                })
+                .map_err(|_| {
+                    self.fail("signing_unavailable");
+                    WorkloadExchangeError::Unavailable
+                })?
+        };
         self.metrics.issued.fetch_add(1, Ordering::Relaxed);
         info!(
             event = "workload_exchange_issued",
@@ -454,9 +589,7 @@ mod tests {
         ))?;
         assert_eq!(
             validate_token_review(accepted, AUDIENCE)?,
-            ReviewedWorkload {
-                username: "system:serviceaccount:example:caller".to_owned()
-            }
+            "system:serviceaccount:example:caller"
         );
         for rejected in [
             response(

@@ -30,7 +30,7 @@ use github_oidc_exchange::{
         WorkloadMetrics, WorkloadPolicy,
     },
 };
-use jsonwebtoken::{Algorithm, EncodingKey, Header, decode, encode};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, decode, encode, get_current_timestamp};
 use p256::{SecretKey, elliptic_curve::sec1::ToEncodedPoint, pkcs8::EncodePrivateKey};
 use tempfile::NamedTempFile;
 use tower::ServiceExt;
@@ -74,6 +74,7 @@ async fn browser_hop1_uses_a_steward_attestation_once_and_emits_only_the_canonic
                 username: "system:serviceaccount:steward:steward-apiserver".to_owned(),
                 subject: "kubernetes:serviceaccount:steward:steward-apiserver".to_owned(),
                 roles: vec![BROWSER_HOP1_ISSUER_ROLE.to_owned()],
+                task: None,
             }],
         }),
         ledger: Arc::new(TestReplayLedger::default()),
@@ -128,6 +129,7 @@ async fn browser_hop1_rejects_a_browser_cookie_surrogate_wrong_workload_or_unbou
                 username: "system:serviceaccount:steward:steward-apiserver".to_owned(),
                 subject: "kubernetes:serviceaccount:steward:steward-apiserver".to_owned(),
                 roles: vec![],
+                task: None,
             }],
         }),
         ledger: Arc::new(TestReplayLedger::default()),
@@ -179,6 +181,7 @@ async fn browser_hop1_route_is_internal_tls_listener_only_and_requires_the_signe
                 username: "system:serviceaccount:steward:steward-apiserver".to_owned(),
                 subject: "kubernetes:serviceaccount:steward:steward-apiserver".to_owned(),
                 roles: vec![BROWSER_HOP1_ISSUER_ROLE.to_owned()],
+                task: None,
             }],
         }),
         ledger: Arc::new(TestReplayLedger::default()),
@@ -195,9 +198,12 @@ async fn browser_hop1_route_is_internal_tls_listener_only_and_requires_the_signe
             rsa_keyring_file()?.path(),
             Utc::now(),
         )?),
+        task_keys: browser.keys.clone(),
+        ledger: Arc::new(TestReplayLedger::default()),
         issuer: IDENTITY_ISSUER.to_owned(),
         input_audience: "identity-workload".to_owned(),
         output_audience: "openshell-api".to_owned(),
+        task_output_audience: "steward-task-api".to_owned(),
         token_ttl: Duration::from_secs(120),
         metrics: Arc::new(WorkloadMetrics::default()),
     };
@@ -255,6 +261,8 @@ impl TokenReviewer for StewardApiReviewer {
         if token == "projected-steward-token" && audience == "identity-workload" {
             Ok(ReviewedWorkload {
                 username: "system:serviceaccount:steward:steward-apiserver".to_owned(),
+                jti: "projected-steward-token-jti".to_owned(),
+                expires_at: get_current_timestamp() as i64 + 600,
             })
         } else {
             Err(ReviewError::Invalid)

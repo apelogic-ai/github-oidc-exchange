@@ -8,6 +8,15 @@
         "openshell-admin",
         "openshell-user"
       ]
+    },
+    {
+      "username": "system:serviceaccount:automation:task-caller",
+      "subject": "kubernetes:serviceaccount:automation:task-caller",
+      "task": {
+        "service": "automation-worker",
+        "owner_canonical_user_id": "usr_0123456789abcdef0123456789abcdef",
+        "owner_email": "owner@example.com"
+      }
     }
   ]
 }

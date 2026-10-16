@@ -266,8 +266,9 @@ rejected. Pin the reusable workflow commit and Steward API origin in either
 path. An ARC registration secret is unrelated to this exchange, and Identity
 does not call Steward during discovery or exchange.
 
-For Steward's separate controller-to-OpenShell path, use the exact audience,
-ServiceAccount, policy, TLS, and role joins in the
+For internal Kubernetes callers using the OpenShell role profile or the
+pure-service Steward task profile, use the exact audience, ServiceAccount,
+policy, TLS, and claim joins in the
 [workload-exchange pairing guide](steward-openshell-workload-pairing.md).
 
 ## Completion checklist

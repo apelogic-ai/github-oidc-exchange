@@ -27,12 +27,12 @@ use crate::{
 #[derive(Clone)]
 struct AppState<L, R> {
     service: Arc<ExchangeService<L>>,
-    workload: Option<Arc<WorkloadExchangeService<R>>>,
+    workload: Option<Arc<WorkloadExchangeService<R, L>>>,
 }
 
 #[derive(Clone)]
-struct WorkloadAppState<R, B> {
-    workload: Arc<WorkloadExchangeService<R>>,
+struct WorkloadAppState<R, L, B> {
+    workload: Arc<WorkloadExchangeService<R, L>>,
     browser_hop1: Option<Arc<BrowserHop1ExchangeService<B>>>,
 }
 
@@ -48,7 +48,7 @@ pub fn separated_routers_with_workload<
     R: TokenReviewer + Clone + 'static,
 >(
     service: ExchangeService<L>,
-    workload: WorkloadExchangeService<R>,
+    workload: WorkloadExchangeService<R, L>,
 ) -> (Router, Router) {
     separated_routers_with_workload_and_browser::<L, R, crate::replay::KubernetesLeaseReplayLedger>(
         service, workload, None,
@@ -61,7 +61,7 @@ pub fn separated_routers_with_workload_and_browser<
     B: ReplayLedger + Clone + 'static,
 >(
     service: ExchangeService<L>,
-    workload: WorkloadExchangeService<R>,
+    workload: WorkloadExchangeService<R, L>,
     browser_hop1: Option<BrowserHop1ExchangeService<B>>,
 ) -> (Router, Router) {
     let workload = Arc::new(workload);
@@ -107,13 +107,17 @@ fn build_router<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 's
         .with_state(state)
 }
 
-fn build_workload_router<R: TokenReviewer + Clone + 'static, B: ReplayLedger + Clone + 'static>(
-    state: WorkloadAppState<R, B>,
+fn build_workload_router<
+    R: TokenReviewer + Clone + 'static,
+    L: ReplayLedger + Clone + 'static,
+    B: ReplayLedger + Clone + 'static,
+>(
+    state: WorkloadAppState<R, L, B>,
 ) -> Router {
     let routes = Router::new()
-        .route("/v1/workload/exchange", post(workload_exchange::<R, B>))
+        .route("/v1/workload/exchange", post(workload_exchange::<R, L, B>))
         .route("/healthz", get(no_content))
-        .route("/readyz", get(workload_readiness::<R, B>))
+        .route("/readyz", get(workload_readiness::<R, L, B>))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
             header::HeaderValue::from_static("nosniff"),
@@ -130,7 +134,7 @@ fn build_workload_router<R: TokenReviewer + Clone + 'static, B: ReplayLedger + C
     let routes = if state.browser_hop1.is_some() {
         routes.route(
             "/v1/browser-hop1/exchange",
-            post(browser_hop1_exchange::<R, B>),
+            post(browser_hop1_exchange::<R, L, B>),
         )
     } else {
         routes
@@ -140,9 +144,10 @@ fn build_workload_router<R: TokenReviewer + Clone + 'static, B: ReplayLedger + C
 
 async fn browser_hop1_exchange<
     R: TokenReviewer + Clone + 'static,
+    L: ReplayLedger + Clone + 'static,
     B: ReplayLedger + Clone + 'static,
 >(
-    State(state): State<WorkloadAppState<R, B>>,
+    State(state): State<WorkloadAppState<R, L, B>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -267,14 +272,21 @@ async fn readiness<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone +
 
 async fn workload_readiness<
     R: TokenReviewer + Clone + 'static,
+    L: ReplayLedger + Clone + 'static,
     B: ReplayLedger + Clone + 'static,
 >(
-    State(state): State<WorkloadAppState<R, B>>,
+    State(state): State<WorkloadAppState<R, L, B>>,
 ) -> Response {
     let now = Utc::now();
     let mut failed_checks = Vec::new();
     if !state.workload.keys.is_ready_at(now) {
         failed_checks.push("workload_signing_key");
+    }
+    if !state.workload.task_keys.is_ready_at(now) {
+        failed_checks.push("task_signing_key");
+    }
+    if state.workload.ledger.check_ready().await.is_err() {
+        failed_checks.push("replay_ledger");
     }
     if state
         .browser_hop1
@@ -429,9 +441,10 @@ fn append_duration_histogram(output: &mut String, metrics: &crate::service::Metr
 
 async fn workload_exchange<
     R: TokenReviewer + Clone + 'static,
+    L: ReplayLedger + Clone + 'static,
     B: ReplayLedger + Clone + 'static,
 >(
-    State(state): State<WorkloadAppState<R, B>>,
+    State(state): State<WorkloadAppState<R, L, B>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {

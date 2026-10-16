@@ -3,10 +3,10 @@
 `github-oidc-exchange` 0.7.5 is an MIT-licensed, fork-installable Kubernetes
 identity service. It verifies short-lived GitHub Actions OIDC assertions and
 issues two-minute ES256 tokens for Steward. An optional internal workload
-profile uses Kubernetes TokenReview and issues separate RS256 tokens for
-OpenShell-compatible consumers. The optional Steward browser HOP-1 bridge is
-disabled by default. This service is not a general OAuth provider or GitHub
-OAuth App.
+profile uses Kubernetes TokenReview and policy-selected bindings to issue
+RS256 OpenShell tokens or pure-service ES256 Steward task tokens. The optional
+Steward browser HOP-1 bridge is disabled by default. This service is not a
+general OAuth provider or GitHub OAuth App.
 
 Start with the [baseline quickstart](docs/quickstart.md). The
 [installation guide](docs/installation.md) covers artifact publication,
@@ -72,7 +72,7 @@ provenance.
 | Application and OCI Helm chart | `0.7.5` together; Kubernetes >=1.32; `linux/amd64` and `linux/arm64`. |
 | GitHub input | GitHub RS256 assertion; exact configured input audience; immutable numeric owner/repository boundary; short freshness; replay protection; internally consistent signed provenance. |
 | GitHub output | ES256; `aud=["steward-task-api"]`; 120-second TTL; `steward-task-v2` for v5 or `steward-task-v3` for v6. |
-| Workload exchange | Off by default; internal HTTPS port 8443; exact TokenReview audience and service-account policy; RS256 `openshell-workload-v1`. |
+| Workload exchange | Off by default; internal HTTPS port 8443; exact TokenReview audience and service-account policy; RS256 `openshell-workload-v1` or ES256 pure-service `steward-task-v2`, selected only by the binding. |
 | Browser HOP-1 | Off by default; requires workload exchange and a public Steward JWKS; see its [v1 contract](docs/browser-hop1-contract-v1.md). |
 | Public routes | `/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration`, `/jwks.json`, and `/v1/exchange` only. The workload route is never public. |
 | Key expiry | Signing validity is checked on every use; readiness fails before expiry using a configurable threshold, with seconds-to-expiry gauges for ES256 and optional RSA keys. |

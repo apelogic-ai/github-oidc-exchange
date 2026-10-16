@@ -79,6 +79,31 @@ referenced ConfigMap, change `rolloutRevisions.workloadPolicy` and wait for the
 Identity Deployment rollout because projected policy content is not
 hot-reloaded.
 
+## Pure-service Steward task tokens
+
+An exact ServiceAccount policy entry may select the Steward task profile instead of the
+OpenShell role profile. The binding is administrative: the caller cannot choose the service or
+owner in the request. A task-only entry may omit `roles`:
+
+```json
+{
+  "username": "system:serviceaccount:automation:task-caller",
+  "subject": "kubernetes:serviceaccount:automation:task-caller",
+  "task": {
+    "service": "automation-worker",
+    "owner_canonical_user_id": "usr_0123456789abcdef0123456789abcdef",
+    "owner_email": "owner@example.com"
+  }
+}
+```
+
+The same empty-body workload exchange request then returns an ES256 `steward-task-v2` token for
+the fixed `steward-task-api` audience. Its verified email is the bound owner and its groups are
+exactly `service-principal:<service>`, `canonical-user:<id>`, and `task-owner:<email>`. It contains
+no `acting-user:` group or source provenance. Identity consumes the authenticated projected
+token's `jti` through the existing replay ledger, so a projected token is single-use for this
+profile. Wrong-audience, expired, unmapped, and replayed projected tokens fail closed.
+
 ## Steward values
 
 Steward projects the fixed `apelogic-workload-exchange` audience into the

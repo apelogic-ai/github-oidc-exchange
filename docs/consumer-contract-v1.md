@@ -112,9 +112,13 @@ copy-ready claim shape for the no-compatibility path.
 The internal workload endpoint is
 `POST https://{service}.{namespace}.svc.cluster.local:8443/v1/workload/exchange`.
 It uses Kubernetes TokenReview with an exact configured input audience and
-issues RS256 `openshell-workload-v1` tokens. It is never routed publicly and
-is unchanged in 0.7.5. The standard Steward/OpenShell values and exact
-cross-product joins are documented in the
+selects the output solely from the exact service-account policy entry. A role
+entry issues an RS256 `openshell-workload-v1` token. An entry with `task`
+issues an ES256 `steward-task-v2` token for `steward-task-api`, with the bound
+owner as verified email and exactly one service, canonical-user, and task-owner
+group. The task profile has no acting-user group or source provenance and
+consumes the projected token `jti` once through the replay ledger. The route is
+never public. Standard values and exact cross-product joins are documented in the
 [workload-exchange pairing guide](steward-openshell-workload-pairing.md).
 
 The optional browser HOP-1 profile requires workload exchange and follows its
