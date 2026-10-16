@@ -30,8 +30,7 @@ and JSON with the exact shape:
 ```
 
 Stable public-listener check names are `github_signing_key`, `github_jwks`,
-`replay_ledger`, and, when enabled, `generic_oidc_providers` and
-`workload_signing_key`. Stable internal
+`replay_ledger`, and, when enabled, `workload_signing_key`. Stable internal
 listener names are `workload_signing_key` and `browser_signing_key`. The list
 may contain multiple simultaneous failures and clients must ignore unknown
 additive names. A failing signing-key check means the current key is inside its
@@ -43,9 +42,11 @@ after the five-minute soft age, including on replicas receiving no exchanges.
 treats 200 or 404 as healthy, times the request out within one second, and
 caches the result for 30 seconds. A failed check means Identity cannot safely
 accept a GitHub assertion.
-`generic_oidc_providers` fails while any configured provider lacks a usable
-RS256 key set. Readiness retries unavailable providers with bounded frequency;
-ready providers remain able to verify their own assertions.
+Optional generic-provider state never changes global readiness and the probe
+performs no provider network request. Per-provider background refresh begins
+after the public listener binds. An exchange for a provider without a usable,
+non-stale RS256 key set returns 503; ready providers and GitHub exchange remain
+available.
 
 ## Structured audit events and reasons
 
@@ -102,6 +103,7 @@ are process-lifetime totals and reset on restart.
 | `github_oidc_exchange_generic_oidc_errors_total` | counter | Generic OIDC provider, ledger, or signing failures. |
 | `github_oidc_exchange_generic_oidc_providers` | gauge | Configured generic OIDC provider count. |
 | `github_oidc_exchange_generic_oidc_ready_providers` | gauge | Providers with a usable signing-key set. |
+| `github_oidc_exchange_generic_oidc_provider_ready{issuer_hash=...}` | gauge | Per-provider usable signing-key state, labeled only by a truncated issuer hash. |
 | `github_oidc_exchange_workload_requests_total` | counter | Workload exchange attempts received. |
 | `github_oidc_exchange_workload_issued_total` | counter | Workload tokens issued. |
 | `github_oidc_exchange_workload_denied_total` | counter | Workload authentication/policy denials. |

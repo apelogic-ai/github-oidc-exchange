@@ -70,7 +70,7 @@ Steward JWKS ConfigMap.
 `genericOidc.enabled=false` is also baseline. Enabling it requires a reviewed
 `oidc-policy.json` ConfigMap, nonempty
 `rolloutRevisions.genericOidcPolicy`, and HTTPS egress to each configured
-issuer's discovery/JWKS origin. The chart projects the policy read-only and
+issuer's discovery/JWKS origin on TCP 443. The chart projects the policy read-only and
 adds `/v1/oidc/exchange` to the selected public route. The policy maps exact
 issuer/audience/claims to an administrator-owned service and owner; it contains
 no API keys or provider credentials. See the Jenkins profile in the

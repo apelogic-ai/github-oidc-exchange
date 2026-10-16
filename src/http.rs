@@ -26,11 +26,6 @@ use crate::{
 };
 
 #[derive(Clone)]
-struct OidcAppState<L> {
-    service: Arc<OidcExchangeService<L>>,
-}
-
-#[derive(Clone)]
 struct AppState<L, R> {
     service: Arc<ExchangeService<L>>,
     workload: Option<Arc<WorkloadExchangeService<R, L>>>,
@@ -60,49 +55,6 @@ pub fn router_with_oidc<L: ReplayLedger + Clone + 'static>(
         workload: None,
         oidc: Some(Arc::new(oidc)),
     })
-}
-
-pub fn oidc_router<L: ReplayLedger + Clone + 'static>(service: OidcExchangeService<L>) -> Router {
-    Router::new()
-        .route("/v1/oidc/exchange", post(oidc_exchange::<L>))
-        .layer(SetResponseHeaderLayer::if_not_present(
-            header::X_CONTENT_TYPE_OPTIONS,
-            header::HeaderValue::from_static("nosniff"),
-        ))
-        .layer(SetResponseHeaderLayer::if_not_present(
-            header::REFERRER_POLICY,
-            header::HeaderValue::from_static("no-referrer"),
-        ))
-        .layer(SetResponseHeaderLayer::if_not_present(
-            header::CONTENT_SECURITY_POLICY,
-            header::HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
-        ))
-        .layer(DefaultBodyLimit::max(1024))
-        .with_state(OidcAppState {
-            service: Arc::new(service),
-        })
-}
-
-async fn oidc_exchange<L: ReplayLedger + Clone + 'static>(
-    State(state): State<OidcAppState<L>>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    if !body.is_empty() {
-        return oauth_error(StatusCode::BAD_REQUEST, "invalid_request");
-    }
-    let Some(assertion) = bearer_assertion(&headers) else {
-        return oauth_error(StatusCode::UNAUTHORIZED, "invalid_token");
-    };
-    match state.service.exchange(assertion).await {
-        Ok(token) => token_response(token, state.service.token_ttl.as_secs()),
-        Err(OidcExchangeError::Unauthorized) => {
-            oauth_error(StatusCode::UNAUTHORIZED, "invalid_token")
-        }
-        Err(OidcExchangeError::Unavailable) => {
-            oauth_error(StatusCode::SERVICE_UNAVAILABLE, "temporarily_unavailable")
-        }
-    }
 }
 
 pub fn separated_routers_with_workload<
@@ -317,11 +269,7 @@ async fn jwks<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 'sta
 async fn exchange<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 'static>(
     State(state): State<AppState<L, R>>,
     headers: HeaderMap,
-    body: Bytes,
 ) -> Response {
-    if !body.is_empty() {
-        return oauth_error(StatusCode::BAD_REQUEST, "invalid_request");
-    }
     let Some(assertion) = bearer_assertion(&headers) else {
         return oauth_error(StatusCode::UNAUTHORIZED, "invalid_token");
     };
@@ -379,11 +327,6 @@ async fn readiness<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone +
     }
     if state.service.ledger.check_ready().await.is_err() {
         failed_checks.push("replay_ledger");
-    }
-    if let Some(oidc) = &state.oidc
-        && oidc.verifier.check_ready().await.is_err()
-    {
-        failed_checks.push("generic_oidc_providers");
     }
     if state
         .workload
@@ -544,6 +487,21 @@ async fn metrics<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + '
             "gauge",
             oidc.verifier.ready_provider_count().await as u64,
         );
+        let _ = writeln!(
+            output,
+            "# HELP github_oidc_exchange_generic_oidc_provider_ready Whether one configured provider has a usable signing-key set."
+        );
+        let _ = writeln!(
+            output,
+            "# TYPE github_oidc_exchange_generic_oidc_provider_ready gauge"
+        );
+        for (issuer_hash, ready) in oidc.verifier.provider_readiness().await {
+            let _ = writeln!(
+                output,
+                "github_oidc_exchange_generic_oidc_provider_ready{{issuer_hash=\"{issuer_hash}\"}} {}",
+                u8::from(ready)
+            );
+        }
     }
     if let Some(workload) = state.workload {
         for (name, help, value) in [

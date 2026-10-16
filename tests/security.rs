@@ -2051,12 +2051,13 @@ async fn generic_oidc_route_readiness_discovery_and_metrics_are_opt_in()
     let metrics = String::from_utf8(metrics.into_body().collect().await?.to_bytes().to_vec())?;
     assert!(metrics.contains("github_oidc_exchange_generic_oidc_providers 1"));
     assert!(metrics.contains("github_oidc_exchange_generic_oidc_ready_providers 1"));
+    assert!(metrics.contains("github_oidc_exchange_generic_oidc_provider_ready{issuer_hash="));
     assert!(metrics.contains("github_oidc_exchange_generic_oidc_requests_total 0"));
     Ok(())
 }
 
 #[tokio::test]
-async fn readiness_names_an_unavailable_generic_oidc_provider_set()
+async fn readiness_ignores_an_unavailable_generic_oidc_provider_set()
 -> Result<(), Box<dyn std::error::Error>> {
     install_test_crypto_provider()?;
     let (_, github_decoding) = rsa_key()?;
@@ -2093,13 +2094,7 @@ async fn readiness_names_an_unavailable_generic_oidc_provider_set()
     let response = router_with_oidc(github_service, oidc_service)
         .oneshot(Request::get("/readyz").body(Body::empty())?)
         .await?;
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let body: serde_json::Value =
-        serde_json::from_slice(&response.into_body().collect().await?.to_bytes())?;
-    assert_eq!(
-        body["failed_checks"],
-        serde_json::json!(["generic_oidc_providers"])
-    );
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
     Ok(())
 }
 

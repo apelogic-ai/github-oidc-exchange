@@ -95,11 +95,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 log_startup_failure("generic OIDC authorization policy", failure);
             },
         )?);
-        let verifier = OidcVerifierSet::discover(&policy)
-            .await
-            .inspect_err(|failure| {
-                log_startup_failure("generic OIDC verifier configuration", failure);
-            })?;
+        let verifier =
+            OidcVerifierSet::discover_with_max_staleness(&policy, config.github_jwks_max_staleness)
+                .inspect_err(|failure| {
+                    log_startup_failure("generic OIDC verifier configuration", failure);
+                })?;
         Some(OidcExchangeService {
             verifier,
             policy,
@@ -162,6 +162,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .inspect_err(|failure| {
                 log_startup_failure("public listener", failure);
             })?;
+        let _generic_oidc_refresh_task = generic_oidc
+            .as_ref()
+            .map(|oidc| tokio::spawn(oidc.verifier.clone().run_refresh_loop()));
         let browser_hop1: Option<BrowserHop1ExchangeService<KubernetesLeaseReplayLedger>> =
             if let Some(browser) = browser_hop1_config {
                 Some(BrowserHop1ExchangeService {
@@ -224,6 +227,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .inspect_err(|failure| {
                 log_startup_failure("public listener", failure);
             })?;
+        let _generic_oidc_refresh_task = generic_oidc
+            .as_ref()
+            .map(|oidc| tokio::spawn(oidc.verifier.clone().run_refresh_loop()));
         info!(
             address = %config.listen_address,
             tls = false,

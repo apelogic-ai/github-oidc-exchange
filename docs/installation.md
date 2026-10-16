@@ -541,18 +541,23 @@ rolloutRevisions:
 
 The chart adds `/v1/oidc/exchange` to the selected public route and projects
 the policy read-only. Permit DNS and HTTPS egress to each issuer; discovery and
-JWKS must use the issuer's exact scheme, host, and port. For Jenkins, configure
+JWKS must use the issuer's exact scheme and host on TCP 443. For Jenkins, configure
 the OIDC Provider issuer `<jenkins>/oidc`, a dedicated audience, the default
 job-URL `sub`, signed integer `build_number`, and token lifetime at most 600
 seconds. Jenkins uses OIDC only; do not create an API key. The complete caller
 profile and private token-handling example are in the
 [integration guide](integration.md#jenkins-oidc-provider-profile).
 
-`/readyz` names `generic_oidc_providers` while any configured provider lacks a
-usable key set. One unavailable provider does not prevent a different ready
-provider from verifying requests. Observe
+Generic-provider state does not affect `/readyz`, which protects the existing
+GitHub exchange from an optional issuer outage and performs no generic-provider
+network work. The background refresh loop starts after the public listener is
+bound. An assertion for a provider without a usable key set receives 503, while
+other ready providers continue verifying requests. Generic caches use the same
+five-minute soft refresh and `GITHUB_JWKS_MAX_STALENESS_SECONDS` hard bound as
+GitHub keys. Observe
 `github_oidc_exchange_generic_oidc_providers` and
-`github_oidc_exchange_generic_oidc_ready_providers`, plus the generic OIDC
+`github_oidc_exchange_generic_oidc_ready_providers`, the per-provider
+`github_oidc_exchange_generic_oidc_provider_ready{issuer_hash=...}` gauge, plus the generic OIDC
 request/issued/denied/replayed/error counters. After any policy update, bump
 only `rolloutRevisions.genericOidcPolicy` (or use the documented Reloader
 integration) and verify exact-claim refusals before admitting production work.

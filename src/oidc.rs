@@ -37,6 +37,8 @@ const MAX_DISCOVERY_BYTES: usize = 64 * 1024;
 const MAX_JWKS_BYTES: usize = 1024 * 1024;
 const MAX_SOURCE_LIFETIME_SECONDS: i64 = 600;
 const JWKS_REFRESH_RETRY_SECONDS: i64 = 30;
+const JWKS_SOFT_REFRESH_SECONDS: u64 = 300;
+const DEFAULT_JWKS_MAX_STALENESS_SECONDS: u64 = 21_600;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -172,7 +174,13 @@ fn valid_issuer(value: &str) -> bool {
         && !value.ends_with('/')
         && reqwest::Url::parse(value).is_ok_and(|url| {
             url.scheme() == "https"
-                && url.host_str().is_some()
+                && url.host_str().is_some_and(|host| {
+                    !host.is_empty()
+                        && host
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+                })
+                && url.port_or_known_default() == Some(443)
                 && url.username().is_empty()
                 && url.password().is_none()
                 && url.query().is_none()
@@ -236,14 +244,30 @@ struct ProviderVerifier {
     issuer: String,
     audience: String,
     client: reqwest::Client,
-    keys: Arc<RwLock<HashMap<String, DecodingKey>>>,
+    cache: Arc<RwLock<KeyCache>>,
     refresh: Arc<Mutex<RefreshState>>,
+    max_staleness: Duration,
+    #[cfg(feature = "test-support")]
+    key_source: KeySource,
 }
 
 #[derive(Default)]
 struct RefreshState {
-    last_attempt: i64,
-    last_failed: bool,
+    last_soft_attempt: i64,
+    last_forced_attempt: i64,
+}
+
+#[derive(Default)]
+struct KeyCache {
+    keys: HashMap<String, DecodingKey>,
+    fetched_at: i64,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum KeySource {
+    Remote,
+    Injected,
 }
 
 #[derive(Deserialize)]
@@ -258,7 +282,17 @@ struct UnverifiedIssuer {
 }
 
 impl OidcVerifierSet {
-    pub async fn discover(policy: &OidcPolicy) -> Result<Self, OidcVerifyError> {
+    pub fn discover(policy: &OidcPolicy) -> Result<Self, OidcVerifyError> {
+        Self::discover_with_max_staleness(
+            policy,
+            Duration::from_secs(DEFAULT_JWKS_MAX_STALENESS_SECONDS),
+        )
+    }
+
+    pub fn discover_with_max_staleness(
+        policy: &OidcPolicy,
+        max_staleness: Duration,
+    ) -> Result<Self, OidcVerifyError> {
         policy.validate().map_err(|_| OidcVerifyError::Invalid)?;
         let client = reqwest::Client::builder()
             .https_only(true)
@@ -272,16 +306,17 @@ impl OidcVerifierSet {
                 issuer: configured.issuer.clone(),
                 audience: configured.audience.clone(),
                 client: client.clone(),
-                keys: Arc::new(RwLock::new(HashMap::new())),
+                cache: Arc::new(RwLock::new(KeyCache::default())),
                 refresh: Arc::new(Mutex::new(RefreshState::default())),
+                max_staleness,
+                #[cfg(feature = "test-support")]
+                key_source: KeySource::Remote,
             };
             providers.insert(configured.issuer.clone(), verifier);
         }
-        let verifiers = Self {
+        Ok(Self {
             providers: Arc::new(providers),
-        };
-        verifiers.warm_up().await;
-        Ok(verifiers)
+        })
     }
 
     #[cfg(feature = "test-support")]
@@ -307,8 +342,13 @@ impl OidcVerifierSet {
             issuer: issuer.clone(),
             audience,
             client,
-            keys: Arc::new(RwLock::new(keys)),
+            cache: Arc::new(RwLock::new(KeyCache {
+                keys,
+                fetched_at: Utc::now().timestamp(),
+            })),
             refresh: Arc::new(Mutex::new(RefreshState::default())),
+            max_staleness: Duration::from_secs(DEFAULT_JWKS_MAX_STALENESS_SECONDS),
+            key_source: KeySource::Injected,
         };
         Ok(Self {
             providers: Arc::new(HashMap::from([(issuer, provider)])),
@@ -334,24 +374,97 @@ impl OidcVerifierSet {
             issuer: issuer.clone(),
             audience,
             client,
-            keys: Arc::new(RwLock::new(HashMap::new())),
+            cache: Arc::new(RwLock::new(KeyCache::default())),
             refresh: Arc::new(Mutex::new(RefreshState {
-                last_attempt: Utc::now().timestamp(),
-                last_failed: true,
+                last_soft_attempt: Utc::now().timestamp(),
+                last_forced_attempt: Utc::now().timestamp(),
             })),
+            max_staleness: Duration::from_secs(DEFAULT_JWKS_MAX_STALENESS_SECONDS),
+            key_source: KeySource::Remote,
         };
         Ok(Self {
             providers: Arc::new(HashMap::from([(issuer, provider)])),
         })
     }
 
-    pub async fn check_ready(&self) -> Result<(), OidcVerifyError> {
-        for provider in self.providers.values() {
-            if provider.keys.read().await.is_empty() {
-                provider.refresh_if_due().await?;
-            }
+    #[cfg(feature = "test-support")]
+    #[doc = "Constructs one ready provider and one independently unavailable provider."]
+    pub fn with_test_key_and_unready_provider(
+        ready_issuer: String,
+        ready_audience: String,
+        ready_kid: String,
+        ready_key: DecodingKey,
+        unready_issuer: String,
+        unready_audience: String,
+    ) -> Result<Self, OidcVerifyError> {
+        if ready_issuer == unready_issuer
+            || !valid_issuer(&unready_issuer)
+            || !bounded_graphic(&unready_audience, 255)
+        {
+            return Err(OidcVerifyError::Invalid);
         }
-        Ok(())
+        let mut verifiers =
+            Self::with_test_key(ready_issuer, ready_audience, ready_kid, ready_key)?;
+        let client = reqwest::Client::builder()
+            .https_only(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|_| OidcVerifyError::Unavailable)?;
+        Arc::make_mut(&mut verifiers.providers).insert(
+            unready_issuer.clone(),
+            ProviderVerifier {
+                issuer: unready_issuer,
+                audience: unready_audience,
+                client,
+                cache: Arc::new(RwLock::new(KeyCache::default())),
+                refresh: Arc::new(Mutex::new(RefreshState {
+                    last_soft_attempt: Utc::now().timestamp(),
+                    last_forced_attempt: Utc::now().timestamp(),
+                })),
+                max_staleness: Duration::from_secs(DEFAULT_JWKS_MAX_STALENESS_SECONDS),
+                key_source: KeySource::Remote,
+            },
+        );
+        Ok(verifiers)
+    }
+
+    #[cfg(feature = "test-support")]
+    #[doc = "Constructs a provider whose injected key cache is past its hard-staleness bound."]
+    pub fn with_stale_test_key(
+        issuer: String,
+        audience: String,
+        kid: String,
+        key: DecodingKey,
+        max_staleness: Duration,
+    ) -> Result<Self, OidcVerifyError> {
+        if !valid_issuer(&issuer) || !bounded_graphic(&audience, 255) || kid.is_empty() {
+            return Err(OidcVerifyError::Invalid);
+        }
+        let client = reqwest::Client::builder()
+            .https_only(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|_| OidcVerifyError::Unavailable)?;
+        let mut keys = HashMap::new();
+        keys.insert(kid, key);
+        let fetched_at = Utc::now()
+            .timestamp()
+            .saturating_sub(i64::try_from(max_staleness.as_secs()).unwrap_or(i64::MAX))
+            .saturating_sub(1);
+        let provider = ProviderVerifier {
+            issuer: issuer.clone(),
+            audience,
+            client,
+            cache: Arc::new(RwLock::new(KeyCache { keys, fetched_at })),
+            refresh: Arc::new(Mutex::new(RefreshState::default())),
+            max_staleness,
+            key_source: KeySource::Injected,
+        };
+        Ok(Self {
+            providers: Arc::new(HashMap::from([(issuer, provider)])),
+        })
     }
 
     pub fn provider_count(&self) -> usize {
@@ -359,30 +472,55 @@ impl OidcVerifierSet {
     }
 
     pub async fn ready_provider_count(&self) -> usize {
-        let mut ready = 0;
-        for provider in self.providers.values() {
-            if !provider.keys.read().await.is_empty() {
-                ready += 1;
-            }
-        }
-        ready
+        self.provider_readiness()
+            .await
+            .into_iter()
+            .filter(|(_, ready)| *ready)
+            .count()
     }
 
-    async fn warm_up(&self) {
+    pub async fn provider_readiness(&self) -> Vec<(String, bool)> {
+        let now = Utc::now().timestamp();
+        let mut states = Vec::with_capacity(self.providers.len());
         for provider in self.providers.values() {
-            if provider.refresh_if_due().await.is_ok() {
-                info!(
-                    event = "oidc_provider_ready",
-                    issuer_hash = hash_value(&provider.issuer),
-                    "generic OIDC provider is ready"
-                );
-            } else {
-                warn!(
-                    event = "oidc_provider_unready",
-                    issuer_hash = hash_value(&provider.issuer),
-                    "generic OIDC provider warm-up failed"
-                );
+            let cache = provider.cache.read().await;
+            states.push((
+                hash_value(&provider.issuer),
+                cache_is_usable(&cache, now, provider.max_staleness),
+            ));
+        }
+        states.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        states
+    }
+
+    pub async fn run_refresh_loop(self) {
+        self.run_refresh_loop_with_interval(Duration::from_secs(JWKS_REFRESH_RETRY_SECONDS as u64))
+            .await;
+    }
+
+    async fn run_refresh_loop_with_interval(&self, interval: Duration) {
+        loop {
+            let mut refreshes = tokio::task::JoinSet::new();
+            for provider in self.providers.values() {
+                let provider = provider.clone();
+                refreshes.spawn(async move {
+                    (
+                        hash_value(&provider.issuer),
+                        provider.refresh_soft_if_due().await,
+                    )
+                });
             }
+            while let Some(result) = refreshes.join_next().await {
+                if let Ok((issuer_hash, Err(error))) = result {
+                    warn!(
+                        event = "oidc_provider_refresh_failed",
+                        issuer_hash,
+                        detail = %error,
+                        "generic OIDC provider refresh failed"
+                    );
+                }
+            }
+            tokio::time::sleep(interval).await;
         }
     }
 
@@ -420,37 +558,64 @@ impl OidcVerifierSet {
 
 impl ProviderVerifier {
     async fn key(&self, kid: &str) -> Result<DecodingKey, OidcVerifyError> {
-        if let Some(key) = self.keys.read().await.get(kid).cloned() {
-            return Ok(key);
+        let now = Utc::now().timestamp();
+        let cache = self.cache.read().await;
+        if cache_is_usable(&cache, now, self.max_staleness) {
+            if let Some(key) = cache.keys.get(kid) {
+                return Ok(key.clone());
+            }
+        } else if !cache.keys.is_empty() {
+            return Err(OidcVerifyError::Unavailable);
         }
-        self.refresh_if_due().await?;
-        self.keys
-            .read()
-            .await
-            .get(kid)
-            .cloned()
-            .ok_or(OidcVerifyError::Invalid)
+        drop(cache);
+        self.refresh_for_unknown_kid_if_due().await?;
+        let cache = self.cache.read().await;
+        if !cache_is_usable(&cache, Utc::now().timestamp(), self.max_staleness) {
+            return Err(OidcVerifyError::Unavailable);
+        }
+        cache.keys.get(kid).cloned().ok_or(OidcVerifyError::Invalid)
     }
 
-    async fn refresh_if_due(&self) -> Result<(), OidcVerifyError> {
+    async fn refresh_for_unknown_kid_if_due(&self) -> Result<(), OidcVerifyError> {
         let mut refresh = self.refresh.lock().await;
         let now = Utc::now().timestamp();
-        if refresh.last_attempt > 0
-            && now.saturating_sub(refresh.last_attempt) < JWKS_REFRESH_RETRY_SECONDS
-        {
-            return if refresh.last_failed {
-                Err(OidcVerifyError::Unavailable)
-            } else {
-                Ok(())
-            };
+        if attempted_recently(refresh.last_forced_attempt, now) {
+            return Err(OidcVerifyError::Unavailable);
         }
-        refresh.last_attempt = now;
-        let result = self.refresh().await;
-        refresh.last_failed = result.is_err();
+        refresh.last_forced_attempt = now;
+        self.refresh_now().await
+    }
+
+    async fn refresh_soft_if_due(&self) -> Result<(), OidcVerifyError> {
+        let mut refresh = self.refresh.lock().await;
+        let now = Utc::now().timestamp();
+        if cache_age_seconds(self.cache.read().await.fetched_at, now) < JWKS_SOFT_REFRESH_SECONDS
+            || attempted_recently(refresh.last_soft_attempt, now)
+        {
+            return Ok(());
+        }
+        refresh.last_soft_attempt = now;
+        let result = self.refresh_now().await;
+        if result.is_ok() {
+            info!(
+                event = "oidc_provider_ready",
+                issuer_hash = hash_value(&self.issuer),
+                "generic OIDC provider is ready"
+            );
+        }
         result
     }
 
-    async fn refresh(&self) -> Result<(), OidcVerifyError> {
+    async fn refresh_now(&self) -> Result<(), OidcVerifyError> {
+        #[cfg(feature = "test-support")]
+        if self.key_source == KeySource::Injected {
+            let mut cache = self.cache.write().await;
+            if cache.keys.is_empty() {
+                return Err(OidcVerifyError::Unavailable);
+            }
+            cache.fetched_at = Utc::now().timestamp();
+            return Ok(());
+        }
         let discovery_url = format!("{}/.well-known/openid-configuration", self.issuer);
         let discovery: DiscoveryDocument =
             fetch_json(&self.client, &discovery_url, MAX_DISCOVERY_BYTES).await?;
@@ -474,9 +639,27 @@ impl ProviderVerifier {
         if keys.is_empty() {
             return Err(OidcVerifyError::Unavailable);
         }
-        *self.keys.write().await = keys;
+        *self.cache.write().await = KeyCache {
+            keys,
+            fetched_at: Utc::now().timestamp(),
+        };
         Ok(())
     }
+}
+
+fn attempted_recently(last_attempt: i64, now: i64) -> bool {
+    last_attempt > 0 && now.saturating_sub(last_attempt) < JWKS_REFRESH_RETRY_SECONDS
+}
+
+fn cache_age_seconds(fetched_at: i64, now: i64) -> u64 {
+    if fetched_at <= 0 {
+        return u64::MAX;
+    }
+    u64::try_from(now.saturating_sub(fetched_at)).unwrap_or(0)
+}
+
+fn cache_is_usable(cache: &KeyCache, now: i64, max_staleness: Duration) -> bool {
+    !cache.keys.is_empty() && cache_age_seconds(cache.fetched_at, now) <= max_staleness.as_secs()
 }
 
 async fn fetch_json<T: serde::de::DeserializeOwned>(
@@ -693,7 +876,7 @@ impl<L: ReplayLedger> OidcExchangeService<L> {
             .keys
             .sign(&OidcTaskOutputClaims {
                 iss: self.issuer.clone(),
-                sub: claims.subject.clone(),
+                sub: provider_scoped_subject(&claims),
                 aud: vec![self.output_audience.clone()],
                 exp: now + self.token_ttl.as_secs(),
                 iat: now,
@@ -761,6 +944,13 @@ fn replay_identifier(claims: &OidcClaims) -> Option<String> {
     Some(format!("oidc-{:x}", hasher.finalize()))
 }
 
+fn provider_scoped_subject(claims: &OidcClaims) -> String {
+    let mut hasher = Sha256::new();
+    write_replay_component(&mut hasher, &claims.issuer);
+    write_replay_component(&mut hasher, &claims.subject);
+    format!("oidc:{:x}", hasher.finalize())
+}
+
 fn write_replay_component(hasher: &mut Sha256, value: &str) {
     hasher.update((value.len() as u64).to_be_bytes());
     hasher.update(value.as_bytes());
@@ -779,7 +969,11 @@ fn hash_value(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DiscoveryDocument, valid_discovery};
+    use std::time::Duration;
+
+    use jsonwebtoken::DecodingKey;
+
+    use super::{DiscoveryDocument, OidcVerifierSet, valid_discovery};
 
     #[test]
     fn discovery_requires_the_exact_issuer_and_same_https_origin() {
@@ -811,5 +1005,35 @@ mod tests {
         ] {
             assert!(!valid_discovery(issuer, &rejected));
         }
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn background_loop_refreshes_a_hard_stale_provider_without_an_exchange()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let verifier = OidcVerifierSet::with_stale_test_key(
+            "https://ci.example.invalid/oidc".to_owned(),
+            "identity-oidc-exchange".to_owned(),
+            "source".to_owned(),
+            DecodingKey::from_secret(b"test-only-placeholder"),
+            Duration::from_secs(600),
+        )?;
+        assert_eq!(verifier.ready_provider_count().await, 0);
+        let refresh = {
+            let verifier = verifier.clone();
+            tokio::spawn(async move {
+                verifier
+                    .run_refresh_loop_with_interval(Duration::from_millis(10))
+                    .await;
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while verifier.ready_provider_count().await == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await?;
+        refresh.abort();
+        Ok(())
     }
 }

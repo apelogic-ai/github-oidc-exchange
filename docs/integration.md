@@ -88,8 +88,8 @@ rm -f identity-token.json
 ```
 
 Never print or archive either token. The provider discovery document and JWKS
-must be HTTPS on the issuer's exact scheme, host, and port; configure
-`networkPolicy.httpsEgressCidrs` or a narrow `extraEgress` rule accordingly.
+must be HTTPS on the issuer's exact scheme and host on TCP 443; configure
+`networkPolicy.httpsEgressCidrs` accordingly.
 
 ## 2. Observe signed GitHub claims
 

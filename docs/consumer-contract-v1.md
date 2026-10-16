@@ -42,17 +42,20 @@ and v6 ConfigMaps. See the [0.7.5 upgrade guide](upgrade-v0.7.5.md).
 When `genericOidc.enabled=true`, the public endpoint is
 `POST {issuer}/v1/oidc/exchange` with an empty body and
 `Authorization: Bearer <source OIDC JWT>`. Only administrator-configured HTTPS
-issuers, exact audiences, RS256 signatures, and non-overlapping exact string
-claim bindings are accepted. Discovery and JWKS must remain on the issuer's
-exact scheme, host, and port. An unavailable configured provider makes
-`/readyz` fail without disabling a different ready provider; retries are
-rate-limited.
+issuers on TCP 443, exact audiences, RS256 signatures, and non-overlapping exact
+string claim bindings are accepted. Discovery and JWKS must remain on the
+issuer's exact scheme, host, and port. Provider availability does not affect
+global `/readyz`; an assertion for an unavailable or hard-stale provider gets
+503 without disabling GitHub exchange or a different ready provider. Background
+refresh and request-triggered retries are rate-limited.
 
 The request never selects identity. The matched binding supplies the service,
 canonical owner ID, and owner email. Success emits an ES256
 `steward-task-v2` token for `steward-task-api` with exactly the bound
 `service-principal:`, `canonical-user:`, and `task-owner:` groups, and no
-`acting-user:` group or source provenance. A source `jti` is single-use. When
+`acting-user:` group or source provenance. Its opaque `sub` is derived from
+both verified source issuer and source subject, so two providers cannot collide.
+A source `jti` is single-use. When
 the source has no `jti`, the Jenkins profile requires integer `build_number`
 and uses verified issuer, subject, issued-at time, and build number as the
 single-use replay identity. Source lifetime must be at most 600 seconds.

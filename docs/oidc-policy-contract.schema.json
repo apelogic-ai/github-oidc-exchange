@@ -9,8 +9,10 @@
     },
     "providers": {
       "type": "array",
+      "description": "Provider entries and issuer values must be unique; runtime validation enforces issuer uniqueness across otherwise different entries.",
       "minItems": 1,
       "maxItems": 32,
+      "uniqueItems": true,
       "items": {
         "type": "object",
         "required": ["issuer", "audience", "bindings"],
@@ -18,7 +20,8 @@
           "issuer": {
             "type": "string",
             "maxLength": 2048,
-            "pattern": "^https://[^/?#]+(?:/[^?#]+)?$"
+            "format": "uri",
+            "pattern": "^https://[A-Za-z0-9.-]+(?::443)?(?:/[^/?#]+)*$"
           },
           "audience": {
             "type": "string",
@@ -40,13 +43,20 @@
                   "minProperties": 1,
                   "maxProperties": 16,
                   "propertyNames": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[^.\\[\\]]+$",
-                    "not": {
-                      "enum": ["iss", "aud", "exp", "iat", "nbf", "jti"]
-                    }
+                    "allOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[!-~]+$"
+                      },
+                      {
+                        "pattern": "^[^.\\[\\]]+$",
+                        "not": {
+                          "enum": ["iss", "aud", "exp", "iat", "nbf", "jti"]
+                        }
+                      }
+                    ]
                   },
                   "additionalProperties": {
                     "type": "string",
