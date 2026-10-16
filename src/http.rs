@@ -16,6 +16,7 @@ use crate::{
     IDENTITY_CONTRACT, POLICY_VERSION, SOURCE_AUTH_IDENTITY_CONTRACT, SOURCE_AUTH_POLICY_VERSION,
     browser_hop1::{BrowserHop1ExchangeError, BrowserHop1ExchangeService},
     keys::KeyRing,
+    oidc::{OidcExchangeError, OidcExchangeService},
     replay::ReplayLedger,
     service::{EXCHANGE_DURATION_BUCKET_SECONDS, ExchangeError, ExchangeService},
     workload::{
@@ -23,6 +24,11 @@ use crate::{
         WorkloadExchangeService,
     },
 };
+
+#[derive(Clone)]
+struct OidcAppState<L> {
+    service: Arc<OidcExchangeService<L>>,
+}
 
 #[derive(Clone)]
 struct AppState<L, R> {
@@ -41,6 +47,45 @@ pub fn router<L: ReplayLedger + Clone + 'static>(service: ExchangeService<L>) ->
         service: Arc::new(service),
         workload: None,
     })
+}
+
+pub fn oidc_router<L: ReplayLedger + Clone + 'static>(service: OidcExchangeService<L>) -> Router {
+    Router::new()
+        .route("/v1/oidc/exchange", post(oidc_exchange::<L>))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_CONTENT_TYPE_OPTIONS,
+            header::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::REFERRER_POLICY,
+            header::HeaderValue::from_static("no-referrer"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CONTENT_SECURITY_POLICY,
+            header::HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+        ))
+        .layer(DefaultBodyLimit::max(1024))
+        .with_state(OidcAppState {
+            service: Arc::new(service),
+        })
+}
+
+async fn oidc_exchange<L: ReplayLedger + Clone + 'static>(
+    State(state): State<OidcAppState<L>>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(assertion) = bearer_assertion(&headers) else {
+        return oauth_error(StatusCode::UNAUTHORIZED, "invalid_token");
+    };
+    match state.service.exchange(assertion).await {
+        Ok(token) => token_response(token, state.service.token_ttl.as_secs()),
+        Err(OidcExchangeError::Unauthorized) => {
+            oauth_error(StatusCode::UNAUTHORIZED, "invalid_token")
+        }
+        Err(OidcExchangeError::Unavailable) => {
+            oauth_error(StatusCode::SERVICE_UNAVAILABLE, "temporarily_unavailable")
+        }
+    }
 }
 
 pub fn separated_routers_with_workload<
