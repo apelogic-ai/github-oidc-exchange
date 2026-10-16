@@ -9,7 +9,10 @@ use axum::{
     body::Body,
     http::{Request, StatusCode, header},
 };
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use chrono::{Duration as ChronoDuration, Utc};
 use github_oidc_exchange::{
     IDENTITY_CONTRACT, KEYRING_VERSION,
@@ -90,6 +93,7 @@ fn source_key() -> Result<SourceKey, Box<dyn std::error::Error>> {
     })
 }
 
+#[derive(Clone, Copy)]
 struct SourceAssertion<'a> {
     issuer: &'a str,
     subject: &'a str,
@@ -98,12 +102,22 @@ struct SourceAssertion<'a> {
     expires_at: i64,
     jti: Option<&'a str>,
     build_number: Option<u64>,
+    nbf: Option<i64>,
+    extra_audience: Option<&'a str>,
+    branch: Option<&'a str>,
 }
 
 fn assertion(
     key: &EncodingKey,
     source: SourceAssertion<'_>,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    let claims = source_claims(source);
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some("source".to_owned());
+    Ok(encode(&header, &claims, key)?)
+}
+
+fn source_claims(source: SourceAssertion<'_>) -> Value {
     let mut claims = json!({
         "iss": source.issuer,
         "sub": source.subject,
@@ -120,9 +134,16 @@ fn assertion(
     if let Some(build_number) = source.build_number {
         claims["build_number"] = Value::from(build_number);
     }
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some("source".to_owned());
-    Ok(encode(&header, &claims, key)?)
+    if let Some(nbf) = source.nbf {
+        claims["nbf"] = Value::from(nbf);
+    }
+    if let Some(extra) = source.extra_audience {
+        claims["aud"] = json!([source.audience, extra]);
+    }
+    if let Some(branch) = source.branch {
+        claims["branch"] = Value::String(branch.to_owned());
+    }
+    claims
 }
 
 fn keyring() -> Result<KeyRing, Box<dyn std::error::Error>> {
@@ -185,6 +206,28 @@ fn oidc_policy_requires_exact_non_overlapping_admin_bindings()
         .insert("aud".to_owned(), SOURCE_AUDIENCE.to_owned());
     assert!(request_selected_identity.validate().is_err());
 
+    let mut overlapping = policy();
+    let mut narrower = overlapping.providers[0].bindings[0].clone();
+    narrower
+        .claims
+        .insert("branch".to_owned(), "main".to_owned());
+    overlapping.providers[0].bindings.push(narrower);
+    assert!(
+        overlapping.validate().is_err(),
+        "a sub-only binding overlaps a binding that merely adds another exact claim"
+    );
+
+    let mut disjoint = policy();
+    disjoint.providers[0].bindings[0]
+        .claims
+        .insert("branch".to_owned(), "main".to_owned());
+    let mut release = disjoint.providers[0].bindings[0].clone();
+    release
+        .claims
+        .insert("branch".to_owned(), "release".to_owned());
+    disjoint.providers[0].bindings.push(release);
+    disjoint.validate()?;
+
     let unknown: Result<OidcPolicy, _> = serde_json::from_value(json!({
         "version": OIDC_POLICY_VERSION,
         "providers": [],
@@ -200,18 +243,19 @@ async fn jenkins_profile_uses_a_single_use_composite_and_matches_the_steward_rea
     let source_key = source_key()?;
     let service = service(source_key.decoding)?;
     let now = get_current_timestamp() as i64;
-    let source = assertion(
-        &source_key.encoding,
-        SourceAssertion {
-            issuer: SOURCE_ISSUER,
-            subject: SOURCE_SUBJECT,
-            audience: SOURCE_AUDIENCE,
-            issued_at: now,
-            expires_at: now + 300,
-            jti: None,
-            build_number: Some(42),
-        },
-    )?;
+    let fixture = SourceAssertion {
+        issuer: SOURCE_ISSUER,
+        subject: SOURCE_SUBJECT,
+        audience: SOURCE_AUDIENCE,
+        issued_at: now,
+        expires_at: now + 300,
+        jti: None,
+        build_number: Some(42),
+        nbf: None,
+        extra_audience: None,
+        branch: None,
+    };
+    let source = assertion(&source_key.encoding, fixture)?;
     let output = service.exchange(&source).await?;
     let header = jsonwebtoken::decode_header(&output)?;
     assert_eq!(header.alg, Algorithm::ES256);
@@ -250,8 +294,11 @@ async fn jenkins_profile_uses_a_single_use_composite_and_matches_the_steward_rea
             .iter()
             .all(|group| !group.as_str().unwrap_or_default().contains("/acting-user:"))
     );
+    let second_token_for_same_build_and_second = assertion(&source_key.encoding, fixture)?;
     assert_eq!(
-        service.exchange(&source).await,
+        service
+            .exchange(&second_token_for_same_build_and_second)
+            .await,
         Err(OidcExchangeError::Unauthorized),
         "the Jenkins-compatible composite replay identity must be single-use"
     );
@@ -289,6 +336,9 @@ async fn generic_oidc_refuses_unknown_unbound_expired_wrong_audience_and_replaye
                 expires_at,
                 jti: Some("refusal-jti"),
                 build_number: None,
+                nbf: None,
+                extra_audience: None,
+                branch: None,
             },
         )?;
         assert_eq!(
@@ -309,11 +359,167 @@ async fn generic_oidc_refuses_unknown_unbound_expired_wrong_audience_and_replaye
             expires_at: now + 300,
             jti: Some("single-use-jti"),
             build_number: None,
+            nbf: None,
+            extra_audience: None,
+            branch: None,
         },
     )?;
     replay_service.exchange(&source).await?;
     assert_eq!(
         replay_service.exchange(&source).await,
+        Err(OidcExchangeError::Unauthorized)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn generic_oidc_refuses_wrong_algorithms_and_bad_signatures()
+-> Result<(), Box<dyn std::error::Error>> {
+    let trusted = source_key()?;
+    let service = service(trusted.decoding)?;
+    let now = get_current_timestamp() as i64;
+    let fixture = SourceAssertion {
+        issuer: SOURCE_ISSUER,
+        subject: SOURCE_SUBJECT,
+        audience: SOURCE_AUDIENCE,
+        issued_at: now,
+        expires_at: now + 300,
+        jti: Some("algorithm-jti"),
+        build_number: None,
+        nbf: None,
+        extra_audience: None,
+        branch: None,
+    };
+    let claims = source_claims(fixture);
+
+    let mut hs_header = Header::new(Algorithm::HS256);
+    hs_header.kid = Some("source".to_owned());
+    let hs256 = encode(
+        &hs_header,
+        &claims,
+        &EncodingKey::from_secret(b"attacker-selected-secret"),
+    )?;
+    let none_header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&json!({
+        "alg": "none",
+        "typ": "JWT",
+        "kid": "source"
+    }))?);
+    let none_payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims)?);
+    let unsigned = format!("{none_header}.{none_payload}.");
+    let attacker = source_key()?;
+    let bad_signature = assertion(&attacker.encoding, fixture)?;
+
+    for rejected in [hs256, unsigned, bad_signature] {
+        assert_eq!(
+            service.exchange(&rejected).await,
+            Err(OidcExchangeError::Unauthorized)
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn generic_oidc_refuses_invalid_jti_time_audience_and_ambiguous_bindings()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source_key = source_key()?;
+    let service = service(source_key.decoding)?;
+    let now = get_current_timestamp() as i64;
+    for fixture in [
+        SourceAssertion {
+            issuer: SOURCE_ISSUER,
+            subject: SOURCE_SUBJECT,
+            audience: SOURCE_AUDIENCE,
+            issued_at: now,
+            expires_at: now + 300,
+            jti: Some(""),
+            build_number: None,
+            nbf: None,
+            extra_audience: None,
+            branch: None,
+        },
+        SourceAssertion {
+            issuer: SOURCE_ISSUER,
+            subject: SOURCE_SUBJECT,
+            audience: SOURCE_AUDIENCE,
+            issued_at: now,
+            expires_at: now + 300,
+            jti: Some(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+            build_number: None,
+            nbf: None,
+            extra_audience: None,
+            branch: None,
+        },
+        SourceAssertion {
+            issuer: SOURCE_ISSUER,
+            subject: SOURCE_SUBJECT,
+            audience: SOURCE_AUDIENCE,
+            issued_at: now + 120,
+            expires_at: now + 300,
+            jti: Some("future-iat"),
+            build_number: None,
+            nbf: None,
+            extra_audience: None,
+            branch: None,
+        },
+        SourceAssertion {
+            issuer: SOURCE_ISSUER,
+            subject: SOURCE_SUBJECT,
+            audience: SOURCE_AUDIENCE,
+            issued_at: now,
+            expires_at: now + 300,
+            jti: Some("future-nbf"),
+            build_number: None,
+            nbf: Some(now + 120),
+            extra_audience: None,
+            branch: None,
+        },
+        SourceAssertion {
+            issuer: SOURCE_ISSUER,
+            subject: SOURCE_SUBJECT,
+            audience: SOURCE_AUDIENCE,
+            issued_at: now,
+            expires_at: now + 300,
+            jti: Some("extra-audience"),
+            build_number: None,
+            nbf: None,
+            extra_audience: Some("foreign-audience"),
+            branch: None,
+        },
+    ] {
+        let rejected = assertion(&source_key.encoding, fixture)?;
+        assert_eq!(
+            service.exchange(&rejected).await,
+            Err(OidcExchangeError::Unauthorized)
+        );
+    }
+
+    let mut overlapping = policy();
+    let mut narrower = overlapping.providers[0].bindings[0].clone();
+    narrower
+        .claims
+        .insert("branch".to_owned(), "main".to_owned());
+    overlapping.providers[0].bindings.push(narrower);
+    let mut ambiguous_service = service;
+    ambiguous_service.policy = Arc::new(overlapping);
+    let ambiguous = assertion(
+        &source_key.encoding,
+        SourceAssertion {
+            issuer: SOURCE_ISSUER,
+            subject: SOURCE_SUBJECT,
+            audience: SOURCE_AUDIENCE,
+            issued_at: now,
+            expires_at: now + 300,
+            jti: Some("ambiguous-binding"),
+            build_number: None,
+            nbf: None,
+            extra_audience: None,
+            branch: Some("main"),
+        },
+    )?;
+    assert_eq!(
+        ambiguous_service.exchange(&ambiguous).await,
         Err(OidcExchangeError::Unauthorized)
     );
     Ok(())
@@ -335,6 +541,9 @@ async fn jenkins_fallback_requires_build_number_and_a_short_lifetime()
                 expires_at,
                 jti: None,
                 build_number,
+                nbf: None,
+                extra_audience: None,
+                branch: None,
             },
         )?;
         assert_eq!(
@@ -360,6 +569,9 @@ async fn oidc_route_is_explicit_and_uses_the_existing_token_response_contract()
             expires_at: now + 300,
             jti: None,
             build_number: Some(9),
+            nbf: None,
+            extra_audience: None,
+            branch: None,
         },
     )?;
     let app = oidc_router(service(source_key.decoding)?);

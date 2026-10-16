@@ -86,13 +86,13 @@ impl OidcPolicy {
                     "providers require unique HTTPS issuers, exact audiences, and bindings",
                 ));
             }
-            let mut bindings = HashSet::new();
+            let mut bindings: Vec<&BTreeMap<String, String>> = Vec::new();
             for binding in &provider.bindings {
-                let encoded = serde_json::to_string(&binding.claims)
-                    .map_err(|_| invalid_policy("binding claims are not serializable"))?;
                 if binding.claims.is_empty()
                     || binding.claims.len() > 16
-                    || !bindings.insert(encoded)
+                    || bindings
+                        .iter()
+                        .any(|existing| claim_bindings_overlap(existing, &binding.claims))
                     || !binding
                         .claims
                         .get("sub")
@@ -111,6 +111,7 @@ impl OidcPolicy {
                         "bindings require unique exact claims including sub and a valid task owner",
                     ));
                 }
+                bindings.push(&binding.claims);
             }
         }
         Ok(())
@@ -141,6 +142,17 @@ impl OidcPolicy {
 
 fn invalid_policy(message: &str) -> OidcPolicyError {
     OidcPolicyError::Invalid(message.to_owned())
+}
+
+fn claim_bindings_overlap(
+    left: &BTreeMap<String, String>,
+    right: &BTreeMap<String, String>,
+) -> bool {
+    !left.iter().any(|(name, left_value)| {
+        right
+            .get(name)
+            .is_some_and(|right_value| right_value != left_value)
+    })
 }
 
 fn valid_issuer(value: &str) -> bool {
@@ -256,8 +268,7 @@ impl OidcVerifierSet {
                 .json::<DiscoveryDocument>()
                 .await
                 .map_err(|_| OidcVerifyError::Unavailable)?;
-            if discovery.issuer != configured.issuer || !valid_issuer_endpoint(&discovery.jwks_uri)
-            {
+            if !valid_discovery(&configured.issuer, &discovery) {
                 return Err(OidcVerifyError::Invalid);
             }
             let verifier = ProviderVerifier {
@@ -417,6 +428,21 @@ fn valid_issuer_endpoint(value: &str) -> bool {
                 && url.query().is_none()
                 && url.fragment().is_none()
         })
+}
+
+fn valid_discovery(configured_issuer: &str, discovery: &DiscoveryDocument) -> bool {
+    discovery.issuer == configured_issuer
+        && valid_issuer_endpoint(&discovery.jwks_uri)
+        && same_origin(configured_issuer, &discovery.jwks_uri)
+}
+
+fn same_origin(left: &str, right: &str) -> bool {
+    let (Ok(left), Ok(right)) = (reqwest::Url::parse(left), reqwest::Url::parse(right)) else {
+        return false;
+    };
+    left.scheme() == right.scheme()
+        && left.host_str() == right.host_str()
+        && left.port_or_known_default() == right.port_or_known_default()
 }
 
 fn validated_claims(
@@ -656,4 +682,41 @@ fn hash_value(value: &str) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DiscoveryDocument, valid_discovery};
+
+    #[test]
+    fn discovery_requires_the_exact_issuer_and_same_https_origin() {
+        let issuer = "https://ci.example.invalid/oidc";
+        assert!(valid_discovery(
+            issuer,
+            &DiscoveryDocument {
+                issuer: issuer.to_owned(),
+                jwks_uri: "https://ci.example.invalid/oidc/jwks".to_owned(),
+            }
+        ));
+        for rejected in [
+            DiscoveryDocument {
+                issuer: "https://foreign.example.invalid/oidc".to_owned(),
+                jwks_uri: "https://ci.example.invalid/oidc/jwks".to_owned(),
+            },
+            DiscoveryDocument {
+                issuer: issuer.to_owned(),
+                jwks_uri: "http://ci.example.invalid/oidc/jwks".to_owned(),
+            },
+            DiscoveryDocument {
+                issuer: issuer.to_owned(),
+                jwks_uri: "https://keys.example.invalid/jwks".to_owned(),
+            },
+            DiscoveryDocument {
+                issuer: issuer.to_owned(),
+                jwks_uri: "https://ci.example.invalid:8443/oidc/jwks".to_owned(),
+            },
+        ] {
+            assert!(!valid_discovery(issuer, &rejected));
+        }
+    }
 }
