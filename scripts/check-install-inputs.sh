@@ -3,7 +3,7 @@
 set -euo pipefail
 
 if [[ $# -lt 3 ]]; then
-  printf 'usage: %s KUBECONFIG CONTEXT NAMESPACE [--github-policy NAME] [--workload] [--skip-workload-tls] [--public-tls NAME]\n' "$0" >&2
+  printf 'usage: %s KUBECONFIG CONTEXT NAMESPACE [--github-policy NAME] [--generic-oidc-policy NAME] [--workload] [--skip-workload-tls] [--public-tls NAME]\n' "$0" >&2
   exit 2
 fi
 kubeconfig=$1
@@ -14,11 +14,16 @@ workload=false
 skip_workload_tls=false
 public_tls=""
 github_policy=github-oidc-exchange-policy
+generic_oidc_policy=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --github-policy)
       [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || exit 2
       github_policy=$2
+      shift 2 ;;
+    --generic-oidc-policy)
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || exit 2
+      generic_oidc_policy=$2
       shift 2 ;;
     --workload) workload=true; shift ;;
     --skip-workload-tls) skip_workload_tls=true; shift ;;
@@ -63,6 +68,9 @@ check_object() {
 
 check_object ConfigMap "$github_policy" ConfigMap policy.json || exit 1
 check_object Secret github-oidc-exchange-keyring Opaque keyring.json || exit 1
+if [[ -n "$generic_oidc_policy" ]]; then
+  check_object ConfigMap "$generic_oidc_policy" ConfigMap oidc-policy.json || exit 1
+fi
 if [[ "$workload" == true ]]; then
   check_object ConfigMap github-oidc-exchange-workload-policy ConfigMap workload-policy.json || exit 1
   check_object Secret github-oidc-exchange-workload-rsa-keyring Opaque rsa-keyring.json || exit 1

@@ -11,6 +11,8 @@ assets=(
   policy-contract.example.json
   policy-contract-v6.schema.json
   policy-contract-v6.example.json
+  oidc-policy-contract.schema.json
+  oidc-policy-contract.example.json
   workload-policy-contract.example.json
 )
 

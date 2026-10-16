@@ -10,7 +10,7 @@ Startup failures are JSON log records with `event="startup_failed"`, a stable
 `stage`, and a safe `error` description. Stages identify configuration,
 GitHub policy, ES256 keyring, Kubernetes Lease replay ledger, GitHub JWKS
 verifier or warm-up, optional workload policy/RSA keyring/TokenReview/TLS,
-optional browser verifier, and listener binding. Errors never include bearer
+optional generic OIDC policy/verifier, optional browser verifier, and listener binding. Errors never include bearer
 tokens or private key material. Successful GitHub JWKS warm-up records
 `dependency="github_jwks"` before listeners start.
 
@@ -30,7 +30,8 @@ and JSON with the exact shape:
 ```
 
 Stable public-listener check names are `github_signing_key`, `github_jwks`,
-`replay_ledger`, and, when enabled, `workload_signing_key`. Stable internal
+`replay_ledger`, and, when enabled, `generic_oidc_providers` and
+`workload_signing_key`. Stable internal
 listener names are `workload_signing_key` and `browser_signing_key`. The list
 may contain multiple simultaneous failures and clients must ignore unknown
 additive names. A failing signing-key check means the current key is inside its
@@ -42,6 +43,9 @@ after the five-minute soft age, including on replicas receiving no exchanges.
 treats 200 or 404 as healthy, times the request out within one second, and
 caches the result for 30 seconds. A failed check means Identity cannot safely
 accept a GitHub assertion.
+`generic_oidc_providers` fails while any configured provider lacks a usable
+RS256 key set. Readiness retries unavailable providers with bounded frequency;
+ready providers remain able to verify their own assertions.
 
 ## Structured audit events and reasons
 
@@ -70,6 +74,10 @@ The accepted username is represented only by a truncated hash. Browser HOP-1
 uses `browser_hop1_issued`, `browser_hop1_denied`, `browser_hop1_replayed`, and
 `browser_hop1_failed`; its stable reasons are documented in the
 [browser HOP-1 contract](browser-hop1-contract-v1.md).
+Generic OIDC uses `oidc_exchange_issued`, `oidc_exchange_denied`, and
+`oidc_exchange_failed`; safe reasons distinguish invalid assertions, unbound
+identities, replay, provider-key outage, ledger outage, and signing outage.
+Only truncated issuer, subject, and replay hashes are logged.
 
 ## Prometheus metrics
 
@@ -87,6 +95,13 @@ are process-lifetime totals and reset on restart.
 | `github_oidc_exchange_jwks_age_seconds` | gauge | Seconds since the last successful GitHub JWKS refresh. |
 | `github_oidc_exchange_duration_seconds` | histogram | End-to-end latency for every GitHub exchange result; fixed buckets are 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, and 5 seconds plus `+Inf`. |
 | `github_oidc_exchange_signing_key_seconds_until_expiry` | gauge | Nonnegative lifetime remaining for the active ES256 key. |
+| `github_oidc_exchange_generic_oidc_requests_total` | counter | Generic OIDC exchange attempts received. |
+| `github_oidc_exchange_generic_oidc_issued_total` | counter | Generic OIDC assertions that issued a task token. |
+| `github_oidc_exchange_generic_oidc_denied_total` | counter | Generic OIDC signature, time, audience, or binding denials. |
+| `github_oidc_exchange_generic_oidc_replayed_total` | counter | Reused generic OIDC source replay identities. |
+| `github_oidc_exchange_generic_oidc_errors_total` | counter | Generic OIDC provider, ledger, or signing failures. |
+| `github_oidc_exchange_generic_oidc_providers` | gauge | Configured generic OIDC provider count. |
+| `github_oidc_exchange_generic_oidc_ready_providers` | gauge | Providers with a usable signing-key set. |
 | `github_oidc_exchange_workload_requests_total` | counter | Workload exchange attempts received. |
 | `github_oidc_exchange_workload_issued_total` | counter | Workload tokens issued. |
 | `github_oidc_exchange_workload_denied_total` | counter | Workload authentication/policy denials. |

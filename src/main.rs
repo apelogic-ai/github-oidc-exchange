@@ -7,8 +7,9 @@ use github_oidc_exchange::{
     },
     config::Config,
     github::GitHubVerifier,
-    http::{router, separated_routers_with_workload, separated_routers_with_workload_and_browser},
+    http::{router, router_with_oidc, separated_routers_with_workload_and_browser_and_oidc},
     keys::{KeyRing, RsaKeyRing},
+    oidc::{OidcExchangeService, OidcMetrics, OidcPolicy, OidcVerifierSet},
     policy::Policy,
     replay::KubernetesLeaseReplayLedger,
     service::{ExchangeService, Metrics},
@@ -35,9 +36,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         policy_contract = %config.expected_policy_version,
         workload_exchange = config.workload.is_some(),
         browser_hop1 = config.browser_hop1.is_some(),
+        generic_oidc = config.generic_oidc.is_some(),
         "identity exchange configuration loaded"
     );
     let browser_hop1_config = config.browser_hop1.clone();
+    let generic_oidc_config = config.generic_oidc.clone();
     let policy = Policy::load(&config.policy_file).inspect_err(|failure| {
         log_startup_failure("GitHub authorization policy", failure);
     })?;
@@ -85,6 +88,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         output_audience: config.output_audience,
         token_ttl: config.token_ttl,
         metrics: Arc::new(Metrics::default()),
+    };
+    let generic_oidc = if let Some(oidc_config) = generic_oidc_config {
+        let policy = Arc::new(OidcPolicy::load(&oidc_config.policy_file).inspect_err(
+            |failure| {
+                log_startup_failure("generic OIDC authorization policy", failure);
+            },
+        )?);
+        let verifier = OidcVerifierSet::discover(&policy)
+            .await
+            .inspect_err(|failure| {
+                log_startup_failure("generic OIDC verifier configuration", failure);
+            })?;
+        Some(OidcExchangeService {
+            verifier,
+            policy,
+            ledger: ledger.clone(),
+            keys: keys.clone(),
+            issuer: service.issuer.clone(),
+            output_audience: service.output_audience.clone(),
+            token_ttl: service.token_ttl,
+            metrics: Arc::new(OidcMetrics::default()),
+        })
+    } else {
+        None
     };
     if let Some(workload_config) = config.workload {
         let workload_keys = Arc::new(
@@ -157,11 +184,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 None
             };
-        let (public_router, workload_router) = if let Some(browser_hop1) = browser_hop1 {
-            separated_routers_with_workload_and_browser(service, workload, Some(browser_hop1))
-        } else {
-            separated_routers_with_workload(service, workload)
-        };
+        let (public_router, workload_router) = separated_routers_with_workload_and_browser_and_oidc(
+            service,
+            workload,
+            browser_hop1,
+            generic_oidc,
+        );
         let (shutdown_sender, _) = tokio::sync::broadcast::channel::<()>(1);
         let mut public_shutdown = shutdown_sender.subscribe();
         let mut workload_shutdown = shutdown_sender.subscribe();
@@ -202,7 +230,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             workload_exchange = false,
             "GitHub OIDC exchange issuer started"
         );
-        axum::serve(listener, router(service))
+        let public_router = if let Some(oidc) = generic_oidc {
+            router_with_oidc(service, oidc)
+        } else {
+            router(service)
+        };
+        axum::serve(listener, public_router)
             .with_graceful_shutdown(shutdown())
             .await?;
     }

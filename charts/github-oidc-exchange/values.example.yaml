@@ -28,6 +28,7 @@ config:
 rolloutRevisions:
   githubPolicy: rev-1
   githubKeyring: rev-1
+  genericOidcPolicy: ""
   workloadPolicy: ""
   workloadRsaKeyring: ""
   workloadTls: ""
@@ -36,6 +37,10 @@ rolloutAutomation:
   reloader:
     # Set true only when an operator-managed Stakater Reloader is installed.
     enabled: false
+genericOidc:
+  enabled: false
+  policyConfigMapName: github-oidc-exchange-oidc-policy
+  policyConfigMapKey: oidc-policy.json
 workloadExchange:
   enabled: false
   # Steward's controller projects apelogic-workload-exchange; keep empty when

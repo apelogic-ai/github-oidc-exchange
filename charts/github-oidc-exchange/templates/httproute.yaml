@@ -46,4 +46,11 @@ spec:
             type: Exact
             value: /v1/exchange
       backendRefs: *backendRefs
+    {{- if .Values.genericOidc.enabled }}
+    - matches:
+        - path:
+            type: Exact
+            value: /v1/oidc/exchange
+      backendRefs: *backendRefs
+    {{- end }}
 {{- end }}

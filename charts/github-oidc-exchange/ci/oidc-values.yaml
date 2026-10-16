@@ -1,0 +1,6 @@
+genericOidc:
+  enabled: true
+  policyConfigMapName: github-oidc-exchange-oidc-policy
+
+rolloutRevisions:
+  genericOidcPolicy: oidc-rev-1

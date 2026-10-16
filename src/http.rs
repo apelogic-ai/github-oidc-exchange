@@ -34,6 +34,7 @@ struct OidcAppState<L> {
 struct AppState<L, R> {
     service: Arc<ExchangeService<L>>,
     workload: Option<Arc<WorkloadExchangeService<R, L>>>,
+    oidc: Option<Arc<OidcExchangeService<L>>>,
 }
 
 #[derive(Clone)]
@@ -46,6 +47,18 @@ pub fn router<L: ReplayLedger + Clone + 'static>(service: ExchangeService<L>) ->
     build_router(AppState::<L, DisabledReviewer> {
         service: Arc::new(service),
         workload: None,
+        oidc: None,
+    })
+}
+
+pub fn router_with_oidc<L: ReplayLedger + Clone + 'static>(
+    service: ExchangeService<L>,
+    oidc: OidcExchangeService<L>,
+) -> Router {
+    build_router(AppState::<L, DisabledReviewer> {
+        service: Arc::new(service),
+        workload: None,
+        oidc: Some(Arc::new(oidc)),
     })
 }
 
@@ -73,7 +86,11 @@ pub fn oidc_router<L: ReplayLedger + Clone + 'static>(service: OidcExchangeServi
 async fn oidc_exchange<L: ReplayLedger + Clone + 'static>(
     State(state): State<OidcAppState<L>>,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Response {
+    if !body.is_empty() {
+        return oauth_error(StatusCode::BAD_REQUEST, "invalid_request");
+    }
     let Some(assertion) = bearer_assertion(&headers) else {
         return oauth_error(StatusCode::UNAUTHORIZED, "invalid_token");
     };
@@ -95,9 +112,11 @@ pub fn separated_routers_with_workload<
     service: ExchangeService<L>,
     workload: WorkloadExchangeService<R, L>,
 ) -> (Router, Router) {
-    separated_routers_with_workload_and_browser::<L, R, crate::replay::KubernetesLeaseReplayLedger>(
-        service, workload, None,
-    )
+    separated_routers_with_workload_and_browser_and_oidc::<
+        L,
+        R,
+        crate::replay::KubernetesLeaseReplayLedger,
+    >(service, workload, None, None)
 }
 
 pub fn separated_routers_with_workload_and_browser<
@@ -109,10 +128,24 @@ pub fn separated_routers_with_workload_and_browser<
     workload: WorkloadExchangeService<R, L>,
     browser_hop1: Option<BrowserHop1ExchangeService<B>>,
 ) -> (Router, Router) {
+    separated_routers_with_workload_and_browser_and_oidc(service, workload, browser_hop1, None)
+}
+
+pub fn separated_routers_with_workload_and_browser_and_oidc<
+    L: ReplayLedger + Clone + 'static,
+    R: TokenReviewer + Clone + 'static,
+    B: ReplayLedger + Clone + 'static,
+>(
+    service: ExchangeService<L>,
+    workload: WorkloadExchangeService<R, L>,
+    browser_hop1: Option<BrowserHop1ExchangeService<B>>,
+    oidc: Option<OidcExchangeService<L>>,
+) -> (Router, Router) {
     let workload = Arc::new(workload);
     let state = AppState {
         service: Arc::new(service),
         workload: Some(workload.clone()),
+        oidc: oidc.map(Arc::new),
     };
     let workload_state = WorkloadAppState {
         workload,
@@ -134,7 +167,13 @@ fn build_router<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 's
         .route("/v1/exchange", post(exchange::<L, R>))
         .route("/healthz", get(no_content))
         .route("/readyz", get(readiness::<L, R>))
-        .route("/metrics", get(metrics::<L, R>))
+        .route("/metrics", get(metrics::<L, R>));
+    let application = if state.oidc.is_some() {
+        application.route("/v1/oidc/exchange", post(generic_oidc_exchange::<L, R>))
+    } else {
+        application
+    };
+    application
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
             header::HeaderValue::from_static("nosniff"),
@@ -146,8 +185,7 @@ fn build_router<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 's
         .layer(SetResponseHeaderLayer::if_not_present(
             header::CONTENT_SECURITY_POLICY,
             header::HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
-        ));
-    application
+        ))
         .layer(DefaultBodyLimit::max(1024))
         .with_state(state)
 }
@@ -247,7 +285,7 @@ async fn discovery<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone +
     } else {
         vec!["ES256"]
     };
-    Json(serde_json::json!({
+    let mut document = serde_json::json!({
         "issuer": state.service.issuer,
         "jwks_uri": format!("{}/jwks.json", state.service.issuer),
         "token_endpoint": format!("{}/v1/exchange", state.service.issuer),
@@ -258,7 +296,12 @@ async fn discovery<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone +
         "response_types_supported": ["id_token"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": algorithms
-    }))
+    });
+    if state.oidc.is_some() {
+        document["generic_oidc_exchange_endpoint"] =
+            serde_json::json!(format!("{}/v1/oidc/exchange", state.service.issuer));
+    }
+    Json(document)
 }
 
 async fn jwks<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 'static>(
@@ -274,7 +317,11 @@ async fn jwks<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 'sta
 async fn exchange<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 'static>(
     State(state): State<AppState<L, R>>,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Response {
+    if !body.is_empty() {
+        return oauth_error(StatusCode::BAD_REQUEST, "invalid_request");
+    }
     let Some(assertion) = bearer_assertion(&headers) else {
         return oauth_error(StatusCode::UNAUTHORIZED, "invalid_token");
     };
@@ -282,6 +329,34 @@ async fn exchange<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + 
         Ok(token) => token_response(token, state.service.token_ttl.as_secs()),
         Err(ExchangeError::Unauthorized) => oauth_error(StatusCode::UNAUTHORIZED, "invalid_token"),
         Err(ExchangeError::Unavailable) => {
+            oauth_error(StatusCode::SERVICE_UNAVAILABLE, "temporarily_unavailable")
+        }
+    }
+}
+
+async fn generic_oidc_exchange<
+    L: ReplayLedger + Clone + 'static,
+    R: TokenReviewer + Clone + 'static,
+>(
+    State(state): State<AppState<L, R>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if !body.is_empty() {
+        return oauth_error(StatusCode::BAD_REQUEST, "invalid_request");
+    }
+    let Some(service) = state.oidc else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(assertion) = bearer_assertion(&headers) else {
+        return oauth_error(StatusCode::UNAUTHORIZED, "invalid_token");
+    };
+    match service.exchange(assertion).await {
+        Ok(token) => token_response(token, service.token_ttl.as_secs()),
+        Err(OidcExchangeError::Unauthorized) => {
+            oauth_error(StatusCode::UNAUTHORIZED, "invalid_token")
+        }
+        Err(OidcExchangeError::Unavailable) => {
             oauth_error(StatusCode::SERVICE_UNAVAILABLE, "temporarily_unavailable")
         }
     }
@@ -304,6 +379,11 @@ async fn readiness<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone +
     }
     if state.service.ledger.check_ready().await.is_err() {
         failed_checks.push("replay_ledger");
+    }
+    if let Some(oidc) = &state.oidc
+        && oidc.verifier.check_ready().await.is_err()
+    {
+        failed_checks.push("generic_oidc_providers");
     }
     if state
         .workload
@@ -420,6 +500,51 @@ async fn metrics<L: ReplayLedger + Clone + 'static, R: TokenReviewer + Clone + '
         state.service.keys.current_key_seconds_until_expiry(now),
     );
     append_duration_histogram(&mut output, metrics);
+    if let Some(oidc) = &state.oidc {
+        for (name, help, value) in [
+            (
+                "github_oidc_exchange_generic_oidc_requests_total",
+                "Generic OIDC exchange requests received.",
+                oidc.metrics.requests.load(Ordering::Relaxed),
+            ),
+            (
+                "github_oidc_exchange_generic_oidc_issued_total",
+                "Generic OIDC exchanges that issued a token.",
+                oidc.metrics.issued.load(Ordering::Relaxed),
+            ),
+            (
+                "github_oidc_exchange_generic_oidc_denied_total",
+                "Generic OIDC exchanges denied with an authentication response.",
+                oidc.metrics.denied.load(Ordering::Relaxed),
+            ),
+            (
+                "github_oidc_exchange_generic_oidc_replayed_total",
+                "Generic OIDC assertions denied because their replay identity was already used.",
+                oidc.metrics.replayed.load(Ordering::Relaxed),
+            ),
+            (
+                "github_oidc_exchange_generic_oidc_errors_total",
+                "Generic OIDC exchanges that failed because a dependency was unavailable.",
+                oidc.metrics.errors.load(Ordering::Relaxed),
+            ),
+        ] {
+            append_metric(&mut output, name, help, "counter", value);
+        }
+        append_metric(
+            &mut output,
+            "github_oidc_exchange_generic_oidc_providers",
+            "Configured generic OIDC providers.",
+            "gauge",
+            oidc.verifier.provider_count() as u64,
+        );
+        append_metric(
+            &mut output,
+            "github_oidc_exchange_generic_oidc_ready_providers",
+            "Generic OIDC providers with a usable signing-key set.",
+            "gauge",
+            oidc.verifier.ready_provider_count().await as u64,
+        );
+    }
     if let Some(workload) = state.workload {
         for (name, help, value) in [
             (

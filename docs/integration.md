@@ -36,6 +36,61 @@ the same metadata document for integrations that already use OpenID discovery.
 The GitHub input audience differs from the fixed output audience
 `steward-task-api`. Neither flow uses a GitHub OAuth App.
 
+## Jenkins OIDC Provider profile
+
+Jenkins callers use an OIDC assertion from the Jenkins OIDC Provider plugin;
+there is no API-key or request-selected identity path. Configure a dedicated
+audience for Identity and these source claims:
+
+- exact issuer `<jenkins-base-url>/oidc`;
+- exact audience matching the policy provider;
+- default exact job-URL `sub`;
+- integer `build_number`; and
+- token lifetime no greater than 600 seconds.
+
+The current plugin signs `iss`, `aud`, `iat`, `exp`, the job URL `sub`, and
+`build_number`, but does not emit `jti` or `nbf`. Identity therefore derives a
+single-use replay identity from the verified issuer, subject, issued-at time,
+and build number. Two tokens for the same build issued in the same second fail
+closed as a replay. If a future provider supplies `jti`, Identity requires it
+to be nonempty and at most 128 bytes and never falls back when it is malformed.
+
+Start from [`oidc-policy-contract.example.json`](oidc-policy-contract.example.json).
+Each binding must include exact `sub`; additional exact signed string claims
+may narrow it. Two bindings for one provider must differ on at least one claim
+they both contain. The `task` block is the only source of the issued service
+and owner:
+
+```json
+{
+  "claims": {"sub": "https://ci.example.invalid/job/release/"},
+  "task": {
+    "service": "automation-worker",
+    "owner_canonical_user_id": "usr_0123456789abcdef0123456789abcdef",
+    "owner_email": "owner@example.invalid"
+  }
+}
+```
+
+Keep the assertion in a masked, job-scoped variable supplied by the Jenkins
+OIDC credential binding, disable shell tracing, and exchange it directly:
+
+```sh
+set +x
+umask 077
+status="$(curl -sS -o identity-token.json -w '%{http_code}' \
+  -X POST -H "Authorization: Bearer $JENKINS_OIDC_TOKEN" --data-binary '' \
+  "$IDENTITY_ISSUER/v1/oidc/exchange")"
+unset JENKINS_OIDC_TOKEN
+test "$status" = 200
+jq -e '.token_type=="Bearer" and .expires_in==120' identity-token.json >/dev/null
+rm -f identity-token.json
+```
+
+Never print or archive either token. The provider discovery document and JWKS
+must be HTTPS on the issuer's exact scheme, host, and port; configure
+`networkPolicy.httpsEgressCidrs` or a narrow `extraEgress` rule accordingly.
+
 ## 2. Observe signed GitHub claims
 
 Do not infer `sub`, numeric IDs, refs, or reusable-workflow claims. Copy

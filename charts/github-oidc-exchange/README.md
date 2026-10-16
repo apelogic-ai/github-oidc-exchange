@@ -34,7 +34,8 @@ Gateway. No cloud provider or ingress implementation is assumed.
 `config.issuerUrl` must be an HTTPS origin without a path, query, or fragment.
 Each exposure mode publishes `/.well-known/oauth-authorization-server`, the
 retained `/.well-known/openid-configuration`, `/jwks.json`, and `/v1/exchange`.
-Both metadata paths return the same discovery contract.
+When generic OIDC is enabled it also publishes `/v1/oidc/exchange`. Both
+metadata paths return the same discovery contract.
 
 `config.keyExpiryReadinessThresholdSeconds` defaults to seven days. The Pod
 becomes unready when either enabled active signing key enters that window and
@@ -66,6 +67,15 @@ public. The standard Steward controller and OpenShell values are paired in the
 Browser HOP-1 additionally requires workload exchange and a public
 Steward JWKS ConfigMap.
 
+`genericOidc.enabled=false` is also baseline. Enabling it requires a reviewed
+`oidc-policy.json` ConfigMap, nonempty
+`rolloutRevisions.genericOidcPolicy`, and HTTPS egress to each configured
+issuer's discovery/JWKS origin. The chart projects the policy read-only and
+adds `/v1/oidc/exchange` to the selected public route. The policy maps exact
+issuer/audience/claims to an administrator-owned service and owner; it contains
+no API keys or provider credentials. See the Jenkins profile in the
+[integration guide](../../docs/integration.md).
+
 `serviceMonitor.enabled=true` requires both
 `networkPolicy.metricsNamespaceSelector` and
 `networkPolicy.metricsPodSelector` to be nonempty. Metrics share port 8080
@@ -94,7 +104,7 @@ Clusters with an operator-managed
 `rolloutAutomation.reloader.enabled=true`. The chart then annotates the
 Deployment with `configmap.reloader.stakater.com/reload` and
 `secret.reloader.stakater.com/reload`, listing the exact referenced object
-names. Changes to policy, signing keys, workload TLS, or optional browser JWKS
+names. Changes to policy, signing keys, generic OIDC policy, workload TLS, or optional browser JWKS
 then trigger a rolling restart. The chart does not install or grant RBAC to
 Reloader. Keep the explicit revisions for reviewed object-name or
 policy-contract switches, and preserve key overlap and both versioned policy

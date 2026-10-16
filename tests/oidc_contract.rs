@@ -237,6 +237,71 @@ fn oidc_policy_requires_exact_non_overlapping_admin_bindings()
     Ok(())
 }
 
+#[test]
+fn oidc_policy_file_loads_strict_versioned_bindings() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    fs::write(
+        file.path(),
+        serde_json::to_vec(&json!({
+            "version": OIDC_POLICY_VERSION,
+            "providers": [{
+                "issuer": SOURCE_ISSUER,
+                "audience": SOURCE_AUDIENCE,
+                "bindings": [{
+                    "claims": {"sub": SOURCE_SUBJECT},
+                    "task": {
+                        "service": "automation-worker",
+                        "owner_canonical_user_id": "usr_0123456789abcdef0123456789abcdef",
+                        "owner_email": "owner@example.invalid"
+                    }
+                }]
+            }]
+        }))?,
+    )?;
+    assert_eq!(OidcPolicy::load(file.path())?, policy());
+
+    fs::write(
+        file.path(),
+        serde_json::to_vec(&json!({
+            "version": OIDC_POLICY_VERSION,
+            "providers": [],
+            "unexpected": true
+        }))?,
+    )?;
+    assert!(OidcPolicy::load(file.path()).is_err());
+    Ok(())
+}
+
+#[test]
+fn documented_oidc_policy_matches_schema_and_runtime() -> Result<(), Box<dyn std::error::Error>> {
+    let schema: Value =
+        serde_json::from_slice(&fs::read("docs/oidc-policy-contract.schema.json")?)?;
+    let example: Value =
+        serde_json::from_slice(&fs::read("docs/oidc-policy-contract.example.json")?)?;
+    let validator = jsonschema::validator_for(&schema)?;
+    assert!(validator.is_valid(&example));
+    let policy: OidcPolicy = serde_json::from_value(example)?;
+    policy.validate()?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn unavailable_providers_are_tracked_independently_in_readiness()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let mut policy = policy();
+    policy.providers[0].issuer = "https://127.0.0.1:9/oidc".to_owned();
+    let mut second = policy.providers[0].clone();
+    second.issuer = "https://127.0.0.1:10/oidc".to_owned();
+    policy.providers.push(second);
+
+    let verifiers = OidcVerifierSet::discover(&policy).await?;
+    assert_eq!(verifiers.provider_count(), 2);
+    assert_eq!(verifiers.ready_provider_count().await, 0);
+    assert!(verifiers.check_ready().await.is_err());
+    Ok(())
+}
+
 #[tokio::test]
 async fn jenkins_profile_uses_a_single_use_composite_and_matches_the_steward_reader()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -580,6 +645,16 @@ async fn oidc_route_is_explicit_and_uses_the_existing_token_response_contract()
         .oneshot(Request::post("/v1/oidc/exchange").body(Body::empty())?)
         .await?;
     assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let selected_identity_body = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/oidc/exchange")
+                .header(header::AUTHORIZATION, format!("Bearer {source}"))
+                .body(Body::from(r#"{"service":"attacker"}"#))?,
+        )
+        .await?;
+    assert_eq!(selected_identity_body.status(), StatusCode::BAD_REQUEST);
 
     let response = app
         .oneshot(

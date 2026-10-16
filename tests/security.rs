@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     io::Write,
     path::Path,
@@ -18,8 +18,12 @@ use github_oidc_exchange::{
     SOURCE_AUTH_IDENTITY_CONTRACT, SOURCE_AUTH_POLICY_VERSION, SOURCE_PROVENANCE_CONTRACT,
     WORKLOAD_IDENTITY_CONTRACT, WORKLOAD_POLICY_VERSION,
     github::{Audience, GitHubClaims, GitHubVerifier},
-    http::separated_routers_with_workload,
+    http::{router_with_oidc, separated_routers_with_workload},
     keys::{KeyRing, RsaKeyRing},
+    oidc::{
+        OIDC_POLICY_VERSION, OidcBinding, OidcExchangeService, OidcMetrics, OidcPolicy,
+        OidcProviderPolicy, OidcVerifierSet,
+    },
     policy::{Actor, Policy, PolicyError, RepositoryPolicy},
     replay::{ReplayError, ReplayLedger},
     service::{ExchangeError, ExchangeService, Metrics},
@@ -166,6 +170,27 @@ fn source_auth_policy() -> Policy {
             job_workflow_shas: None,
         }],
         actors: None,
+    }
+}
+
+fn generic_oidc_policy() -> OidcPolicy {
+    OidcPolicy {
+        version: OIDC_POLICY_VERSION.to_owned(),
+        providers: vec![OidcProviderPolicy {
+            issuer: "https://ci.example.invalid/oidc".to_owned(),
+            audience: "identity-oidc-exchange".to_owned(),
+            bindings: vec![OidcBinding {
+                claims: BTreeMap::from([(
+                    "sub".to_owned(),
+                    "https://ci.example.invalid/job/release/".to_owned(),
+                )]),
+                task: WorkloadTaskBinding {
+                    service: "automation-worker".to_owned(),
+                    owner_canonical_user_id: "usr_0123456789abcdef0123456789abcdef".to_owned(),
+                    owner_email: "owner@example.invalid".to_owned(),
+                },
+            }],
+        }],
     }
 }
 
@@ -1948,6 +1973,133 @@ async fn readiness_and_metrics_expose_the_active_signing_key_expiry()
         .ok_or("missing key-expiry gauge")?
         .parse::<u64>()?;
     assert!((1..=600).contains(&seconds));
+    Ok(())
+}
+
+#[tokio::test]
+async fn generic_oidc_route_readiness_discovery_and_metrics_are_opt_in()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (_, github_decoding) = rsa_key()?;
+    let (_, oidc_decoding) = rsa_key()?;
+    let ledger = Arc::new(TestReplayLedger::default());
+    let keys = Arc::new(keyring()?);
+    let github_service = ExchangeService {
+        verifier: GitHubVerifier::with_test_key(
+            AUDIENCE.to_owned(),
+            "github-test-key".to_owned(),
+            github_decoding,
+        )
+        .await?,
+        policy: Arc::new(policy()),
+        ledger: ledger.clone(),
+        keys: keys.clone(),
+        issuer: "https://identity.example.invalid".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    };
+    let oidc_service = OidcExchangeService {
+        verifier: OidcVerifierSet::with_test_key(
+            "https://ci.example.invalid/oidc".to_owned(),
+            "identity-oidc-exchange".to_owned(),
+            "source".to_owned(),
+            oidc_decoding,
+        )?,
+        policy: Arc::new(generic_oidc_policy()),
+        ledger,
+        keys,
+        issuer: "https://identity.example.invalid".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(OidcMetrics::default()),
+    };
+    let application = router_with_oidc(github_service, oidc_service);
+
+    let readiness = application
+        .clone()
+        .oneshot(Request::get("/readyz").body(Body::empty())?)
+        .await?;
+    assert_eq!(readiness.status(), StatusCode::NO_CONTENT);
+    let discovery = application
+        .clone()
+        .oneshot(Request::get("/.well-known/openid-configuration").body(Body::empty())?)
+        .await?;
+    let discovery: serde_json::Value =
+        serde_json::from_slice(&discovery.into_body().collect().await?.to_bytes())?;
+    assert_eq!(
+        discovery["generic_oidc_exchange_endpoint"],
+        "https://identity.example.invalid/v1/oidc/exchange"
+    );
+    let missing = application
+        .clone()
+        .oneshot(Request::post("/v1/oidc/exchange").body(Body::empty())?)
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+    let rejected_body = application
+        .clone()
+        .oneshot(
+            Request::post("/v1/oidc/exchange")
+                .header(header::AUTHORIZATION, "Bearer attacker-selected-identity")
+                .body(Body::from(r#"{"service":"attacker"}"#))?,
+        )
+        .await?;
+    assert_eq!(rejected_body.status(), StatusCode::BAD_REQUEST);
+    let metrics = application
+        .oneshot(Request::get("/metrics").body(Body::empty())?)
+        .await?;
+    let metrics = String::from_utf8(metrics.into_body().collect().await?.to_bytes().to_vec())?;
+    assert!(metrics.contains("github_oidc_exchange_generic_oidc_providers 1"));
+    assert!(metrics.contains("github_oidc_exchange_generic_oidc_ready_providers 1"));
+    assert!(metrics.contains("github_oidc_exchange_generic_oidc_requests_total 0"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn readiness_names_an_unavailable_generic_oidc_provider_set()
+-> Result<(), Box<dyn std::error::Error>> {
+    install_test_crypto_provider()?;
+    let (_, github_decoding) = rsa_key()?;
+    let ledger = Arc::new(TestReplayLedger::default());
+    let keys = Arc::new(keyring()?);
+    let github_service = ExchangeService {
+        verifier: GitHubVerifier::with_test_key(
+            AUDIENCE.to_owned(),
+            "github-test-key".to_owned(),
+            github_decoding,
+        )
+        .await?,
+        policy: Arc::new(policy()),
+        ledger: ledger.clone(),
+        keys: keys.clone(),
+        issuer: "https://identity.example.invalid".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(Metrics::default()),
+    };
+    let oidc_service = OidcExchangeService {
+        verifier: OidcVerifierSet::with_unready_test_provider(
+            "https://ci.example.invalid/oidc".to_owned(),
+            "identity-oidc-exchange".to_owned(),
+        )?,
+        policy: Arc::new(generic_oidc_policy()),
+        ledger,
+        keys,
+        issuer: "https://identity.example.invalid".to_owned(),
+        output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(OidcMetrics::default()),
+    };
+    let response = router_with_oidc(github_service, oidc_service)
+        .oneshot(Request::get("/readyz").body(Body::empty())?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: serde_json::Value =
+        serde_json::from_slice(&response.into_body().collect().await?.to_bytes())?;
+    assert_eq!(
+        body["failed_checks"],
+        serde_json::json!(["generic_oidc_providers"])
+    );
     Ok(())
 }
 

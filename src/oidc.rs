@@ -1,5 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fs::File,
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -31,6 +33,8 @@ use crate::{
 
 pub const OIDC_POLICY_VERSION: &str = "github-oidc-exchange.apelogic.io/oidc-policy-v1";
 const MAX_ASSERTION_BYTES: usize = 32 * 1024;
+const MAX_DISCOVERY_BYTES: usize = 64 * 1024;
+const MAX_JWKS_BYTES: usize = 1024 * 1024;
 const MAX_SOURCE_LIFETIME_SECONDS: i64 = 600;
 const JWKS_REFRESH_RETRY_SECONDS: i64 = 30;
 
@@ -65,6 +69,14 @@ pub enum OidcPolicyError {
 }
 
 impl OidcPolicy {
+    pub fn load(path: &Path) -> Result<Self, OidcPolicyError> {
+        let file = File::open(path).map_err(|error| invalid_policy(&error.to_string()))?;
+        let policy: Self =
+            serde_json::from_reader(file).map_err(|error| invalid_policy(&error.to_string()))?;
+        policy.validate()?;
+        Ok(policy)
+    }
+
     pub fn validate(&self) -> Result<(), OidcPolicyError> {
         if self.version != OIDC_POLICY_VERSION {
             return Err(invalid_policy("unsupported version"));
@@ -223,7 +235,6 @@ pub struct OidcVerifierSet {
 struct ProviderVerifier {
     issuer: String,
     audience: String,
-    jwks_uri: Option<String>,
     client: reqwest::Client,
     keys: Arc<RwLock<HashMap<String, DecodingKey>>>,
     refresh: Arc<Mutex<RefreshState>>,
@@ -257,34 +268,20 @@ impl OidcVerifierSet {
             .map_err(|_| OidcVerifyError::Unavailable)?;
         let mut providers = HashMap::new();
         for configured in &policy.providers {
-            let discovery_url = format!("{}/.well-known/openid-configuration", configured.issuer);
-            let discovery = client
-                .get(discovery_url)
-                .send()
-                .await
-                .map_err(|_| OidcVerifyError::Unavailable)?
-                .error_for_status()
-                .map_err(|_| OidcVerifyError::Unavailable)?
-                .json::<DiscoveryDocument>()
-                .await
-                .map_err(|_| OidcVerifyError::Unavailable)?;
-            if !valid_discovery(&configured.issuer, &discovery) {
-                return Err(OidcVerifyError::Invalid);
-            }
             let verifier = ProviderVerifier {
                 issuer: configured.issuer.clone(),
                 audience: configured.audience.clone(),
-                jwks_uri: Some(discovery.jwks_uri),
                 client: client.clone(),
                 keys: Arc::new(RwLock::new(HashMap::new())),
                 refresh: Arc::new(Mutex::new(RefreshState::default())),
             };
-            verifier.refresh().await?;
             providers.insert(configured.issuer.clone(), verifier);
         }
-        Ok(Self {
+        let verifiers = Self {
             providers: Arc::new(providers),
-        })
+        };
+        verifiers.warm_up().await;
+        Ok(verifiers)
     }
 
     #[cfg(feature = "test-support")]
@@ -309,7 +306,6 @@ impl OidcVerifierSet {
         let provider = ProviderVerifier {
             issuer: issuer.clone(),
             audience,
-            jwks_uri: None,
             client,
             keys: Arc::new(RwLock::new(keys)),
             refresh: Arc::new(Mutex::new(RefreshState::default())),
@@ -317,6 +313,77 @@ impl OidcVerifierSet {
         Ok(Self {
             providers: Arc::new(HashMap::from([(issuer, provider)])),
         })
+    }
+
+    #[cfg(feature = "test-support")]
+    #[doc = "Constructs a verifier whose only provider is currently unavailable."]
+    pub fn with_unready_test_provider(
+        issuer: String,
+        audience: String,
+    ) -> Result<Self, OidcVerifyError> {
+        if !valid_issuer(&issuer) || !bounded_graphic(&audience, 255) {
+            return Err(OidcVerifyError::Invalid);
+        }
+        let client = reqwest::Client::builder()
+            .https_only(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|_| OidcVerifyError::Unavailable)?;
+        let provider = ProviderVerifier {
+            issuer: issuer.clone(),
+            audience,
+            client,
+            keys: Arc::new(RwLock::new(HashMap::new())),
+            refresh: Arc::new(Mutex::new(RefreshState {
+                last_attempt: Utc::now().timestamp(),
+                last_failed: true,
+            })),
+        };
+        Ok(Self {
+            providers: Arc::new(HashMap::from([(issuer, provider)])),
+        })
+    }
+
+    pub async fn check_ready(&self) -> Result<(), OidcVerifyError> {
+        for provider in self.providers.values() {
+            if provider.keys.read().await.is_empty() {
+                provider.refresh_if_due().await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn provider_count(&self) -> usize {
+        self.providers.len()
+    }
+
+    pub async fn ready_provider_count(&self) -> usize {
+        let mut ready = 0;
+        for provider in self.providers.values() {
+            if !provider.keys.read().await.is_empty() {
+                ready += 1;
+            }
+        }
+        ready
+    }
+
+    async fn warm_up(&self) {
+        for provider in self.providers.values() {
+            if provider.refresh_if_due().await.is_ok() {
+                info!(
+                    event = "oidc_provider_ready",
+                    issuer_hash = hash_value(&provider.issuer),
+                    "generic OIDC provider is ready"
+                );
+            } else {
+                warn!(
+                    event = "oidc_provider_unready",
+                    issuer_hash = hash_value(&provider.issuer),
+                    "generic OIDC provider warm-up failed"
+                );
+            }
+        }
     }
 
     pub async fn verify(&self, assertion: &str) -> Result<OidcClaims, OidcVerifyError> {
@@ -356,27 +423,7 @@ impl ProviderVerifier {
         if let Some(key) = self.keys.read().await.get(kid).cloned() {
             return Ok(key);
         }
-        if self.jwks_uri.is_none() {
-            return Err(OidcVerifyError::Invalid);
-        }
-        let mut refresh = self.refresh.lock().await;
-        if let Some(key) = self.keys.read().await.get(kid).cloned() {
-            return Ok(key);
-        }
-        let now = Utc::now().timestamp();
-        if refresh.last_attempt > 0
-            && now.saturating_sub(refresh.last_attempt) < JWKS_REFRESH_RETRY_SECONDS
-        {
-            return if refresh.last_failed {
-                Err(OidcVerifyError::Unavailable)
-            } else {
-                Err(OidcVerifyError::Invalid)
-            };
-        }
-        refresh.last_attempt = now;
-        let result = self.refresh().await;
-        refresh.last_failed = result.is_err();
-        result?;
+        self.refresh_if_due().await?;
         self.keys
             .read()
             .await
@@ -385,19 +432,33 @@ impl ProviderVerifier {
             .ok_or(OidcVerifyError::Invalid)
     }
 
+    async fn refresh_if_due(&self) -> Result<(), OidcVerifyError> {
+        let mut refresh = self.refresh.lock().await;
+        let now = Utc::now().timestamp();
+        if refresh.last_attempt > 0
+            && now.saturating_sub(refresh.last_attempt) < JWKS_REFRESH_RETRY_SECONDS
+        {
+            return if refresh.last_failed {
+                Err(OidcVerifyError::Unavailable)
+            } else {
+                Ok(())
+            };
+        }
+        refresh.last_attempt = now;
+        let result = self.refresh().await;
+        refresh.last_failed = result.is_err();
+        result
+    }
+
     async fn refresh(&self) -> Result<(), OidcVerifyError> {
-        let uri = self.jwks_uri.as_ref().ok_or(OidcVerifyError::Invalid)?;
-        let document = self
-            .client
-            .get(uri)
-            .send()
-            .await
-            .map_err(|_| OidcVerifyError::Unavailable)?
-            .error_for_status()
-            .map_err(|_| OidcVerifyError::Unavailable)?
-            .json::<JwkSet>()
-            .await
-            .map_err(|_| OidcVerifyError::Unavailable)?;
+        let discovery_url = format!("{}/.well-known/openid-configuration", self.issuer);
+        let discovery: DiscoveryDocument =
+            fetch_json(&self.client, &discovery_url, MAX_DISCOVERY_BYTES).await?;
+        if !valid_discovery(&self.issuer, &discovery) {
+            return Err(OidcVerifyError::Invalid);
+        }
+        let document: JwkSet =
+            fetch_json(&self.client, &discovery.jwks_uri, MAX_JWKS_BYTES).await?;
         let mut keys = HashMap::new();
         for jwk in document.keys {
             let Some(kid) = jwk.common.key_id.clone() else {
@@ -416,6 +477,38 @@ impl ProviderVerifier {
         *self.keys.write().await = keys;
         Ok(())
     }
+}
+
+async fn fetch_json<T: serde::de::DeserializeOwned>(
+    client: &reqwest::Client,
+    uri: &str,
+    maximum: usize,
+) -> Result<T, OidcVerifyError> {
+    let mut response = client
+        .get(uri)
+        .send()
+        .await
+        .map_err(|_| OidcVerifyError::Unavailable)?
+        .error_for_status()
+        .map_err(|_| OidcVerifyError::Unavailable)?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > maximum as u64)
+    {
+        return Err(OidcVerifyError::Unavailable);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| OidcVerifyError::Unavailable)?
+    {
+        if body.len().saturating_add(chunk.len()) > maximum {
+            return Err(OidcVerifyError::Unavailable);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&body).map_err(|_| OidcVerifyError::Unavailable)
 }
 
 fn valid_issuer_endpoint(value: &str) -> bool {
