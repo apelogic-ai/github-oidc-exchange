@@ -330,6 +330,9 @@ for expected in \
   'rolloutRevisions.workloadPolicy' \
   'rollout restart statefulset/openshell' \
   'system:serviceaccount:openshell:openshell-operator' \
+  'system:serviceaccount:automation:task-caller' \
+  'owner_canonical_user_id' \
+  'no `acting-user:` group or source provenance' \
   'create token openshell-operator' \
   'OPENSHELL_NO_BROWSER=1' \
   'oidc_token.json'; do
@@ -349,11 +352,22 @@ for expected in \
 done
 jq -e '
   .version == "github-oidc-exchange.apelogic.io/workload-policy-v1" and
-  .identities == [{
-    username: "system:serviceaccount:steward:steward-controller",
-    subject: "kubernetes:serviceaccount:steward:steward-controller",
-    roles: ["openshell-admin", "openshell-user"]
-  }]
+  .identities == [
+    {
+      username: "system:serviceaccount:steward:steward-controller",
+      subject: "kubernetes:serviceaccount:steward:steward-controller",
+      roles: ["openshell-admin", "openshell-user"]
+    },
+    {
+      username: "system:serviceaccount:automation:task-caller",
+      subject: "kubernetes:serviceaccount:automation:task-caller",
+      task: {
+        service: "automation-worker",
+        owner_canonical_user_id: "usr_0123456789abcdef0123456789abcdef",
+        owner_email: "owner@example.com"
+      }
+    }
+  ]
 ' docs/workload-policy-contract.example.json >/dev/null
 for document in docs/installation.md docs/integration.md \
   docs/consumer-contract-v1.md charts/github-oidc-exchange/README.md; do

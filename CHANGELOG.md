@@ -9,6 +9,11 @@ signatures, and public-registry attestations.
 
 ## [Unreleased]
 
+### Added
+
+- Allow exact Kubernetes workload identities to carry an administrative task binding and receive
+  replay-protected, pure-service ES256 `steward-task-v2` tokens without acting-user authority.
+
 ## [0.7.5] - 2026-09-29
 
 ### Added

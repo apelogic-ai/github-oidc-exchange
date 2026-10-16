@@ -26,12 +26,13 @@ use github_oidc_exchange::{
     workload::{
         ReviewError, ReviewedWorkload, TokenReviewer, WorkloadExchangeError,
         WorkloadExchangeService, WorkloadIdentity, WorkloadMetrics, WorkloadPolicy,
-        WorkloadPolicyError,
+        WorkloadPolicyError, WorkloadTaskBinding,
     },
 };
 use http_body_util::BodyExt;
 use jsonwebtoken::{
-    Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode, jwk::JwkSet,
+    Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode, get_current_timestamp,
+    jwk::JwkSet,
 };
 use rand::thread_rng;
 use rsa::{
@@ -841,8 +842,20 @@ fn workload_policy() -> WorkloadPolicy {
             username: WORKLOAD_USERNAME.to_owned(),
             subject: WORKLOAD_SUBJECT.to_owned(),
             roles: vec!["openshell-user".to_owned(), "openshell-admin".to_owned()],
+            task: None,
         }],
     }
+}
+
+fn task_workload_policy() -> WorkloadPolicy {
+    let mut policy = workload_policy();
+    policy.identities[0].roles.clear();
+    policy.identities[0].task = Some(WorkloadTaskBinding {
+        service: "automation-worker".to_owned(),
+        owner_canonical_user_id: "usr_0123456789abcdef0123456789abcdef".to_owned(),
+        owner_email: "owner@example.invalid".to_owned(),
+    });
+    policy
 }
 
 fn rsa_keyring_with_bits(bits: usize) -> Result<RsaKeyRing, Box<dyn std::error::Error>> {
@@ -909,13 +922,31 @@ struct MockReviewer {
     outcome: MockReview,
 }
 
+#[derive(Serialize)]
+struct ProjectedSourceClaims<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    jti: Option<&'a str>,
+    exp: i64,
+}
+
+fn projected_source_token(
+    jti: Option<&str>,
+    exp: i64,
+) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(encode(
+        &Header::new(Algorithm::HS256),
+        &ProjectedSourceClaims { jti, exp },
+        &EncodingKey::from_secret(b"token-review-authenticates-this-test-source"),
+    )?)
+}
+
 impl TokenReviewer for MockReviewer {
     async fn review(
         &self,
         token: String,
         audience: String,
     ) -> Result<ReviewedWorkload, ReviewError> {
-        if token != "projected-source-token" || audience != WORKLOAD_INPUT_AUDIENCE {
+        if token.is_empty() || audience != WORKLOAD_INPUT_AUDIENCE {
             return Err(ReviewError::Invalid);
         }
         match &self.outcome {
@@ -2222,6 +2253,27 @@ fn workload_policy_is_exact_and_default_deny() -> Result<(), Box<dyn std::error:
     let mut duplicate_role = workload_policy();
     duplicate_role.identities[0].roles = vec!["openshell-admin".to_owned(); 2];
     assert!(duplicate_role.validate().is_err());
+    for invalid_task in [
+        WorkloadTaskBinding {
+            service: "foreign service".to_owned(),
+            owner_canonical_user_id: "usr_0123456789abcdef0123456789abcdef".to_owned(),
+            owner_email: "owner@example.invalid".to_owned(),
+        },
+        WorkloadTaskBinding {
+            service: "automation-worker".to_owned(),
+            owner_canonical_user_id: "not-a-canonical-user".to_owned(),
+            owner_email: "owner@example.invalid".to_owned(),
+        },
+        WorkloadTaskBinding {
+            service: "automation-worker".to_owned(),
+            owner_canonical_user_id: "usr_0123456789abcdef0123456789abcdef".to_owned(),
+            owner_email: "OWNER@example.invalid".to_owned(),
+        },
+    ] {
+        let mut invalid = workload_policy();
+        invalid.identities[0].task = Some(invalid_task);
+        assert!(invalid.validate().is_err());
+    }
     Ok(())
 }
 
@@ -2285,9 +2337,12 @@ async fn workload_key_expiry_fails_both_readiness_surfaces_and_has_a_gauge()
         },
         policy: Arc::new(workload_policy()),
         keys: Arc::new(rsa_keyring_near_expiry(now, Duration::from_secs(15 * 60))?),
+        task_keys: Arc::new(keyring()?),
+        ledger: Arc::new(TestReplayLedger::default()),
         issuer: "https://identity.example.invalid".to_owned(),
         input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
         output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        task_output_audience: "steward-task-api".to_owned(),
         token_ttl: Duration::from_secs(120),
         metrics: Arc::new(WorkloadMetrics::default()),
     };
@@ -2327,13 +2382,16 @@ async fn workload_exchange_emits_only_server_selected_rs256_profile()
         },
         policy: Arc::new(workload_policy()),
         keys,
+        task_keys: Arc::new(keyring()?),
+        ledger: Arc::new(TestReplayLedger::default()),
         issuer: "https://identity.example.invalid".to_owned(),
         input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
         output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        task_output_audience: "steward-task-api".to_owned(),
         token_ttl: Duration::from_secs(120),
         metrics: metrics.clone(),
     };
-    let output = service.exchange("projected-source-token").await?;
+    let output = service.exchange("reviewed-non-jwt-source-token").await?;
     assert_eq!(jsonwebtoken::decode_header(&output)?.alg, Algorithm::RS256);
     let mut validation = Validation::new(Algorithm::RS256);
     validation.set_issuer(&["https://identity.example.invalid"]);
@@ -2354,6 +2412,255 @@ async fn workload_exchange_emits_only_server_selected_rs256_profile()
 }
 
 #[tokio::test]
+async fn workload_task_exchange_matches_steward_pure_service_reader_contract()
+-> Result<(), Box<dyn std::error::Error>> {
+    let task_keys = Arc::new(keyring()?);
+    let jwks: JwkSet = serde_json::from_value(serde_json::to_value(task_keys.jwks())?)?;
+    let service = WorkloadExchangeService {
+        reviewer: MockReviewer {
+            outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
+        },
+        policy: Arc::new(task_workload_policy()),
+        keys: Arc::new(rsa_keyring_with_bits(3072)?),
+        task_keys,
+        ledger: Arc::new(TestReplayLedger::default()),
+        issuer: "https://identity.example.invalid".to_owned(),
+        input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
+        output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        task_output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(WorkloadMetrics::default()),
+    };
+
+    let source = projected_source_token(
+        Some("projected-source-token-jti"),
+        get_current_timestamp() as i64 + 600,
+    )?;
+    let output = service.exchange(&source).await?;
+    let header = jsonwebtoken::decode_header(&output)?;
+    assert_eq!(header.alg, Algorithm::ES256);
+    assert_eq!(header.kid.as_deref(), Some("current"));
+    let output_key = DecodingKey::from_jwk(
+        jwks.keys
+            .iter()
+            .find(|key| key.common.key_id.as_deref() == header.kid.as_deref())
+            .ok_or("missing selected ES256 task key")?,
+    )?;
+    let mut validation = Validation::new(Algorithm::ES256);
+    validation.set_issuer(&["https://identity.example.invalid"]);
+    validation.set_audience(&["steward-task-api"]);
+    let claims = decode::<serde_json::Value>(&output, &output_key, &validation)?.claims;
+
+    // Reader contract copied from Steward crates/steward-apiserver/src/tasks.rs. This prevents
+    // Identity from issuing a syntactically valid token that Steward rejects or maps as a person.
+    assert_eq!(claims["iss"], "https://identity.example.invalid");
+    assert_eq!(claims["aud"], serde_json::json!(["steward-task-api"]));
+    assert_eq!(claims["identity_contract"], IDENTITY_CONTRACT);
+    assert_eq!(claims["email"], "owner@example.invalid");
+    assert_eq!(claims["email_verified"], true);
+    assert_eq!(
+        claims["groups"],
+        serde_json::json!([
+            "agents.apelogic.ai/service-principal:automation-worker",
+            "agents.apelogic.ai/canonical-user:usr_0123456789abcdef0123456789abcdef",
+            "agents.apelogic.ai/task-owner:owner@example.invalid"
+        ])
+    );
+    let issued_at = claims["iat"].as_u64().ok_or("missing task token iat")?;
+    assert!(get_current_timestamp() <= issued_at.saturating_add(300));
+    assert!(claims.get("source_provenance").is_none());
+    assert!(claims.get("actor_login").is_none());
+    assert!(
+        claims["groups"]
+            .as_array()
+            .ok_or("task groups must be an array")?
+            .iter()
+            .all(|group| !group.as_str().unwrap_or_default().contains("/acting-user:"))
+    );
+
+    assert_eq!(
+        service.exchange(&source).await,
+        Err(WorkloadExchangeError::Unauthorized),
+        "the authenticated projected-token jti must be single-use"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn workload_task_exchange_refuses_unbound_wrong_audience_and_expired_sources()
+-> Result<(), Box<dyn std::error::Error>> {
+    let keys = Arc::new(rsa_keyring_with_bits(3072)?);
+    let task_keys = Arc::new(keyring()?);
+    let policy = Arc::new(task_workload_policy());
+    let now = get_current_timestamp() as i64;
+    let valid_source = projected_source_token(Some("valid-source-jti"), now + 600)?;
+    let expired_source = projected_source_token(Some("expired-source-jti"), now - 1)?;
+    for (reviewer, input_audience, assertion) in [
+        (
+            MockReviewer {
+                outcome: MockReview::Accept("system:serviceaccount:example:unbound".to_owned()),
+            },
+            WORKLOAD_INPUT_AUDIENCE,
+            valid_source.clone(),
+        ),
+        (
+            MockReviewer {
+                outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
+            },
+            "wrong-workload-audience",
+            valid_source.clone(),
+        ),
+        (
+            MockReviewer {
+                outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
+            },
+            WORKLOAD_INPUT_AUDIENCE,
+            expired_source,
+        ),
+    ] {
+        let service = WorkloadExchangeService {
+            reviewer,
+            policy: policy.clone(),
+            keys: keys.clone(),
+            task_keys: task_keys.clone(),
+            ledger: Arc::new(TestReplayLedger::default()),
+            issuer: "https://identity.example.invalid".to_owned(),
+            input_audience: input_audience.to_owned(),
+            output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+            task_output_audience: "steward-task-api".to_owned(),
+            token_ttl: Duration::from_secs(120),
+            metrics: Arc::new(WorkloadMetrics::default()),
+        };
+        assert_eq!(
+            service.exchange(&assertion).await,
+            Err(WorkloadExchangeError::Unauthorized)
+        );
+    }
+    let unavailable = WorkloadExchangeService {
+        reviewer: MockReviewer {
+            outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
+        },
+        policy: policy.clone(),
+        keys: keys.clone(),
+        task_keys: task_keys.clone(),
+        ledger: Arc::new(UnavailableReplayLedger),
+        issuer: "https://identity.example.invalid".to_owned(),
+        input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
+        output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        task_output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(WorkloadMetrics::default()),
+    };
+    assert_eq!(
+        unavailable.exchange(&valid_source).await,
+        Err(WorkloadExchangeError::Unavailable),
+        "task exchange must fail closed when replay state is unavailable"
+    );
+
+    let foreign_username = "system:serviceaccount:example:foreign";
+    let mut foreign_policy = task_workload_policy();
+    foreign_policy.identities.push(WorkloadIdentity {
+        username: foreign_username.to_owned(),
+        subject: "kubernetes:serviceaccount:example:foreign".to_owned(),
+        roles: vec!["openshell-user".to_owned()],
+        task: Some(WorkloadTaskBinding {
+            service: "foreign-service".to_owned(),
+            owner_canonical_user_id: "usr_abcdef0123456789abcdef0123456789".to_owned(),
+            owner_email: "foreign-owner@example.invalid".to_owned(),
+        }),
+    });
+    foreign_policy.validate()?;
+    let service = WorkloadExchangeService {
+        reviewer: MockReviewer {
+            outcome: MockReview::Accept(foreign_username.to_owned()),
+        },
+        policy: Arc::new(foreign_policy),
+        keys,
+        task_keys: task_keys.clone(),
+        ledger: Arc::new(TestReplayLedger::default()),
+        issuer: "https://identity.example.invalid".to_owned(),
+        input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
+        output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        task_output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(WorkloadMetrics::default()),
+    };
+    let output = service.exchange(&valid_source).await?;
+    let header = jsonwebtoken::decode_header(&output)?;
+    let jwks: JwkSet = serde_json::from_value(serde_json::to_value(task_keys.jwks())?)?;
+    let output_key = DecodingKey::from_jwk(
+        jwks.keys
+            .iter()
+            .find(|key| key.common.key_id.as_deref() == header.kid.as_deref())
+            .ok_or("missing selected ES256 task key")?,
+    )?;
+    let mut validation = Validation::new(Algorithm::ES256);
+    validation.set_audience(&["steward-task-api"]);
+    let claims = decode::<serde_json::Value>(&output, &output_key, &validation)?.claims;
+    let groups = claims["groups"]
+        .as_array()
+        .ok_or("task groups must be an array")?;
+    assert!(
+        groups
+            .iter()
+            .any(|group| { group == "agents.apelogic.ai/service-principal:foreign-service" })
+    );
+    assert!(
+        groups
+            .iter()
+            .all(|group| { group != "agents.apelogic.ai/service-principal:automation-worker" }),
+        "a service account bound to another service must not receive target-service authority"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_source_claims_do_not_change_the_non_task_workload_contract()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source_without_jti = projected_source_token(None, get_current_timestamp() as i64 + 600)?;
+    let keys = Arc::new(rsa_keyring_with_bits(3072)?);
+    let task_keys = Arc::new(keyring()?);
+    let service = WorkloadExchangeService {
+        reviewer: MockReviewer {
+            outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
+        },
+        policy: Arc::new(workload_policy()),
+        keys: keys.clone(),
+        task_keys: task_keys.clone(),
+        ledger: Arc::new(TestReplayLedger::default()),
+        issuer: "https://identity.example.invalid".to_owned(),
+        input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
+        output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        task_output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(WorkloadMetrics::default()),
+    };
+    let output = service.exchange(&source_without_jti).await?;
+    assert_eq!(jsonwebtoken::decode_header(&output)?.alg, Algorithm::RS256);
+
+    let task_service = WorkloadExchangeService {
+        reviewer: MockReviewer {
+            outcome: MockReview::Accept(WORKLOAD_USERNAME.to_owned()),
+        },
+        policy: Arc::new(task_workload_policy()),
+        keys,
+        task_keys,
+        ledger: Arc::new(TestReplayLedger::default()),
+        issuer: "https://identity.example.invalid".to_owned(),
+        input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
+        output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        task_output_audience: "steward-task-api".to_owned(),
+        token_ttl: Duration::from_secs(120),
+        metrics: Arc::new(WorkloadMetrics::default()),
+    };
+    assert_eq!(
+        task_service.exchange(&source_without_jti).await,
+        Err(WorkloadExchangeError::Unauthorized)
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn workload_exchange_separates_denial_from_token_review_outage()
 -> Result<(), Box<dyn std::error::Error>> {
     let keys = Arc::new(rsa_keyring_with_bits(3072)?);
@@ -2369,9 +2676,12 @@ async fn workload_exchange_separates_denial_from_token_review_outage()
             reviewer: MockReviewer { outcome },
             policy: Arc::new(workload_policy()),
             keys: keys.clone(),
+            task_keys: Arc::new(keyring()?),
+            ledger: Arc::new(TestReplayLedger::default()),
             issuer: "https://identity.example.invalid".to_owned(),
             input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
             output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+            task_output_audience: "steward-task-api".to_owned(),
             token_ttl: Duration::from_secs(120),
             metrics: Arc::new(WorkloadMetrics::default()),
         };
@@ -2410,9 +2720,12 @@ async fn workload_http_contract_is_empty_body_only_and_preserves_github_es256()
         },
         policy: Arc::new(workload_policy()),
         keys: Arc::new(rsa_keyring_with_bits(3072)?),
+        task_keys: Arc::new(keyring()?),
+        ledger: Arc::new(TestReplayLedger::default()),
         issuer: "https://identity.example.invalid".to_owned(),
         input_audience: WORKLOAD_INPUT_AUDIENCE.to_owned(),
         output_audience: WORKLOAD_OUTPUT_AUDIENCE.to_owned(),
+        task_output_audience: "steward-task-api".to_owned(),
         token_ttl: Duration::from_secs(120),
         metrics: Arc::new(WorkloadMetrics::default()),
     };
