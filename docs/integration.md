@@ -89,7 +89,10 @@ rm -f identity-token.json
 
 Never print or archive either token. The provider discovery document and JWKS
 must be HTTPS on the issuer's exact scheme and host on TCP 443; configure
-`networkPolicy.httpsEgressCidrs` accordingly.
+`networkPolicy.httpsEgressCidrs` accordingly. A Jenkins instance whose
+certificate chains to a private CA needs that CA's public certificate in
+`genericOidc.additionalCaSecret`; see the
+[installation guide](installation.md#enable-optional-generic-oidc-exchange).
 
 ## 2. Observe signed GitHub claims
 

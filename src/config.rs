@@ -38,6 +38,9 @@ pub struct WorkloadConfig {
 #[derive(Clone, Debug)]
 pub struct GenericOidcConfig {
     pub policy_file: PathBuf,
+    /// Optional PEM CA bundle trusted in addition to the built-in WebPKI roots, only for
+    /// generic-OIDC discovery and JWKS fetches.
+    pub additional_ca_file: Option<PathBuf>,
 }
 
 /// Configuration for the internal-only Steward browser-session attestation exchange.
@@ -170,6 +173,9 @@ impl GenericOidcConfig {
         }
         Ok(Some(Self {
             policy_file: PathBuf::from(required("GENERIC_OIDC_POLICY_FILE")?),
+            additional_ca_file: required("GENERIC_OIDC_ADDITIONAL_CA_FILE")
+                .ok()
+                .map(PathBuf::from),
         }))
     }
 }

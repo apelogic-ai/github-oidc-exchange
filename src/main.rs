@@ -9,7 +9,7 @@ use github_oidc_exchange::{
     github::GitHubVerifier,
     http::{router, router_with_oidc, separated_routers_with_workload_and_browser_and_oidc},
     keys::{KeyRing, RsaKeyRing},
-    oidc::{OidcExchangeService, OidcMetrics, OidcPolicy, OidcVerifierSet},
+    oidc::{OidcExchangeService, OidcMetrics, OidcPolicy, OidcVerifierSet, load_additional_ca},
     policy::Policy,
     replay::KubernetesLeaseReplayLedger,
     service::{ExchangeService, Metrics},
@@ -95,11 +95,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 log_startup_failure("generic OIDC authorization policy", failure);
             },
         )?);
-        let verifier =
-            OidcVerifierSet::discover_with_max_staleness(&policy, config.github_jwks_max_staleness)
-                .inspect_err(|failure| {
-                    log_startup_failure("generic OIDC verifier configuration", failure);
-                })?;
+        let additional_ca = match &oidc_config.additional_ca_file {
+            Some(path) => load_additional_ca(path).inspect_err(|failure| {
+                log_startup_failure("generic OIDC additional CA bundle", failure);
+            })?,
+            None => Vec::new(),
+        };
+        let verifier = OidcVerifierSet::discover_with_additional_ca(
+            &policy,
+            config.github_jwks_max_staleness,
+            &additional_ca,
+        )
+        .inspect_err(|failure| {
+            log_startup_failure("generic OIDC verifier configuration", failure);
+        })?;
         Some(OidcExchangeService {
             verifier,
             policy,

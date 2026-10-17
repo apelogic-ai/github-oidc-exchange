@@ -548,6 +548,24 @@ seconds. Jenkins uses OIDC only; do not create an API key. The complete caller
 profile and private token-handling example are in the
 [integration guide](integration.md#jenkins-oidc-provider-profile).
 
+If an issuer's TLS certificate chains to a private or internal CA, store that
+CA's public PEM certificate(s) in a Secret and set
+`genericOidc.additionalCaSecret`:
+
+```yaml
+genericOidc:
+  additionalCaSecret:
+    name: oidc-issuer-ca
+    key: ca.crt
+```
+
+The chart mounts the key read-only and sets `GENERIC_OIDC_ADDITIONAL_CA_FILE`.
+These certificates are trusted in addition to the built-in public roots, and
+only for generic OIDC discovery and JWKS fetches; the GitHub, Kubernetes, and
+workload clients never use them. Startup fails if the file is unreadable,
+contains no valid certificate, or contains any private key. CA changes take
+effect on the next rollout (or through the Reloader integration).
+
 Generic-provider state does not affect `/readyz`, which protects the existing
 GitHub exchange from an optional issuer outage and performs no generic-provider
 network work. The background refresh loop starts after the public listener is

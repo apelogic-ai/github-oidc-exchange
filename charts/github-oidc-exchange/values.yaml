@@ -56,6 +56,12 @@ genericOidc:
   enabled: false
   policyConfigMapName: ""
   policyConfigMapKey: oidc-policy.json
+  # Optional Secret key with extra PEM CA certificates (public certificates
+  # only) for issuers behind a private CA. They are trusted in addition to the
+  # built-in public roots, and only for generic OIDC discovery and JWKS fetches.
+  additionalCaSecret:
+    name: ""
+    key: ca.crt
 
 workloadExchange:
   enabled: false
