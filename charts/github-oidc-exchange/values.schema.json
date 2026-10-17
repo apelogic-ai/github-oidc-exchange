@@ -113,7 +113,16 @@
       "properties": {
         "enabled": {"type": "boolean"},
         "policyConfigMapName": {"type": "string"},
-        "policyConfigMapKey": {"const": "oidc-policy.json"}
+        "policyConfigMapKey": {"const": "oidc-policy.json"},
+        "additionalCaSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string", "pattern": "^(|[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?)$"},
+            "key": {"type": "string", "pattern": "^[-._a-zA-Z0-9]{1,253}$"}
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

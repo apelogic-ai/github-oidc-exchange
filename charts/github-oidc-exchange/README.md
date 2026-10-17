@@ -74,7 +74,10 @@ issuer's discovery/JWKS origin on TCP 443. The chart projects the policy read-on
 adds `/v1/oidc/exchange` to the selected public route. The policy maps exact
 issuer/audience/claims to an administrator-owned service and owner; it contains
 no API keys or provider credentials. See the Jenkins profile in the
-[integration guide](../../docs/integration.md).
+[integration guide](../../docs/integration.md). For an issuer behind a private
+CA, set `genericOidc.additionalCaSecret.name` (and `.key`, default `ca.crt`) to
+a Secret holding public PEM CA certificates; the chart mounts it read-only for
+generic OIDC discovery and JWKS fetches only, in addition to the public roots.
 
 `serviceMonitor.enabled=true` requires both
 `networkPolicy.metricsNamespaceSelector` and

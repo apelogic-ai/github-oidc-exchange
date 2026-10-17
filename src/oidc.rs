@@ -16,6 +16,7 @@ use jsonwebtoken::{
     decode, decode_header, get_current_timestamp,
     jwk::{JwkSet, KeyAlgorithm, PublicKeyUse},
 };
+use rustls::pki_types::{CertificateDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -293,13 +294,18 @@ impl OidcVerifierSet {
         policy: &OidcPolicy,
         max_staleness: Duration,
     ) -> Result<Self, OidcVerifyError> {
+        Self::discover_with_additional_ca(policy, max_staleness, &[])
+    }
+
+    /// Like `discover_with_max_staleness`, but the discovery and JWKS client also trusts
+    /// `additional_ca` on top of the built-in WebPKI roots. No other client receives it.
+    pub fn discover_with_additional_ca(
+        policy: &OidcPolicy,
+        max_staleness: Duration,
+        additional_ca: &[reqwest::Certificate],
+    ) -> Result<Self, OidcVerifyError> {
         policy.validate().map_err(|_| OidcVerifyError::Invalid)?;
-        let client = reqwest::Client::builder()
-            .https_only(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(5))
-            .build()
-            .map_err(|_| OidcVerifyError::Unavailable)?;
+        let client = discovery_client(additional_ca)?;
         let mut providers = HashMap::new();
         for configured in &policy.providers {
             let verifier = ProviderVerifier {
@@ -645,6 +651,63 @@ impl ProviderVerifier {
         };
         Ok(())
     }
+}
+
+fn discovery_client(
+    additional_ca: &[reqwest::Certificate],
+) -> Result<reqwest::Client, OidcVerifyError> {
+    additional_ca
+        .iter()
+        .cloned()
+        .fold(
+            reqwest::Client::builder()
+                .https_only(true)
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_secs(5)),
+            reqwest::ClientBuilder::add_root_certificate,
+        )
+        .build()
+        .map_err(|_| OidcVerifyError::Unavailable)
+}
+
+#[derive(Debug, Error)]
+#[error("GENERIC_OIDC_ADDITIONAL_CA_FILE {path} {reason}")]
+pub struct AdditionalCaError {
+    path: String,
+    reason: String,
+}
+
+/// Loads the PEM CA certificates that the generic-OIDC discovery and JWKS client trusts in
+/// addition to the built-in WebPKI roots. Refuses unreadable files, files without
+/// certificates, invalid certificates, and any file that contains a private key.
+pub fn load_additional_ca(path: &Path) -> Result<Vec<reqwest::Certificate>, AdditionalCaError> {
+    let refuse = |reason: String| AdditionalCaError {
+        path: path.display().to_string(),
+        reason,
+    };
+    let pem = std::fs::read(path).map_err(|error| refuse(format!("cannot be read: {error}")))?;
+    if pem.windows(16).any(|window| window == b"PRIVATE KEY-----") {
+        return Err(refuse(
+            "contains a private key; supply public CA certificates only".to_owned(),
+        ));
+    }
+    let certificates = CertificateDer::pem_slice_iter(&pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| refuse(format!("is not valid PEM: {error}")))?;
+    if certificates.is_empty() {
+        return Err(refuse("contains no PEM certificates".to_owned()));
+    }
+    let mut roots = rustls::RootCertStore::empty();
+    certificates
+        .into_iter()
+        .map(|certificate| {
+            roots
+                .add(certificate.clone())
+                .map_err(|error| refuse(format!("contains an invalid certificate: {error}")))?;
+            reqwest::Certificate::from_der(&certificate)
+                .map_err(|error| refuse(format!("contains an invalid certificate: {error}")))
+        })
+        .collect()
 }
 
 fn attempted_recently(last_attempt: i64, now: i64) -> bool {
@@ -1034,6 +1097,133 @@ mod tests {
         })
         .await?;
         refresh.abort();
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod additional_ca_tests {
+    use std::io::Write;
+
+    use rcgen::{BasicConstraints, CertificateParams, CertifiedIssuer, IsCa, KeyPair};
+
+    use super::load_additional_ca;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn test_ca() -> Result<CertifiedIssuer<'static, KeyPair>, rcgen::Error> {
+        let mut params = CertificateParams::new(Vec::<String>::new())?;
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        CertifiedIssuer::self_signed(params, KeyPair::generate()?)
+    }
+
+    fn pem_file(contents: &str) -> std::io::Result<tempfile::NamedTempFile> {
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(contents.as_bytes())?;
+        Ok(file)
+    }
+
+    #[test]
+    fn additional_ca_bundle_refuses_unreadable_empty_or_private_key_material() -> TestResult {
+        let ca = test_ca()?;
+        let key = KeyPair::generate()?.serialize_pem();
+        let directory = tempfile::tempdir()?;
+        let refusal = load_additional_ca(&directory.path().join("missing.pem")).err();
+        assert!(refusal.is_some_and(|error| error.to_string().contains("cannot be read")));
+        for (contents, reason) in [
+            (String::new(), "contains no PEM certificates"),
+            (
+                "not a certificate\n".to_owned(),
+                "contains no PEM certificates",
+            ),
+            (format!("{}{key}", ca.pem()), "contains a private key"),
+            (key.clone(), "contains a private key"),
+            (
+                "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n".to_owned(),
+                "contains an invalid certificate",
+            ),
+        ] {
+            let refusal = load_additional_ca(pem_file(&contents)?.path()).err();
+            assert!(
+                refusal
+                    .as_ref()
+                    .is_some_and(|error| error.to_string().contains(reason)),
+                "expected {reason:?}, got {refusal:?}"
+            );
+        }
+        let bundle = format!("{}{}", ca.pem(), test_ca()?.pem());
+        assert_eq!(load_additional_ca(pem_file(&bundle)?.path())?.len(), 2);
+        Ok(())
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn additional_ca_is_trusted_only_by_generic_oidc_discovery_and_jwks() -> TestResult {
+        use std::{sync::Arc, time::Duration};
+
+        use axum::{Json, Router, routing::get};
+        use serde_json::json;
+
+        use super::{KeySource, ProviderVerifier, discovery_client};
+        use crate::github::{GitHubVerifier, VerifyError};
+
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let ca = test_ca()?;
+        let leaf_key = KeyPair::generate()?;
+        let leaf =
+            CertificateParams::new(vec!["localhost".to_owned()])?.signed_by(&leaf_key, &ca)?;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let origin = format!("https://localhost:{}", listener.local_addr()?.port());
+        let discovery = json!({"issuer": origin, "jwks_uri": format!("{origin}/jwks")});
+        let jwks = json!({"keys": [
+            {"kty": "RSA", "kid": "source", "alg": "RS256", "use": "sig", "n": "AQAB", "e": "AQAB"}
+        ]});
+        let app = Router::new()
+            .route(
+                "/.well-known/openid-configuration",
+                get(move || std::future::ready(Json(discovery.clone()))),
+            )
+            .route("/jwks", get(move || std::future::ready(Json(jwks.clone()))));
+        let tls = axum_server::tls_rustls::RustlsConfig::from_pem(
+            leaf.pem().into_bytes(),
+            leaf_key.serialize_pem().into_bytes(),
+        )
+        .await?;
+        let server = axum_server::from_tcp_rustls(listener, tls)?;
+        let server = tokio::spawn(server.serve(app.into_make_service()));
+        let provider = |client| ProviderVerifier {
+            issuer: origin.clone(),
+            audience: "generic-oidc-exchange".to_owned(),
+            client,
+            cache: Arc::default(),
+            refresh: Arc::default(),
+            max_staleness: Duration::from_secs(600),
+            key_source: KeySource::Remote,
+        };
+
+        // Default trust (built-in WebPKI roots only) refuses the private CA.
+        assert!(
+            provider(discovery_client(&[])?)
+                .refresh_now()
+                .await
+                .is_err()
+        );
+        // With the additional CA loaded, discovery and JWKS succeed against the same server.
+        let additional_ca = load_additional_ca(pem_file(&ca.pem())?.path())?;
+        let trusted = provider(discovery_client(&additional_ca)?);
+        trusted.refresh_now().await?;
+        assert!(trusted.cache.read().await.keys.contains_key("source"));
+        // The GitHub verifier never receives the additional CA and still refuses the server.
+        let github = GitHubVerifier::with_test_jwks_url(
+            "github-identity-exchange".to_owned(),
+            format!("{origin}/jwks"),
+        )?;
+        assert!(matches!(
+            github.warm_up().await,
+            Err(VerifyError::KeysUnavailable { detail, .. }) if detail.contains("UnknownIssuer")
+        ));
+        server.abort();
         Ok(())
     }
 }

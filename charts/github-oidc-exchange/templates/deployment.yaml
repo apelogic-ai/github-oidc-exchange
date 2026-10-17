@@ -4,6 +4,10 @@
 {{- if .Values.genericOidc.enabled -}}
 {{- $reloaderConfigMaps = append $reloaderConfigMaps .Values.genericOidc.policyConfigMapName -}}
 {{- end -}}
+{{- $oidcCa := and .Values.genericOidc.enabled .Values.genericOidc.additionalCaSecret.name -}}
+{{- if $oidcCa -}}
+{{- $reloaderSecrets = append $reloaderSecrets .Values.genericOidc.additionalCaSecret.name -}}
+{{- end -}}
 {{- if .Values.workloadExchange.enabled -}}
 {{- $reloaderConfigMaps = append $reloaderConfigMaps .Values.workloadExchange.policyConfigMapName -}}
 {{- $reloaderSecrets = append $reloaderSecrets .Values.workloadExchange.rsaKeyringSecretName -}}
@@ -109,6 +113,10 @@ spec:
             - name: GENERIC_OIDC_POLICY_FILE
               value: /etc/github-oidc-exchange/oidc-policy/oidc-policy.json
             {{- end }}
+            {{- if $oidcCa }}
+            - name: GENERIC_OIDC_ADDITIONAL_CA_FILE
+              value: /etc/github-oidc-exchange/oidc-ca/ca.crt
+            {{- end }}
             {{- if .Values.workloadExchange.enabled }}
             - name: WORKLOAD_EXCHANGE_ENABLED
               value: "true"
@@ -176,6 +184,11 @@ spec:
               mountPath: /etc/github-oidc-exchange/oidc-policy
               readOnly: true
             {{- end }}
+            {{- if $oidcCa }}
+            - name: generic-oidc-ca
+              mountPath: /etc/github-oidc-exchange/oidc-ca
+              readOnly: true
+            {{- end }}
             {{- if .Values.workloadExchange.enabled }}
             - name: workload-policy
               mountPath: /etc/github-oidc-exchange/workload-policy
@@ -215,6 +228,15 @@ spec:
             items:
               - key: {{ .Values.genericOidc.policyConfigMapKey }}
                 path: oidc-policy.json
+        {{- end }}
+        {{- if $oidcCa }}
+        - name: generic-oidc-ca
+          secret:
+            secretName: {{ .Values.genericOidc.additionalCaSecret.name }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.genericOidc.additionalCaSecret.key }}
+                path: ca.crt
         {{- end }}
         {{- if .Values.workloadExchange.enabled }}
         - name: workload-policy

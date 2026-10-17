@@ -144,6 +144,34 @@ helm template reloader-generic-oidc "$chart" --namespace identity \
   --set rolloutAutomation.reloader.enabled=true >"$scratch/reloader-generic-oidc.yaml"
 grep -Fq 'configmap.reloader.stakater.com/reload: "github-oidc-exchange-policy,github-oidc-exchange-oidc-policy"' \
   "$scratch/reloader-generic-oidc.yaml"
+if grep -Eq 'GENERIC_OIDC_ADDITIONAL_CA_FILE|generic-oidc-ca' \
+  "$scratch/generic-oidc.yaml" "$scratch/reloader-generic-oidc.yaml"; then
+  printf 'generic OIDC must not mount an additional CA unless one is configured\n' >&2
+  exit 1
+fi
+helm template generic-oidc-ca "$chart" --namespace identity \
+  -f "$chart/ci/test-values.yaml" -f "$chart/ci/oidc-values.yaml" \
+  --set rolloutAutomation.reloader.enabled=true \
+  --set-string genericOidc.additionalCaSecret.name=oidc-issuer-ca \
+  --set-string genericOidc.additionalCaSecret.key=bundle.pem >"$scratch/generic-oidc-ca.yaml"
+grep -A1 -Fq 'name: GENERIC_OIDC_ADDITIONAL_CA_FILE
+              value: /etc/github-oidc-exchange/oidc-ca/ca.crt' "$scratch/generic-oidc-ca.yaml"
+grep -A2 -Fq 'name: generic-oidc-ca
+              mountPath: /etc/github-oidc-exchange/oidc-ca
+              readOnly: true' "$scratch/generic-oidc-ca.yaml"
+grep -A5 -Fq 'secretName: oidc-issuer-ca
+            defaultMode: 0400
+            items:
+              - key: bundle.pem
+                path: ca.crt' "$scratch/generic-oidc-ca.yaml"
+grep -Fq 'secret.reloader.stakater.com/reload: "github-oidc-exchange-keyring,oidc-issuer-ca"' \
+  "$scratch/generic-oidc-ca.yaml"
+if helm template generic-oidc-ca-invalid "$chart" --namespace identity \
+  -f "$chart/ci/test-values.yaml" -f "$chart/ci/oidc-values.yaml" \
+  --set-string genericOidc.additionalCaSecret.name=Invalid_Name >/dev/null 2>&1; then
+  printf 'generic OIDC additional CA Secret name must be a DNS subdomain\n' >&2
+  exit 1
+fi
 helm template reloader-workload "$chart" --namespace identity \
   -f "$chart/ci/workload-values.yaml" \
   --set rolloutAutomation.reloader.enabled=true >"$scratch/reloader-workload.yaml"

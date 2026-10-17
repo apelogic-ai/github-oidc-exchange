@@ -13,6 +13,9 @@ signatures, and public-registry attestations.
 
 - Allow exact Kubernetes workload identities to carry an administrative task binding and receive
   replay-protected, pure-service ES256 `steward-task-v2` tokens without acting-user authority.
+- Add optional `genericOidc.additionalCaSecret` (`GENERIC_OIDC_ADDITIONAL_CA_FILE`) so generic
+  OIDC discovery and JWKS fetches can trust a private CA in addition to the public roots. Other
+  clients never use it; startup refuses unreadable, certificate-free, or private-key files.
 
 ## [0.7.5] - 2026-09-29
 
