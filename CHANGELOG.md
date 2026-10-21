@@ -17,6 +17,11 @@ signatures, and public-registry attestations.
   OIDC discovery and JWKS fetches can trust a private CA in addition to the public roots. Other
   clients never use it; startup refuses unreadable, certificate-free, or private-key files.
 
+### Security
+
+- Update certificate validation and bundled trust roots to reject paths
+  through distrusted emSign intermediates.
+
 ## [0.7.5] - 2026-09-29
 
 ### Added
