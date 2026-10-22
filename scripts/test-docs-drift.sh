@@ -2,7 +2,7 @@
 set -euo pipefail
 
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-released_version="0.7.5"
+released_version="0.7.6"
 lock_version="$(awk '
   /^name = "github-oidc-exchange"$/ { package = 1; next }
   package && /^version = "/ { gsub(/^version = "|"$/, ""); print; exit }
@@ -27,9 +27,9 @@ current_docs=(
   docs/integration.md
   docs/consumer-contract-v1.md
   docs/steward-openshell-workload-pairing.md
-  docs/upgrade-v0.7.5.md
+  docs/upgrade-v0.7.6.md
   docs/source-authentication-documentation-inventory.md
-  docs/releases/v0.7.5.md
+  docs/releases/v0.7.6.md
   charts/github-oidc-exchange/README.md
 )
 for document in "${current_docs[@]}"; do
@@ -160,8 +160,8 @@ for expected in 'static verifier' 'mounted JWKS' 'before Identity activates' \
 done
 
 for document in README.md docs/installation.md docs/integration.md \
-  docs/consumer-contract-v1.md docs/upgrade-v0.7.5.md \
-  docs/releases/v0.7.5.md charts/github-oidc-exchange/README.md; do
+  docs/consumer-contract-v1.md docs/upgrade-v0.7.6.md \
+  docs/releases/v0.7.6.md charts/github-oidc-exchange/README.md; do
   grep -Fq "$v5_policy" "$document"
   grep -Fq "$v6_policy" "$document"
   grep -Fq "$v2_identity" "$document"
@@ -193,7 +193,7 @@ for phrase in \
   'Steward performs any user binding' \
   'Task authority'; do
   grep -Fqi "$phrase" README.md docs/installation.md docs/integration.md \
-    docs/consumer-contract-v1.md docs/upgrade-v0.7.4.md docs/upgrade-v0.7.5.md
+    docs/consumer-contract-v1.md docs/upgrade-v0.7.4.md docs/upgrade-v0.7.6.md
 done
 
 grep -Fq 'policyContract: github-oidc-exchange.apelogic.io/v5' \
@@ -202,26 +202,23 @@ grep -Fq 'policyContract: github-oidc-exchange.apelogic.io/v5' \
   charts/github-oidc-exchange/values.example.yaml
 grep -Fq 'name: EXPECTED_POLICY_VERSION' \
   charts/github-oidc-exchange/templates/deployment.yaml
-grep -Fq 'github-oidc-exchange.apelogic.io/v5' docs/upgrade-v0.7.5.md
-grep -Fq 'github-oidc-exchange.apelogic.io/v6' docs/upgrade-v0.7.5.md
+grep -Fq 'github-oidc-exchange.apelogic.io/v5' docs/upgrade-v0.7.6.md
+grep -Fq 'github-oidc-exchange.apelogic.io/v6' docs/upgrade-v0.7.6.md
 
 release_notes="docs/releases/v$released_version.md"
 for expected in \
-  'non-breaking' \
-  'repository_id` to `"*"' \
-  'concrete signed' \
-  'job_workflow_refs' \
-  'one-hour JWKS cache' \
-  'github_jwks' \
-  'github_oidc_exchange_jwks_refresh_failures_total' \
-  'replay_ledger' \
-  'latency histogram' \
-  'public-boundary guard' \
+  'generic OIDC' \
+  'non-overlapping exact claim bindings' \
+  'dedicated CA Secret' \
+  'pure-service' \
+  'tag-only rendering' \
+  'chart-owned rendering' \
+  'distrusted emSign intermediates' \
   'release-manifest.json' \
   'release-manifest.sigstore.json' \
   'public-image-signature.sigstore.json' \
   'public-chart-signature.sigstore.json' \
-  '../upgrade-v0.7.5.md)'; do
+  '../upgrade-v0.7.6.md)'; do
   grep -Fq "$expected" "$release_notes"
 done
 ! grep -Fq 'supported_policy_contracts' "$release_notes"
@@ -301,18 +298,20 @@ done
 ! grep -Fq 'reusable workflow requires both exchange inputs' \
   docs/installation.md docs/integration.md docs/consumer-contract-v1.md
 
-grep -Fq 'IDENTITY_RELEASE=identity' docs/upgrade-v0.7.5.md
-! grep -Fq 'IDENTITY_RELEASE=github-oidc-exchange' docs/upgrade-v0.7.5.md
+grep -Fq 'IDENTITY_RELEASE=identity' docs/upgrade-v0.7.6.md
+! grep -Fq 'IDENTITY_RELEASE=github-oidc-exchange' docs/upgrade-v0.7.6.md
 grep -Fq 'IDENTITY_KUBECONFIG=/absolute/path/to/cluster-kubeconfig' \
-  docs/upgrade-v0.7.5.md
-grep -Fq 'IDENTITY_CONTEXT=platform-context' docs/upgrade-v0.7.5.md
+  docs/upgrade-v0.7.6.md
+grep -Fq 'IDENTITY_CONTEXT=platform-context' docs/upgrade-v0.7.6.md
 for expected in \
   'github-oidc-exchange.apelogic.io/v6' \
-  'repository_id: "*"' \
-  'github_oidc_exchange_duration_seconds' \
-  'operator-observability-contract-v1.md' \
+  'genericOidc.enabled=false' \
+  'genericOidc.additionalCaSecret' \
+  'workload `task` binding' \
+  'image.requireDigest=false' \
+  'policyConfigMap.create=true' \
   'helm rollback "$IDENTITY_RELEASE" PREVIOUS_REVISION'; do
-  grep -Fq "$expected" docs/upgrade-v0.7.5.md
+  grep -Fq "$expected" docs/upgrade-v0.7.6.md
 done
 grep -Fq 'Set all three fields explicitly' docs/integration.md
 ! grep -Fq 'requires both `config.policyContract`' README.md
