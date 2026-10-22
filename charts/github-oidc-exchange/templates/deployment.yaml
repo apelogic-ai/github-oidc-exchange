@@ -1,4 +1,9 @@
 {{- include "github-oidc-exchange.validateImageDigest" . -}}
+{{- include "github-oidc-exchange.validatePolicyConfigMap" . -}}
+{{- $githubPolicyRevision := .Values.rolloutRevisions.githubPolicy -}}
+{{- if .Values.policyConfigMap.create -}}
+{{- $githubPolicyRevision = printf "%s:%s" $githubPolicyRevision (toJson .Values.policyConfigMap.document | sha256sum) -}}
+{{- end -}}
 {{- $reloaderConfigMaps := list .Values.config.policyConfigMapName -}}
 {{- $reloaderSecrets := list .Values.config.keyringSecretName -}}
 {{- if .Values.genericOidc.enabled -}}
@@ -42,7 +47,7 @@ spec:
       labels:
         {{- include "github-oidc-exchange.selectorLabels" . | nindent 8 }}
       annotations:
-        checksum/github-policy: {{ printf "%s:%s:%s" .Values.config.policyConfigMapName .Values.config.policyConfigMapKey .Values.rolloutRevisions.githubPolicy | sha256sum | quote }}
+        checksum/github-policy: {{ printf "%s:%s:%s" .Values.config.policyConfigMapName .Values.config.policyConfigMapKey $githubPolicyRevision | sha256sum | quote }}
         checksum/github-keyring: {{ printf "%s:%s:%s" .Values.config.keyringSecretName .Values.config.keyringSecretKey .Values.rolloutRevisions.githubKeyring | sha256sum | quote }}
         {{- if .Values.genericOidc.enabled }}
         checksum/generic-oidc-policy: {{ printf "%s:%s:%s" .Values.genericOidc.policyConfigMapName .Values.genericOidc.policyConfigMapKey .Values.rolloutRevisions.genericOidcPolicy | sha256sum | quote }}
@@ -73,7 +78,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: exchange
-          image: {{ required "image.repository is required" .Values.image.repository }}{{- with .Values.image.tag }}:{{ . }}{{- end }}@{{ required "image.digest is required" .Values.image.digest }}
+          image: {{ required "image.repository is required" .Values.image.repository }}{{- with .Values.image.tag }}:{{ . }}{{- end }}{{- with .Values.image.digest }}@{{ . }}{{- end }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

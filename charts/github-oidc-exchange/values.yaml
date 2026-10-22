@@ -4,6 +4,9 @@ image:
   # Required: a registry path and immutable digest from a published release
   # handoff or a verified manifest-preserving mirror. Sentinels are rejected.
   repository: ""
+  # Set false only when the delivery platform promotes images by tag and owns
+  # tag immutability. An explicit tag is required whenever this is false.
+  requireDigest: true
   # Optional immutable release tag for registries that require a SemVer path.
   # The digest remains the authoritative image identity.
   tag: ""
@@ -34,6 +37,12 @@ config:
   # Cached GitHub signing keys remain usable through transient JWKS outages for
   # this many seconds after the last successful refresh.
   githubJwksMaxStalenessSeconds: 21600
+
+policyConfigMap:
+  # When enabled, the chart creates config.policyConfigMapName from document.
+  # The policy is public authorization data; signing keys remain Secret-only.
+  create: false
+  document: {}
 
 rolloutRevisions:
   # Required controller-free rollout triggers. Change only the entry whose

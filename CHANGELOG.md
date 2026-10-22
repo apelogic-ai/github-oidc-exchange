@@ -11,6 +11,8 @@ signatures, and public-registry attestations.
 
 ### Added
 
+- Add default-off chart options for tag-promoted images and for rendering the
+  validated GitHub policy ConfigMap directly from public authorization values.
 - Allow exact Kubernetes workload identities to carry an administrative task binding and receive
   replay-protected, pure-service ES256 `steward-task-v2` tokens without acting-user authority.
 - Add optional `genericOidc.additionalCaSecret` (`GENERIC_OIDC_ADDITIONAL_CA_FILE`) so generic

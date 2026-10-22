@@ -9,6 +9,7 @@ image:
   # Replace these rejected placeholders together from the selected release
   # handoff or verified mirror. A tag is optional when the digest is pinned.
   repository: replace-with-release-image-repository
+  requireDigest: true
   tag: ""
   digest: replace-with-release-image-digest
   pullPolicy: IfNotPresent

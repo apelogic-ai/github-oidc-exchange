@@ -23,6 +23,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "github-oidc-exchange.validateImageDigest" -}}
 {{- $digest := default "" .Values.image.digest -}}
+{{- if and .Values.image.requireDigest (empty $digest) -}}
+{{- fail "image.digest is required when image.requireDigest is true" -}}
+{{- end -}}
+{{- if and (not .Values.image.requireDigest) (empty .Values.image.tag) -}}
+{{- fail "image.tag is required when image.requireDigest is false" -}}
+{{- end -}}
 {{- $sentinels := list
   "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   "sha256:1111111111111111111111111111111111111111111111111111111111111111"
@@ -43,5 +49,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 -}}
 {{- if has $digest $sentinels -}}
 {{- fail (printf "image.digest: placeholder/sentinel value %q is not deployable; set image.digest to the immutable sha256 digest from a published release handoff or a verified manifest-preserving mirror" $digest) -}}
+{{- end -}}
+{{- end }}
+
+{{- define "github-oidc-exchange.validatePolicyConfigMap" -}}
+{{- if .Values.policyConfigMap.create -}}
+{{- $version := default "" .Values.policyConfigMap.document.version -}}
+{{- if ne $version .Values.config.policyContract -}}
+{{- fail "policyConfigMap.document.version must match config.policyContract" -}}
+{{- end -}}
 {{- end -}}
 {{- end }}

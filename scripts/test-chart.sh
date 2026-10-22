@@ -285,6 +285,76 @@ helm template mirrored "$chart" -f "$chart/ci/test-values.yaml" \
 grep -Fq "image: registry.example.test/mirror/github-oidc-exchange:0.7.2@$released_digest" \
   "$scratch/mirrored.yaml"
 
+if helm template tag-only-required "$chart" -f "$chart/ci/test-values.yaml" \
+  --set-string image.tag=0.7.5 \
+  --set-string image.digest= >"$scratch/tag-only-required.yaml" \
+  2>"$scratch/tag-only-required.err"; then
+  printf 'tag-only image must be refused when image.requireDigest is true\n' >&2
+  exit 1
+fi
+grep -Fq 'image.digest' "$scratch/tag-only-required.err"
+
+if helm template tagless "$chart" -f "$chart/ci/test-values.yaml" \
+  --set image.requireDigest=false \
+  --set-string image.tag= \
+  --set-string image.digest= >"$scratch/tagless.yaml" 2>"$scratch/tagless.err"; then
+  printf 'digest-optional mode must still require an explicit image tag\n' >&2
+  exit 1
+fi
+grep -Fq 'image.tag' "$scratch/tagless.err"
+
+inline_policy_json="$(jq -c . docs/policy-contract-v6.example.json)"
+helm template hosted "$chart" --namespace identity \
+  -f "$chart/ci/test-values.yaml" \
+  --set image.requireDigest=false \
+  --set-string image.tag=0.7.5 \
+  --set-string image.digest= \
+  --set-string config.policyContract=github-oidc-exchange.apelogic.io/v6 \
+  --set-string config.policyConfigMapName=github-oidc-exchange-policy-v6 \
+  --set policyConfigMap.create=true \
+  --set ingress.enabled=false \
+  --set-json "policyConfigMap.document=$inline_policy_json" \
+  >"$scratch/hosted.yaml"
+grep -Fq 'image: registry.test.invalid/platform/github-oidc-exchange:0.7.5' \
+  "$scratch/hosted.yaml"
+if grep -Fq 'image: registry.test.invalid/platform/github-oidc-exchange:0.7.5@' \
+  "$scratch/hosted.yaml"; then
+  printf 'digest-optional mode must render repository:tag without an empty digest suffix\n' >&2
+  exit 1
+fi
+grep -Fq 'kind: ConfigMap' "$scratch/hosted.yaml"
+grep -Fq 'name: github-oidc-exchange-policy-v6' "$scratch/hosted.yaml"
+grep -Fq 'policy.json: |' "$scratch/hosted.yaml"
+grep -Fq '"version": "github-oidc-exchange.apelogic.io/v6"' "$scratch/hosted.yaml"
+[[ "$(grep -c 'secretName:' "$scratch/hosted.yaml")" == 1 ]]
+grep -Fq 'secretName: github-oidc-exchange-keyring' "$scratch/hosted.yaml"
+if grep -Eq '^kind: (ClusterRole|ClusterRoleBinding|CustomResourceDefinition)$' \
+  "$scratch/hosted.yaml"; then
+  printf 'hosted mode must not render cluster-scoped objects\n' >&2
+  exit 1
+fi
+
+invalid_policy_json='{"version":"github-oidc-exchange.apelogic.io/v6","service_group":"agents.apelogic.ai/service-principal:runner","repositories":[]}'
+if helm template invalid-inline-policy "$chart" -f "$chart/ci/test-values.yaml" \
+  --set policyConfigMap.create=true \
+  --set-json "policyConfigMap.document=$invalid_policy_json" \
+  >"$scratch/invalid-inline-policy.yaml" 2>"$scratch/invalid-inline-policy.err"; then
+  printf 'chart must reject an invalid inline policy document\n' >&2
+  exit 1
+fi
+grep -Fq 'policyConfigMap.document' "$scratch/invalid-inline-policy.err"
+
+if helm template mismatched-inline-policy "$chart" -f "$chart/ci/test-values.yaml" \
+  --set policyConfigMap.create=true \
+  --set-json "policyConfigMap.document=$inline_policy_json" \
+  >"$scratch/mismatched-inline-policy.yaml" \
+  2>"$scratch/mismatched-inline-policy.err"; then
+  printf 'inline policy version must match config.policyContract\n' >&2
+  exit 1
+fi
+grep -Fq 'policyConfigMap.document.version must match config.policyContract' \
+  "$scratch/mismatched-inline-policy.err"
+
 bash scripts/validate-chart-values.sh \
   "$stamped_production" >"$scratch/validator-valid.out"
 

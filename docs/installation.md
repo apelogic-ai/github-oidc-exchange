@@ -81,8 +81,9 @@ ledger is the only persistent runtime state.
 ## Exact object and integration bill of materials
 
 All listed Identity objects live in the selected release namespace, `identity`
-in these commands. The chart references but does **not** create policy/key/TLS
-inputs unless cert-manager Certificate issuance is explicitly selected.
+in these commands. The chart can create the GitHub policy ConfigMap from
+validated values when explicitly enabled; other policy/key/TLS inputs remain
+external unless cert-manager Certificate issuance is explicitly selected.
 The chart regression checks object/key references against rendered
 Deployment mounts and runtime file environment variables. The live checker
 `scripts/check-install-inputs.sh` checks namespace, type, and key *names* only;
@@ -91,7 +92,7 @@ it never prints Secret data.
 | Object / type | Exact data key(s) | Required, source, owner, rotation |
 | --- | --- | --- |
 | `Secret/github-oidc-exchange-keyring`, `Opaque` | `keyring.json` | Always. Offline `keyring-tool` ES256 output; operator creates and rotates. Never in Helm values/Git. |
-| `ConfigMap/github-oidc-exchange-policy` (existing v5) or `ConfigMap/github-oidc-exchange-policy-v6` | `policy.json` | Always select exactly one. Retain the distinct v5 and v6 objects through activation/rollback. A v5 policy contains actor mappings; a minimal v6 policy need not. Restrict ConfigMap get/list RBAC and audit access. |
+| `ConfigMap/github-oidc-exchange-policy` (existing v5) or `ConfigMap/github-oidc-exchange-policy-v6` | `policy.json` | Always select exactly one. Create it externally, or set `policyConfigMap.create=true` with a validated `policyConfigMap.document`. Retain distinct v5 and v6 objects through activation/rollback. A v5 policy contains actor mappings; a minimal v6 policy need not. Restrict ConfigMap get/list RBAC and audit access. |
 | `ConfigMap/github-oidc-exchange-oidc-policy` | `oidc-policy.json` | Only if `genericOidc.enabled`; exact issuer/audience/claim bindings to administrator-owned service/owner identity. Contains no credentials or API keys. |
 | `Secret/github-oidc-exchange-workload-rsa-keyring`, `Opaque` | `rsa-keyring.json` | Only if `workloadExchange.enabled`; required for Steward/OpenShell profile. Offline RSA-3072 output; operator rotates. |
 | `ConfigMap/github-oidc-exchange-workload-policy` | `workload-policy.json` | Only if workload enabled. Exact admitted service-account usernames/roles; restrict ConfigMap RBAC. |
@@ -416,7 +417,7 @@ the existing `github-oidc-exchange-policy` v5 object.
 
 Copy [`values.example.yaml`](../charts/github-oidc-exchange/values.example.yaml)
 to a private deployment file, fill every mandatory empty field, and set
-`image.repository`, `image.digest`, exact origin-only `config.issuerUrl`, dedicated
+`image.repository`, the default-required `image.digest`, exact origin-only `config.issuerUrl`, dedicated
 `config.githubExchangeAudience`, `config.policyContract`, the matching
 `config.policyConfigMapName`, the keyring reference, and
 `networkPolicy.ingressCidrs` to the actual proxy/Gateway source CIDRs. The
@@ -454,6 +455,24 @@ config:
 
 The chart passes the selected contract through `EXPECTED_POLICY_VERSION` and
 the process refuses to start if the mounted document has another version.
+To have the chart own that namespaced ConfigMap, set:
+
+```yaml
+policyConfigMap:
+  create: true
+  document:
+    version: github-oidc-exchange.apelogic.io/v6
+    service_group: agents.apelogic.ai/service-principal:runner
+    repositories:
+      - owner_id: "100001"
+        repository_id: "200001"
+```
+
+The chart validates the complete v5/v6 document, refuses a version that does
+not match `config.policyContract`, and rolls Pods when inline content changes.
+For a tag-promoting delivery platform, `image.requireDigest=false` additionally
+allows an explicit `image.repository:image.tag`; the platform then owns tag
+immutability. Digest pinning remains the default.
 
 ### Choose one projected-input rollout mechanism
 
