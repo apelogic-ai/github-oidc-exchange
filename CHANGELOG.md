@@ -9,15 +9,20 @@ signatures, and public-registry attestations.
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-10-22
+
 ### Added
 
+- Add an optional generic OIDC exchange with exact issuer, audience, and claim
+  bindings, isolated provider health, Jenkins-compatible replay protection,
+  and pure-service `steward-task-v2` output.
+- Add optional private-CA trust for generic OIDC discovery and JWKS without
+  extending that trust to GitHub, Kubernetes, or workload clients.
 - Add default-off chart options for tag-promoted images and for rendering the
   validated GitHub policy ConfigMap directly from public authorization values.
-- Allow exact Kubernetes workload identities to carry an administrative task binding and receive
-  replay-protected, pure-service ES256 `steward-task-v2` tokens without acting-user authority.
-- Add optional `genericOidc.additionalCaSecret` (`GENERIC_OIDC_ADDITIONAL_CA_FILE`) so generic
-  OIDC discovery and JWKS fetches can trust a private CA in addition to the public roots. Other
-  clients never use it; startup refuses unreadable, certificate-free, or private-key files.
+- Allow exact Kubernetes workload identities to carry an administrative task
+  binding and receive replay-protected, pure-service ES256 `steward-task-v2`
+  tokens without acting-user authority.
 
 ### Security
 
@@ -388,7 +393,9 @@ signatures, and public-registry attestations.
   short-lived EKS-compatible ES256 token issuance.
 - Added signed image/chart release validation with immutable artifact digests.
 
-[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.4...HEAD
+[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.6...HEAD
+[0.7.6]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.5...v0.7.6
+[0.7.5]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.1...v0.7.2

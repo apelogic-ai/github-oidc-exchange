@@ -1,7 +1,7 @@
-# Installation guide — github-oidc-exchange 0.7.5
+# Installation guide — github-oidc-exchange 0.7.6
 
-This is the canonical operator guide for application **0.7.5**, Helm chart
-**0.7.5**, and the [Identity consumer contracts](consumer-contract-v1.md).
+This is the canonical operator guide for application **0.7.6**, Helm chart
+**0.7.6**, and the [Identity consumer contracts](consumer-contract-v1.md).
 It installs Identity in an operator-owned Kubernetes cluster from fork-owned
 artifacts. No ApeLogic account, cloud credential, external secret controller,
 GitHub OAuth App, or database is required. The baseline exchanges GitHub
@@ -22,11 +22,11 @@ the [baseline quickstart](quickstart.md), then return here for operations and
 optional features. Use the [integration guide](integration.md) for claim
 observation, exchange smoke, and Steward integration.
 
-Application 0.7.5 supports `github-oidc-exchange.apelogic.io/v5` and
+Application 0.7.6 supports `github-oidc-exchange.apelogic.io/v5` and
 `github-oidc-exchange.apelogic.io/v6`. The chart defaults to v5 and an existing
 v5 ConfigMap, preserving `steward-task-v2` behavior. Policy v6 is an explicit
 opt-in that issues `steward-task-v3`; activate it with a separately named
-ConfigMap using the [0.7.5 upgrade procedure](upgrade-v0.7.5.md).
+ConfigMap using the [0.7.6 upgrade procedure](upgrade-v0.7.6.md).
 Existing older installations must first follow their version-specific guides.
 
 ## Prerequisites and decisions
@@ -124,7 +124,7 @@ visibility separately. For another operator-owned OCI registry, authenticate
 with that registry's own account and run a native single-architecture build:
 
 ```sh
-export IDENTITY_VERSION=0.7.5
+export IDENTITY_VERSION=0.7.6
 export IDENTITY_IMAGE_REPO=registry.example.org/team/github-oidc-exchange
 export IDENTITY_CHART_REPO=registry.example.org/team/charts/github-oidc-exchange
 # Match the builder host: linux/amd64 on x86-64 or linux/arm64 on ARM64.
@@ -247,7 +247,7 @@ cargo run --locked --bin keyring-tool -- generate-es256 \
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
 ```
 
-When consuming the 0.7.5 or later release artifacts, download the policy files
+When consuming the 0.7.6 or later release artifacts, download the policy files
 above and run the same operations from the verified image digest. Run as the
 invoking host user so atomic mode-0600 output on the private bind mount is not
 owned by a container-only UID:
@@ -534,13 +534,13 @@ helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
 ```
 
 Validate discovery/JWKS and a fresh exchange again. There is no database
-migration; keep the same namespace to preserve replay Leases. A 0.7.5
+migration; keep the same namespace to preserve replay Leases. A 0.7.6
 application upgrade that retains v5 is safe to roll back normally. After v6
 activation, an older binary cannot read v6: roll back the chart/application
 and all three policy-selection values together to the retained v5 object.
 Never perform an image-only rollback while v6 remains mounted. The exact
 preflight, activation, and rollback sequence is in the
-[0.7.5 upgrade guide](upgrade-v0.7.5.md).
+[0.7.6 upgrade guide](upgrade-v0.7.6.md).
 
 ### Enable optional generic OIDC exchange
 

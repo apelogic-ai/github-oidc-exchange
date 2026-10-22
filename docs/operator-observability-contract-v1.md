@@ -1,8 +1,8 @@
 # Identity operator observability contract v1
 
-Status: stable for application/chart 0.7.5 and later. Additive fields, reasons,
-checks, and metrics may appear within v1. Removing or renaming a documented
-item requires a new contract version.
+Status: stable since application/chart 0.7.5 and applicable unchanged to 0.7.6
+and later. Additive fields, reasons, checks, and metrics may appear within v1.
+Removing or renaming a documented item requires a new contract version.
 
 ## Startup
 
