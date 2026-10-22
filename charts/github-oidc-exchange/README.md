@@ -48,9 +48,11 @@ fails only after that hard bound. An idle-safe background loop keeps the cache
 fresh; attempts are single-flight and rate-limited, while the cache age and
 refresh-failure count are metrics.
 
-`image.digest` must come from the release handoff or a verified
-manifest-preserving mirror. Placeholder and homogeneous digests are rejected;
-tag-only deployment is unsupported. Validate before mutation:
+By default, `image.digest` must come from the release handoff or a verified
+manifest-preserving mirror. Placeholder and homogeneous digests are rejected.
+A delivery platform that owns tag immutability may explicitly set
+`image.requireDigest=false`; that mode requires a nonempty `image.tag` and
+renders exactly `repository:tag`. Validate before mutation:
 
 ```sh
 bash scripts/validate-chart-values.sh /path/to/deployment-values.yaml
@@ -96,11 +98,16 @@ HTTPS proxy on a nonstandard port. The configured DNS selector/IP peers are
 also admitted for reply traffic without a destination-port restriction because
 DNS replies target ephemeral client ports on CNIs that do not retain state.
 
-Chart values contain object references only, never private key, policy, TLS,
-or registry credential contents. Projected inputs do not hot-reload. The
-controller-free default requires changing the corresponding
-`rolloutRevisions` value after a verified object update and waiting for the
-Deployment rollout.
+The policy can remain in an operator-managed ConfigMap (the default), or the
+chart can create `config.policyConfigMapName` from the public authorization
+data in `policyConfigMap.document` when `policyConfigMap.create=true`. The
+document must match the v5 or v6 schema and `config.policyContract`; its content
+is included in the Deployment checksum. Signing keys, TLS private keys, and
+registry credentials remain Secret-only and must never appear in chart values.
+
+Externally projected inputs do not hot-reload. The controller-free default
+requires changing the corresponding `rolloutRevisions` value after a verified
+external object update and waiting for the Deployment rollout.
 
 Clusters with an operator-managed
 [Stakater Reloader](https://github.com/stakater/Reloader) may instead set

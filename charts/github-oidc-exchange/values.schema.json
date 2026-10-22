@@ -3,19 +3,20 @@
   "title": "github-oidc-exchange chart values",
   "description": "Values for a fail-closed GitHub and Kubernetes workload OIDC exchange issuer.",
   "type": "object",
-  "required": ["replicaCount", "image", "serviceAccount", "config", "rolloutRevisions", "rolloutAutomation", "genericOidc", "workloadExchange", "service", "networkPolicy", "resources"],
+  "required": ["replicaCount", "image", "serviceAccount", "config", "policyConfigMap", "rolloutRevisions", "rolloutAutomation", "genericOidc", "workloadExchange", "service", "networkPolicy", "resources"],
   "properties": {
     "replicaCount": {"type": "integer", "minimum": 2},
     "image": {
       "type": "object",
-      "required": ["repository", "digest"],
+      "required": ["repository", "requireDigest", "digest"],
       "properties": {
         "repository": {"type": "string", "minLength": 1, "not": {"pattern": "(^|\\.)example\\.invalid(/|$)"}},
+        "requireDigest": {"type": "boolean", "description": "Require an immutable image digest. Disable only when the delivery platform owns tag immutability."},
         "tag": {"type": "string", "maxLength": 128, "pattern": "^$|^[A-Za-z0-9_][A-Za-z0-9_.-]*$"},
         "digest": {
           "type": "string",
-          "description": "Required immutable image digest from a published release handoff or verified manifest-preserving mirror. Placeholder and sentinel values are rejected.",
-          "pattern": "^sha256:[a-f0-9]{64}$",
+          "description": "Immutable image digest from a published release handoff or verified manifest-preserving mirror. Required by default; placeholder and sentinel values are rejected.",
+          "pattern": "^$|^sha256:[a-f0-9]{64}$",
           "not": {
             "enum": [
               "sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -78,6 +79,15 @@
         "keyExpiryReadinessThresholdSeconds": {"type": "integer", "minimum": 120, "maximum": 31536000},
         "githubJwksMaxStalenessSeconds": {"type": "integer", "minimum": 600, "maximum": 604800}
       }
+    },
+    "policyConfigMap": {
+      "type": "object",
+      "required": ["create", "document"],
+      "properties": {
+        "create": {"type": "boolean"},
+        "document": {"type": "object"}
+      },
+      "additionalProperties": false
     },
     "rolloutRevisions": {
       "type": "object",
@@ -346,7 +356,209 @@
       ]
     }
   },
+  "$defs": {
+    "nonEmptyUniqueStrings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "githubPolicyV5Repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner_id", "repository_id", "subjects", "events", "refs"],
+      "properties": {
+        "owner_id": {"type": "string", "pattern": "^[0-9]+$"},
+        "repository_id": {"type": "string", "pattern": "^[0-9]+$"},
+        "subjects": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
+        "events": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
+        "refs": {"$ref": "#/$defs/nonEmptyUniqueStrings"}
+      }
+    },
+    "githubPolicyActor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["email", "canonical_user_id", "verified"],
+      "properties": {
+        "email": {"type": "string", "pattern": "^[^@\\s]+@[^@\\s]+$"},
+        "canonical_user_id": {"type": "string", "pattern": "^usr_[0-9a-f]{32}$"},
+        "verified": {"const": true}
+      }
+    },
+    "githubPolicyV5": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "service_group", "acting_group_prefix", "allowed_email_domains", "repositories", "actors"],
+      "properties": {
+        "version": {"const": "github-oidc-exchange.apelogic.io/v5"},
+        "service_group": {"type": "string", "pattern": "^agents\\.apelogic\\.ai/service-principal:.+$"},
+        "acting_group_prefix": {"const": "agents.apelogic.ai/acting-user:"},
+        "allowed_email_domains": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"}
+        },
+        "repositories": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/githubPolicyV5Repository"}
+        },
+        "actors": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"pattern": "^[0-9]+$"},
+          "additionalProperties": {"$ref": "#/$defs/githubPolicyActor"}
+        }
+      }
+    },
+    "githubPolicyV6Subjects": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 6, "maxLength": 2048, "pattern": "^repo:[!-~]+$"}
+    },
+    "githubPolicyV6WorkflowRefs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "maxLength": 2048, "pattern": "^[!-~]+/\\.github/workflows/[!-~]+@[!-~]+$"}
+    },
+    "githubPolicyGitSha1s": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+    },
+    "githubPolicyV6Repository": {
+      "type": "object",
+      "required": ["owner_id", "repository_id"],
+      "properties": {
+        "owner_id": {"type": "string", "pattern": "^[1-9][0-9]{0,19}$"},
+        "repository_id": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[1-9][0-9]{0,19}$"},
+            {"const": "*"}
+          ]
+        },
+        "subjects": {"$ref": "#/$defs/githubPolicyV6Subjects"},
+        "events": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
+        "refs": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
+        "job_workflow_refs": {"$ref": "#/$defs/githubPolicyV6WorkflowRefs"},
+        "job_workflow_shas": {"$ref": "#/$defs/githubPolicyGitSha1s"}
+      },
+      "additionalProperties": false
+    },
+    "githubPolicyV6Actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["email", "canonical_user_id", "verified"],
+      "properties": {
+        "email": {"type": "string", "pattern": "^[^@\\sA-Z]+@[^@\\sA-Z]+$"},
+        "canonical_user_id": {"type": "string", "pattern": "^usr_[0-9a-f]{32}$"},
+        "verified": {"const": true}
+      }
+    },
+    "githubPolicyV6": {
+      "type": "object",
+      "required": ["version", "service_group", "repositories"],
+      "properties": {
+        "version": {"const": "github-oidc-exchange.apelogic.io/v6"},
+        "service_group": {"type": "string", "pattern": "^agents\\.apelogic\\.ai/service-principal:[^\\s]+$"},
+        "acting_group_prefix": {"const": "agents.apelogic.ai/acting-user:"},
+        "allowed_email_domains": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"}
+        },
+        "repositories": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/githubPolicyV6Repository"}
+        },
+        "actors": {
+          "type": "object",
+          "minProperties": 1,
+          "patternProperties": {"^[1-9][0-9]{0,19}$": {"$ref": "#/$defs/githubPolicyV6Actor"}},
+          "additionalProperties": false
+        }
+      },
+      "oneOf": [
+        {"required": ["actors", "allowed_email_domains", "acting_group_prefix"]},
+        {
+          "not": {
+            "anyOf": [
+              {"required": ["actors"]},
+              {"required": ["acting_group_prefix"]},
+              {"required": ["allowed_email_domains"]}
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "image": {
+            "properties": {"requireDigest": {"const": true}},
+            "required": ["requireDigest"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "image": {
+            "properties": {"digest": {"pattern": "^sha256:[a-f0-9]{64}$"}}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "image": {
+            "properties": {"requireDigest": {"const": false}},
+            "required": ["requireDigest"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "image": {
+            "properties": {"tag": {"pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]*$"}}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "policyConfigMap": {
+            "properties": {"create": {"const": true}},
+            "required": ["create"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "policyConfigMap": {
+            "properties": {
+              "document": {
+                "oneOf": [
+                  {"$ref": "#/$defs/githubPolicyV5"},
+                  {"$ref": "#/$defs/githubPolicyV6"}
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {

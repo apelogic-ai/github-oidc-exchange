@@ -1,0 +1,12 @@
+{{- if .Values.policyConfigMap.create }}
+{{- include "github-oidc-exchange.validatePolicyConfigMap" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ required "config.policyConfigMapName is required" .Values.config.policyConfigMapName }}
+  labels:
+    {{- include "github-oidc-exchange.labels" . | nindent 4 }}
+data:
+  {{ .Values.config.policyConfigMapKey }}: |
+    {{- toPrettyJson .Values.policyConfigMap.document | nindent 4 }}
+{{- end }}

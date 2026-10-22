@@ -1,9 +1,11 @@
 # Copy to a private deployment repository as values.yaml. Empty mandatory
-# fields deliberately fail Helm validation. Never place key, policy, TLS, or
-# registry credential contents in this file.
+# fields deliberately fail Helm validation. Never place key, TLS, or registry
+# credential contents in this file. An inline policy is public authorization
+# data, but its values file still belongs in reviewed deployment storage.
 replicaCount: 2
 image:
   repository: "" # fork-owned registry path, e.g. registry.company.tld/team/github-oidc-exchange
+  requireDigest: true # false requires an explicit tag and delegates immutability to the platform
   tag: ""
   # Exact immutable sha256:... from a release handoff or verified mirror;
   # all-zero and homogeneous placeholder/sentinel digests are rejected.
@@ -25,6 +27,9 @@ config:
   keyringSecretKey: keyring.json
   keyExpiryReadinessThresholdSeconds: 604800 # seven days; alert earlier
   githubJwksMaxStalenessSeconds: 21600 # six-hour hard bound; alert on refresh failures
+policyConfigMap:
+  create: false # true creates config.policyConfigMapName from document
+  document: {} # v5 or v6 policy matching config.policyContract
 rolloutRevisions:
   githubPolicy: rev-1
   githubKeyring: rev-1

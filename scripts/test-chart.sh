@@ -312,6 +312,7 @@ helm template hosted "$chart" --namespace identity \
   --set-string config.policyContract=github-oidc-exchange.apelogic.io/v6 \
   --set-string config.policyConfigMapName=github-oidc-exchange-policy-v6 \
   --set policyConfigMap.create=true \
+  --set ingress.enabled=false \
   --set-json "policyConfigMap.document=$inline_policy_json" \
   >"$scratch/hosted.yaml"
 grep -Fq 'image: registry.test.invalid/platform/github-oidc-exchange:0.7.5' \
@@ -325,6 +326,8 @@ grep -Fq 'kind: ConfigMap' "$scratch/hosted.yaml"
 grep -Fq 'name: github-oidc-exchange-policy-v6' "$scratch/hosted.yaml"
 grep -Fq 'policy.json: |' "$scratch/hosted.yaml"
 grep -Fq '"version": "github-oidc-exchange.apelogic.io/v6"' "$scratch/hosted.yaml"
+[[ "$(grep -c 'secretName:' "$scratch/hosted.yaml")" == 1 ]]
+grep -Fq 'secretName: github-oidc-exchange-keyring' "$scratch/hosted.yaml"
 if grep -Eq '^kind: (ClusterRole|ClusterRoleBinding|CustomResourceDefinition)$' \
   "$scratch/hosted.yaml"; then
   printf 'hosted mode must not render cluster-scoped objects\n' >&2
