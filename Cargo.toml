@@ -13,7 +13,7 @@ test-support = []
 [dependencies]
 axum = "0.8.8"
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
-base64 = "0.22.1"
+base64 = "0.23.1"
 chrono = { version = "0.4.44", default-features = false, features = ["clock", "serde"] }
 jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust_crypto"] }
 p256 = { version = "0.13.2", features = ["ecdsa", "pkcs8"] }
