@@ -69,6 +69,12 @@ public. The standard Steward controller and OpenShell values are paired in the
 Browser HOP-1 additionally requires workload exchange and a public
 Steward JWKS ConfigMap.
 
+The workload policy remains an operator-managed ConfigMap by default. Set
+`workloadExchange.policy.create=true` to create
+`workloadExchange.policyConfigMapName` from the validated public authorization
+data in `workloadExchange.policy.document`. Its content is included in the
+Deployment checksum. Never place RSA keys or TLS private keys in chart values.
+
 `genericOidc.enabled=false` is also baseline. Enabling it requires a reviewed
 `oidc-policy.json` ConfigMap, nonempty
 `rolloutRevisions.genericOidcPolicy`, and HTTPS egress to each configured
