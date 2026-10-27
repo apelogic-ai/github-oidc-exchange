@@ -5,7 +5,7 @@ Steward controller and OpenShell. It is a cross-product configuration map, not
 a runtime dependency from Identity to Steward: Steward presents a Kubernetes
 credential to Identity, Identity validates it with TokenReview and issues a
 bounded token, and OpenShell verifies that token. Identity 0.7.5 and later,
-including 0.7.6, support this contract.
+including 0.7.7, support this contract.
 
 The standard contract has these exact joins:
 

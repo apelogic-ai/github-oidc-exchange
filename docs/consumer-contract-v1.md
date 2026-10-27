@@ -1,6 +1,6 @@
 # Identity consumer contracts
 
-Status: released with application/chart **0.7.6**. This document defines the
+Status: released with application/chart **0.7.7**. This document defines the
 normative GitHub exchange protocol and the two supported Steward token
 contracts. It does not deploy a consumer. See the
 [integration guide](integration.md) for end-to-end examples.
@@ -9,8 +9,10 @@ contracts. It does not deploy a consumer. See the
 
 | Application/chart | Selected policy | Output contract | Status |
 | --- | --- | --- | --- |
-| 0.7.6 / 0.7.6 | `github-oidc-exchange.apelogic.io/v5` | `steward-task-v2` | Default; behavior and token claims preserved |
-| 0.7.6 / 0.7.6 | `github-oidc-exchange.apelogic.io/v6` | `steward-task-v3` | Explicit opt-in |
+| 0.7.7 / 0.7.7 | `github-oidc-exchange.apelogic.io/v5` | `steward-task-v2` | Default; behavior and token claims preserved |
+| 0.7.7 / 0.7.7 | `github-oidc-exchange.apelogic.io/v6` | `steward-task-v3` | Explicit opt-in |
+| 0.7.6 / 0.7.6 | v5 | v2 | Historical pair; same runtime token contract |
+| 0.7.6 / 0.7.6 | v6 | v3 | Historical pair; same runtime token contract |
 | 0.7.5 / 0.7.5 | v5 | v2 | Historical pair; same runtime token contract |
 | 0.7.5 / 0.7.5 | v6 | v3 | Historical pair; same runtime token contract |
 | 0.7.2 / 0.7.2 | v5 | v2 | Historical pair; same runtime token contracts |
@@ -25,7 +27,7 @@ contracts. It does not deploy a consumer. See the
 
 Do not combine an older application with v6. Activation and rollback use the
 application/chart revision and policy reference as one unit, with distinct v5
-and v6 ConfigMaps. See the [0.7.6 upgrade guide](upgrade-v0.7.6.md).
+and v6 ConfigMaps. See the [0.7.7 upgrade guide](upgrade-v0.7.7.md).
 
 ## Common protocol
 

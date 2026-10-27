@@ -1,7 +1,7 @@
-# Installation guide — github-oidc-exchange 0.7.6
+# Installation guide — github-oidc-exchange 0.7.7
 
-This is the canonical operator guide for application **0.7.6**, Helm chart
-**0.7.6**, and the [Identity consumer contracts](consumer-contract-v1.md).
+This is the canonical operator guide for application **0.7.7**, Helm chart
+**0.7.7**, and the [Identity consumer contracts](consumer-contract-v1.md).
 It installs Identity in an operator-owned Kubernetes cluster from fork-owned
 artifacts. No ApeLogic account, cloud credential, external secret controller,
 GitHub OAuth App, or database is required. The baseline exchanges GitHub
@@ -22,11 +22,11 @@ the [baseline quickstart](quickstart.md), then return here for operations and
 optional features. Use the [integration guide](integration.md) for claim
 observation, exchange smoke, and Steward integration.
 
-Application 0.7.6 supports `github-oidc-exchange.apelogic.io/v5` and
+Application 0.7.7 supports `github-oidc-exchange.apelogic.io/v5` and
 `github-oidc-exchange.apelogic.io/v6`. The chart defaults to v5 and an existing
 v5 ConfigMap, preserving `steward-task-v2` behavior. Policy v6 is an explicit
 opt-in that issues `steward-task-v3`; activate it with a separately named
-ConfigMap using the [0.7.6 upgrade procedure](upgrade-v0.7.6.md).
+ConfigMap using the [0.7.7 upgrade procedure](upgrade-v0.7.7.md).
 Existing older installations must first follow their version-specific guides.
 
 ## Prerequisites and decisions
@@ -95,7 +95,7 @@ it never prints Secret data.
 | `ConfigMap/github-oidc-exchange-policy` (existing v5) or `ConfigMap/github-oidc-exchange-policy-v6` | `policy.json` | Always select exactly one. Create it externally, or set `policyConfigMap.create=true` with a validated `policyConfigMap.document`. Retain distinct v5 and v6 objects through activation/rollback. A v5 policy contains actor mappings; a minimal v6 policy need not. Restrict ConfigMap get/list RBAC and audit access. |
 | `ConfigMap/github-oidc-exchange-oidc-policy` | `oidc-policy.json` | Only if `genericOidc.enabled`; exact issuer/audience/claim bindings to administrator-owned service/owner identity. Contains no credentials or API keys. |
 | `Secret/github-oidc-exchange-workload-rsa-keyring`, `Opaque` | `rsa-keyring.json` | Only if `workloadExchange.enabled`; required for Steward/OpenShell profile. Offline RSA-3072 output; operator rotates. |
-| `ConfigMap/github-oidc-exchange-workload-policy` | `workload-policy.json` | Only if workload enabled. Exact admitted service-account usernames/roles; restrict ConfigMap RBAC. |
+| `ConfigMap/github-oidc-exchange-workload-policy` | `workload-policy.json` | Only if workload enabled. Exact admitted service-account usernames/roles. Create it externally, or set `workloadExchange.policy.create=true` with a validated `workloadExchange.policy.document`. Restrict ConfigMap RBAC. |
 | `Secret/github-oidc-exchange-server-tls`, `kubernetes.io/tls` | `tls.crt`, `tls.key` | Only if workload enabled. Operator PKI creates it, or chart Certificate requests it from cert-manager. SAN `github-oidc-exchange.<namespace>.svc.cluster.local`; issuer CA is separately distributed to callers. cert-manager owns renewal if selected; operator bumps rollout revision after projection. |
 | Operator-selected public Ingress TLS Secret, `kubernetes.io/tls` | `tls.crt`, `tls.key` | Only with chart Ingress. Existing PKI or chart Certificate/cert-manager. SAN exactly covers `ingress.host`/issuer host. The Ingress controller reloads its certificate; verify after renewal. Gateway mode uses a Gateway-owned certificate outside this chart. |
 | Operator-selected image-pull Secret, `kubernetes.io/dockerconfigjson` | `.dockerconfigjson` | Only for private registry without node-level access. Operator owns creation/rotation; chart stores its name, not credentials. |
@@ -124,7 +124,7 @@ visibility separately. For another operator-owned OCI registry, authenticate
 with that registry's own account and run a native single-architecture build:
 
 ```sh
-export IDENTITY_VERSION=0.7.6
+export IDENTITY_VERSION=0.7.7
 export IDENTITY_IMAGE_REPO=registry.example.org/team/github-oidc-exchange
 export IDENTITY_CHART_REPO=registry.example.org/team/charts/github-oidc-exchange
 # Match the builder host: linux/amd64 on x86-64 or linux/arm64 on ARM64.
@@ -247,7 +247,7 @@ cargo run --locked --bin keyring-tool -- generate-es256 \
 cargo run --locked --bin keyring-tool -- validate-es256 ./private/issuer-keyring.json
 ```
 
-When consuming the 0.7.6 or later release artifacts, download the policy files
+When consuming the 0.7.7 or later release artifacts, download the policy files
 above and run the same operations from the verified image digest. Run as the
 invoking host user so atomic mode-0600 output on the private bind mount is not
 owned by a container-only UID:
@@ -541,13 +541,13 @@ helm --kubeconfig "$IDENTITY_KUBECONFIG" --kube-context "$IDENTITY_CONTEXT" \
 ```
 
 Validate discovery/JWKS and a fresh exchange again. There is no database
-migration; keep the same namespace to preserve replay Leases. A 0.7.6
+migration; keep the same namespace to preserve replay Leases. A 0.7.7
 application upgrade that retains v5 is safe to roll back normally. After v6
 activation, an older binary cannot read v6: roll back the chart/application
 and all three policy-selection values together to the retained v5 object.
 Never perform an image-only rollback while v6 remains mounted. The exact
 preflight, activation, and rollback sequence is in the
-[0.7.6 upgrade guide](upgrade-v0.7.6.md).
+[0.7.7 upgrade guide](upgrade-v0.7.7.md).
 
 ### Enable optional generic OIDC exchange
 
