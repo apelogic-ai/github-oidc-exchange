@@ -9,6 +9,11 @@ signatures, and public-registry attestations.
 
 ## [Unreleased]
 
+### Added
+
+- Add a default-off chart option for rendering the validated workload-policy
+  ConfigMap directly from public authorization values.
+
 ## [0.7.6] - 2026-10-22
 
 ### Added

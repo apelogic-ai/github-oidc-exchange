@@ -373,7 +373,7 @@ kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$I
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
   create configmap github-oidc-exchange-oidc-policy \
   --from-file=oidc-policy.json=./private/oidc-policy.json
-# Workload mode only:
+# Workload mode with workloadExchange.policy.create=false only:
 kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$IDENTITY_NAMESPACE" \
   create configmap github-oidc-exchange-workload-policy \
   --from-file=workload-policy.json=./private/workload-policy.json
@@ -389,6 +389,13 @@ kubectl --kubeconfig "$IDENTITY_KUBECONFIG" --context "$IDENTITY_CONTEXT" -n "$I
   create secret tls identity-public-tls \
   --cert=./private/public.crt --key=./private/public.key
 ```
+
+Platforms that can supply Helm values but cannot apply a separate workload
+policy manifest may instead set `workloadExchange.policy.create=true` and put
+the validated public policy object in `workloadExchange.policy.document`. The
+default remains `false`, which keeps using the existing ConfigMap name and key
+without rendering that object. Never put the workload RSA keyring or TLS
+private key in chart values.
 
 For a private image registry, create a pull Secret from a private file in the
 same namespace (or use node credentials), then list **only its name** under

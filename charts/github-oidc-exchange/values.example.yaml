@@ -54,6 +54,9 @@ workloadExchange:
   outputAudience: openshell-api # protocol constant
   policyConfigMapName: github-oidc-exchange-workload-policy
   policyConfigMapKey: workload-policy.json
+  policy:
+    create: false # true creates policyConfigMapName from document
+    document: {} # workload-policy-v1 public authorization data
   rsaKeyringSecretName: github-oidc-exchange-workload-rsa-keyring
   rsaKeyringSecretKey: rsa-keyring.json
   tls:

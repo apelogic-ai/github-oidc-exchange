@@ -4,6 +4,10 @@
 {{- if .Values.policyConfigMap.create -}}
 {{- $githubPolicyRevision = printf "%s:%s" $githubPolicyRevision (toJson .Values.policyConfigMap.document | sha256sum) -}}
 {{- end -}}
+{{- $workloadPolicyRevision := .Values.rolloutRevisions.workloadPolicy -}}
+{{- if .Values.workloadExchange.policy.create -}}
+{{- $workloadPolicyRevision = printf "%s:%s" $workloadPolicyRevision (toJson .Values.workloadExchange.policy.document | sha256sum) -}}
+{{- end -}}
 {{- $reloaderConfigMaps := list .Values.config.policyConfigMapName -}}
 {{- $reloaderSecrets := list .Values.config.keyringSecretName -}}
 {{- if .Values.genericOidc.enabled -}}
@@ -53,7 +57,7 @@ spec:
         checksum/generic-oidc-policy: {{ printf "%s:%s:%s" .Values.genericOidc.policyConfigMapName .Values.genericOidc.policyConfigMapKey .Values.rolloutRevisions.genericOidcPolicy | sha256sum | quote }}
         {{- end }}
         {{- if .Values.workloadExchange.enabled }}
-        checksum/workload-policy: {{ printf "%s:%s:%s" .Values.workloadExchange.policyConfigMapName .Values.workloadExchange.policyConfigMapKey .Values.rolloutRevisions.workloadPolicy | sha256sum | quote }}
+        checksum/workload-policy: {{ printf "%s:%s:%s" .Values.workloadExchange.policyConfigMapName .Values.workloadExchange.policyConfigMapKey $workloadPolicyRevision | sha256sum | quote }}
         checksum/workload-rsa-keyring: {{ printf "%s:%s:%s" .Values.workloadExchange.rsaKeyringSecretName .Values.workloadExchange.rsaKeyringSecretKey .Values.rolloutRevisions.workloadRsaKeyring | sha256sum | quote }}
         checksum/workload-tls: {{ printf "%s:%s:%s:%s" .Values.workloadExchange.tls.secretName .Values.workloadExchange.tls.certificateKey .Values.workloadExchange.tls.privateKeyKey .Values.rolloutRevisions.workloadTls | sha256sum | quote }}
         {{- end }}

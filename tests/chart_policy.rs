@@ -1,6 +1,7 @@
 use std::{fs, process::Command};
 
 use github_oidc_exchange::policy::Policy;
+use github_oidc_exchange::workload::WorkloadPolicy;
 
 #[test]
 fn rendered_policy_configmaps_are_accepted_by_runtime_parser()
@@ -62,5 +63,49 @@ fn rendered_policy_configmaps_are_accepted_by_runtime_parser()
         fs::write(file.path(), policy_json)?;
         Policy::load(file.path())?;
     }
+    Ok(())
+}
+
+#[test]
+fn rendered_workload_policy_configmap_is_accepted_by_runtime_parser()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = fs::read_to_string("docs/workload-policy-contract.example.json")?;
+    let document: serde_json::Value = serde_json::from_str(&source)?;
+    let inline_document = serde_json::to_string(&document)?;
+    let set_document = format!("workloadExchange.policy.document={inline_document}");
+    let output = Command::new("helm")
+        .args([
+            "template",
+            "workload-policy-parser",
+            "charts/github-oidc-exchange",
+            "--show-only",
+            "templates/workload-policy-configmap.yaml",
+            "-f",
+            "charts/github-oidc-exchange/ci/workload-values.yaml",
+            "--set",
+            "workloadExchange.policy.create=true",
+            "--set-json",
+            &set_document,
+        ])
+        .output()?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+    }
+
+    let rendered = String::from_utf8(output.stdout)?;
+    let (_, literal) = rendered
+        .split_once("  workload-policy.json: |\n")
+        .ok_or("rendered ConfigMap must contain workload-policy.json")?;
+    let policy_json = literal
+        .lines()
+        .map(|line| line.strip_prefix("    ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let rendered_document: serde_json::Value = serde_json::from_str(&policy_json)?;
+    assert_eq!(rendered_document, document);
+
+    let file = tempfile::NamedTempFile::new()?;
+    fs::write(file.path(), policy_json)?;
+    WorkloadPolicy::load(file.path())?;
     Ok(())
 }

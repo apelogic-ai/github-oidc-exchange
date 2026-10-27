@@ -126,6 +126,47 @@ grep -Fq 'secret.reloader.stakater.com/reload: "github-oidc-exchange-keyring"' \
   "$scratch/reloader-baseline.yaml"
 helm template workload "$chart" --namespace identity \
   -f "$chart/ci/workload-values.yaml" >"$scratch/workload.yaml"
+helm template workload "$chart" --namespace identity \
+  -f "$chart/ci/workload-values.yaml" \
+  --set workloadExchange.policy.create=false >"$scratch/workload-policy-off.yaml"
+cmp "$scratch/workload.yaml" "$scratch/workload-policy-off.yaml"
+
+workload_policy_json="$(jq -c . docs/workload-policy-contract.example.json)"
+helm template workload-policy-inline "$chart" --namespace identity \
+  -f "$chart/ci/workload-values.yaml" \
+  --set workloadExchange.policy.create=true \
+  --set-json "workloadExchange.policy.document=$workload_policy_json" \
+  >"$scratch/workload-policy-inline.yaml"
+[[ "$(grep -c '^kind: ConfigMap$' "$scratch/workload-policy-inline.yaml")" == 1 ]]
+grep -Fq 'name: github-oidc-exchange-workload-policy' \
+  "$scratch/workload-policy-inline.yaml"
+grep -Fq 'workload-policy.json: |' "$scratch/workload-policy-inline.yaml"
+grep -Fq '"version": "github-oidc-exchange.apelogic.io/workload-policy-v1"' \
+  "$scratch/workload-policy-inline.yaml"
+workload_policy_checksum="$(awk '/checksum\/workload-policy:/ { print $2; exit }' \
+  "$scratch/workload-policy-inline.yaml")"
+changed_workload_policy_json="$(jq -c '.identities[0].roles += ["audit-reader"]' \
+  docs/workload-policy-contract.example.json)"
+helm template workload-policy-changed "$chart" --namespace identity \
+  -f "$chart/ci/workload-values.yaml" \
+  --set workloadExchange.policy.create=true \
+  --set-json "workloadExchange.policy.document=$changed_workload_policy_json" \
+  >"$scratch/workload-policy-changed.yaml"
+changed_workload_policy_checksum="$(awk '/checksum\/workload-policy:/ { print $2; exit }' \
+  "$scratch/workload-policy-changed.yaml")"
+[[ "$workload_policy_checksum" != "$changed_workload_policy_checksum" ]]
+
+invalid_workload_policy_json='{"version":"github-oidc-exchange.apelogic.io/workload-policy-v1","identities":[]}'
+if helm template invalid-workload-policy "$chart" --namespace identity \
+  -f "$chart/ci/workload-values.yaml" \
+  --set workloadExchange.policy.create=true \
+  --set-json "workloadExchange.policy.document=$invalid_workload_policy_json" \
+  >"$scratch/invalid-workload-policy.yaml" \
+  2>"$scratch/invalid-workload-policy.err"; then
+  printf 'chart must reject an invalid inline workload policy document\n' >&2
+  exit 1
+fi
+grep -Fq 'workloadExchange.policy.document' "$scratch/invalid-workload-policy.err"
 helm lint "$chart" -f "$chart/ci/test-values.yaml" \
   -f "$chart/ci/oidc-values.yaml" --strict >/dev/null
 helm template generic-oidc "$chart" --namespace identity \

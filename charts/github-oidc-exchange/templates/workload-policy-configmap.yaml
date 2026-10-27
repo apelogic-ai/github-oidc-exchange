@@ -1,0 +1,11 @@
+{{- if .Values.workloadExchange.policy.create }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ required "workloadExchange.policyConfigMapName is required" .Values.workloadExchange.policyConfigMapName }}
+  labels:
+    {{- include "github-oidc-exchange.labels" . | nindent 4 }}
+data:
+  {{ .Values.workloadExchange.policyConfigMapKey }}: |
+    {{- toPrettyJson .Values.workloadExchange.policy.document | nindent 4 }}
+{{- end }}

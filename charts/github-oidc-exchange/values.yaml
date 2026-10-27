@@ -78,6 +78,11 @@ workloadExchange:
   outputAudience: openshell-api
   policyConfigMapName: ""
   policyConfigMapKey: workload-policy.json
+  policy:
+    # When enabled, the chart creates policyConfigMapName from document.
+    # The policy is public authorization data; private keys remain Secret-only.
+    create: false
+    document: {}
   rsaKeyringSecretName: ""
   rsaKeyringSecretKey: rsa-keyring.json
   tls:
