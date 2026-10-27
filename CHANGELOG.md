@@ -9,6 +9,8 @@ signatures, and public-registry attestations.
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-10-26
+
 ### Added
 
 - Add a default-off chart option for rendering the validated workload-policy
@@ -398,7 +400,8 @@ signatures, and public-registry attestations.
   short-lived EKS-compatible ES256 token issuance.
 - Added signed image/chart release validation with immutable artifact digests.
 
-[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.6...HEAD
+[Unreleased]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.7...HEAD
+[0.7.7]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/apelogic-ai/github-oidc-exchange/compare/v0.7.3...v0.7.4
